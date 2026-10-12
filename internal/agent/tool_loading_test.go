@@ -76,13 +76,23 @@ func TestLoadedToolFilter(t *testing.T) {
 }
 
 func TestLoadableToolsDeveloperContext(t *testing.T) {
-	require.Empty(t, loadableToolsDeveloperContext(gatedOffered("recall")))
-	got := loadableToolsDeveloperContext(gatedOffered("recall", "web_search", "generate_image"))
+	require.Empty(t, loadableToolsDeveloperContext(gatedOffered("recall"), nil))
+	got := loadableToolsDeveloperContext(gatedOffered("recall", "web_search", "generate_image"), nil)
 	require.Contains(t, got, "load_tools")
 	require.Contains(t, got, "- generate_image: ")
 	require.Contains(t, got, "- web_search: ")
+	require.NotContains(t, got, "Already loaded")
 	require.NotContains(t, got, "run_subagent", "only the tools the turn offers are listed")
 	require.Less(t, strings.Index(got, "generate_image"), strings.Index(got, "web_search"), "listed in a stable order")
+
+	// Once loaded, a tool is reported as in the toolset, not as needing a load.
+	got = loadableToolsDeveloperContext(gatedOffered("web_search", "generate_image"), gatedOffered("generate_image"))
+	require.Contains(t, got, "Already loaded in this chat, so they are in your toolset now (call them directly): generate_image.")
+	require.NotContains(t, got, "- generate_image:")
+	require.Contains(t, got, "- web_search: ")
+
+	got = loadableToolsDeveloperContext(gatedOffered("generate_image"), gatedOffered("generate_image"))
+	require.NotContains(t, got, "Not loaded yet")
 }
 
 func TestDispatchRefusesUnloadedBuiltinTool(t *testing.T) {
@@ -207,4 +217,21 @@ func TestHandleAgentLoop_UngatedContextIsNotScoped(t *testing.T) {
 	_, _, _, err := a.handleAgentLoop(context.Background(), &chatContext{}, adapter)
 	require.NoError(t, err)
 	require.Empty(t, adapter.hidden)
+}
+
+// A built-in tool loaded in one turn is still loaded, and sent, in the chat's next turn.
+func TestBuiltinToolStaysLoadedNextTurn(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestMCPRPCServer()
+	defer srv.Close()
+	a, turn1, _, cleanup := newMCPLifecycleAgentFixture(t, srv.URL)
+	defer cleanup()
+	offered := gatedOffered("generate_image", agenttools.LoadToolsToolSpec.Name)
+	a.prepareTurnLoadableTools(ctx, turn1, offered)
+	_, err := a.loadMCPToolsTool(ctx, turn1, []byte(`{"tools":["generate_image"]}`))
+	require.NoError(t, err)
+
+	turn2 := &chatContext{userID: turn1.userID, chat: turn1.chat}
+	a.prepareTurnLoadableTools(ctx, turn2, offered)
+	require.False(t, turn2.loadedToolFilter()("generate_image"), "loaded state carries into the next turn")
 }

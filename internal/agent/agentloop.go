@@ -195,12 +195,19 @@ func logInferenceCall(ctx context.Context, logger *zap.Logger, chatCtx *chatCont
 		userID = chatCtx.chat.UserID.String()
 		personalityID = chatCtx.chat.PersonalityID.String()
 	}
-	logger.Info("making inference call",
+	fields := []zap.Field{
 		zap.String("chat_message_id", chatMessageID),
 		zap.String("user_id", userID),
 		zap.String("personality_id", personalityID),
 		zap.String("model", model),
 		zap.Int("memories_count", memoriesCount),
 		zap.Int("round", round),
-	)
+	}
+	if chatCtx != nil && chatCtx.toolsLoadGated {
+		// What this round sends of the loadable built-in tools (see loadedToolFilter).
+		fields = append(fields,
+			zap.Strings("loadable_builtin_tools", sortedSetKeys(chatCtx.loadableTools)),
+			zap.Strings("loaded_builtin_tools", sortedSetKeys(chatCtx.loadedTools)))
+	}
+	logger.Info("making inference call", fields...)
 }

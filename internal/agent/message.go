@@ -610,7 +610,7 @@ func (a *Agent) buildModelContextForChatMessage(ctx context.Context, userID uuid
 	// previous behavior for OpenAI chat turns.
 	additionalDevContext := mcpLifecycleDeveloperContext()
 	if policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage); policy.toolsEnabled {
-		if loadable := loadableToolsDeveloperContext(policy.offeredAgentToolNames()); loadable != "" {
+		if loadable := loadableToolsDeveloperContext(policy.offeredAgentToolNames(), a.loadedBuiltinToolSet(ctx, userID, chatCtx)); loadable != "" {
 			additionalDevContext += "\n\n" + loadable
 		}
 	}

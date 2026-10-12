@@ -122,25 +122,54 @@ func visibleResponsesTools(toolParams []responses.ToolUnionParam, hidden func(st
 }
 
 // loadableToolsDeveloperContext names the loadable built-in tools a turn offers, so the model
-// knows what it can load without being sent their schemas. Empty when there are none.
-func loadableToolsDeveloperContext(offered map[string]struct{}) string {
+// knows what it can load without being sent their schemas, and says which of them are already
+// loaded in the chat (and so in its toolset). Empty when there are none. The text changes only
+// when the loaded set does, which is also when the tool list changes.
+func loadableToolsDeveloperContext(offered, loaded map[string]struct{}) string {
 	summaries := agenttools.LoadableFunctionToolNames()
-	names := make([]string, 0, len(summaries))
+	var loadedNames, unloaded []string
 	for name := range summaries {
-		if _, ok := offered[name]; ok {
-			names = append(names, name)
+		if _, ok := offered[name]; !ok {
+			continue
+		}
+		if _, ok := loaded[name]; ok {
+			loadedNames = append(loadedNames, name)
+		} else {
+			unloaded = append(unloaded, name)
 		}
 	}
-	if len(names) == 0 {
+	if len(loadedNames) == 0 && len(unloaded) == 0 {
 		return ""
 	}
-	sort.Strings(names)
+	sort.Strings(loadedNames)
+	sort.Strings(unloaded)
 	var b strings.Builder
-	b.WriteString("Loadable built-in tools: these are not in your toolset until you load them. When a request needs one, call load_tools with its name (no mcp_server_id) and then use it in the same turn:")
-	for _, name := range names {
-		fmt.Fprintf(&b, "\n- %s: %s", name, summaries[name])
+	b.WriteString("Loadable built-in tools: their definitions are only sent once they are loaded in this chat, and they stay loaded across turns.")
+	if len(loadedNames) > 0 {
+		fmt.Fprintf(&b, "\nAlready loaded in this chat, so they are in your toolset now (call them directly): %s.", strings.Join(loadedNames, ", "))
+	}
+	if len(unloaded) > 0 {
+		b.WriteString("\nNot loaded yet. When a request needs one, call load_tools with its name (no mcp_server_id) and then use it in the same turn:")
+		for _, name := range unloaded {
+			fmt.Fprintf(&b, "\n- %s: %s", name, summaries[name])
+		}
 	}
 	return b.String()
+}
+
+// loadedBuiltinToolSet reads the chat's loaded built-in tools for the developer context. A failed
+// read is logged and treated as none loaded (the model then loads again, which is harmless).
+func (a *Agent) loadedBuiltinToolSet(ctx context.Context, userID uuid.UUID, chatCtx *chatContext) map[string]struct{} {
+	if a.ds == nil || chatCtx == nil || chatCtx.chat == nil {
+		return nil
+	}
+	loaded, err := a.ds.ListChatLoadedBuiltinTools(ctx, userID, chatCtx.chat.ID)
+	if err != nil {
+		a.logger.Warn("failed to read the chat's loaded built-in tools for the developer context",
+			zap.String("chat_id", chatCtx.chat.ID.String()), zap.Error(err))
+		return nil
+	}
+	return sliceToSet(loaded)
 }
 
 // loadedToolsReadyNote tells the model a load took effect in this turn: the agent loop sends the
