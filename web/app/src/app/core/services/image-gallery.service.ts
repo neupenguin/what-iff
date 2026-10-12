@@ -9,6 +9,16 @@ import { GalleryFolder } from '../../features/gallery/helpers/gallery-folder.hel
 /** Which gallery files to list: images (the server's default), every other file, or both. */
 export type GalleryKind = 'images' | 'files' | 'all';
 
+/** The most ids one move or bulk delete request takes (the server's cap); send more in chunks. */
+export const GALLERY_BATCH_LIMIT = 500;
+
+/** What POST /image-gallery/delete did with each id. */
+export interface GalleryDeleteResult {
+  deleted: string[];
+  /** Ids not deleted, with a reason safe to show ("not found", "could not delete the stored image", …). */
+  failed: { id: string; error: string }[];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -52,6 +62,15 @@ export class ImageGalleryService {
 
   deleteImage(id: string): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/image-gallery/${id}`);
+  }
+
+  /**
+   * Deletes up to {@link GALLERY_BATCH_LIMIT} gallery files of any kind, each with its own route's
+   * cleanup. Resolves with which went and which did not (and why); ids that are not the caller's
+   * come back as failed, "not found".
+   */
+  deleteFiles(ids: readonly string[]): Observable<GalleryDeleteResult> {
+    return this.http.post<GalleryDeleteResult>(`${this.apiUrl}/image-gallery/delete`, { ids });
   }
 
   importImage(file: File, metadata?: { title?: string; description?: string; folder?: string }): Observable<FileAttachment> {
