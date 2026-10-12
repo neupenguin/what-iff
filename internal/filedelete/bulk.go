@@ -38,11 +38,8 @@ func (s *Service) DeleteMany(ctx context.Context, userID uuid.UUID, ids []uuid.U
 	errs := make([]error, len(unique))
 	var g errgroup.Group
 	g.SetLimit(bulkConcurrency)
-	for i, id := range unique {
-		g.Go(func() error {
-			errs[i] = s.Delete(ctx, userID, id)
-			return nil
-		})
+	for i := range unique {
+		g.Go(s.deleteInto(ctx, userID, unique[i], &errs[i]))
 	}
 	_ = g.Wait()
 
@@ -59,6 +56,15 @@ func (s *Service) DeleteMany(ctx context.Context, userID uuid.UUID, ids []uuid.U
 		res.Failed = append(res.Failed, Failure{ID: id, Error: PublicMessage(errs[i])})
 	}
 	return res
+}
+
+// deleteInto returns a DeleteMany task: delete id and record the outcome in slot. Each task gets
+// its own id and slot as arguments, so the goroutines share nothing.
+func (s *Service) deleteInto(ctx context.Context, userID, id uuid.UUID, slot *error) func() error {
+	return func() error {
+		*slot = s.Delete(ctx, userID, id)
+		return nil
+	}
 }
 
 // PublicMessage is what a user is told about a failed delete: what failed, not the internals.
