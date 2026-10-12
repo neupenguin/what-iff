@@ -101,8 +101,9 @@ export class GalleryFolderToolsComponent {
     const confirmed = await this.confirmation.confirm({
       title: `Delete ${ids.length} ${noun}?`,
       message:
-        `Delete ${ids.length} selected ${noun}? Threads they were shared in will no longer be able to open them, ` +
-        "and a personality's documents among them can no longer be searched. This cannot be undone.",
+        `Delete ${ids.length} selected ${noun}? Threads they were shared in won't be able to open them anymore, ` +
+        'and any personality documents among them will be detached and no longer accessible to that personality. ' +
+        'This cannot be undone.',
       confirmText: 'Delete',
       cancelText: 'Cancel',
       type: 'danger',
