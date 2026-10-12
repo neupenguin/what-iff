@@ -16,7 +16,8 @@ export class ThreadListPanel {
     this.panel = this.page.getByRole('complementary', { name: 'Threads' });
     this.heading = this.page.getByRole('heading', { name: 'Thread Manager' });
     this.searchInput = this.page.getByPlaceholder('Search titles and tags…');
-    this.emptyMessage = this.panel.locator('.panel__empty');
+    // The list's status line (loading, error or empty), rendered by the shared ui-data-table.
+    this.emptyMessage = this.panel.locator('.ui-data-table__message');
     this.activeTab = this.page.getByRole('tab', { name: 'Active' });
     this.archivedTab = this.page.getByRole('tab', { name: 'Archived' });
     this.personalityFilter = this.page.getByLabel('Filter by personality');
