@@ -108,9 +108,10 @@ func (a *Agent) loadMCPToolsTool(ctx context.Context, chatCtx *chatContext, inpu
 		ServerID:      server.ID.String(),
 		Loaded:        loaded,
 		AlreadyLoaded: alreadyLoaded,
+		Note:          loadedToolsReadyNote,
 	}
 	if len(unknown) > 0 {
-		res.Note = fmt.Sprintf("Ignored unknown tool names: %s", strings.Join(unknown, ", "))
+		res.Note += fmt.Sprintf(" Ignored unknown tool names: %s", strings.Join(unknown, ", "))
 	}
 	return marshalMCPToolLifecycleResult(res)
 }

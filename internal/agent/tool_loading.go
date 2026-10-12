@@ -143,6 +143,10 @@ func loadableToolsDeveloperContext(offered map[string]struct{}) string {
 	return b.String()
 }
 
+// loadedToolsReadyNote tells the model a load took effect in this turn: the agent loop sends the
+// loaded tools from the very next round, so it can call them straight away.
+const loadedToolsReadyNote = "Loaded tools are available now: call them in your next step of this same turn."
+
 // loadBuiltinTools is load_tools without an mcp_server_id: it loads the named loadable built-in
 // tools this turn offers.
 func (a *Agent) loadBuiltinTools(ctx context.Context, chatCtx *chatContext, requested requestedTools) (string, error) {
@@ -170,9 +174,9 @@ func (a *Agent) loadBuiltinTools(ctx context.Context, chatCtx *chatContext, requ
 		return marshalMCPToolLifecycleResult(mcpToolLifecycleResult{Error: err.Error()})
 	}
 	chatCtx.loadedTools = set
-	res := mcpToolLifecycleResult{Loaded: loaded, AlreadyLoaded: alreadyLoaded}
+	res := mcpToolLifecycleResult{Loaded: loaded, AlreadyLoaded: alreadyLoaded, Note: loadedToolsReadyNote}
 	if len(unknown) > 0 {
-		res.Note = fmt.Sprintf("Ignored names that are not loadable built-in tools here: %s", strings.Join(unknown, ", "))
+		res.Note += fmt.Sprintf(" Ignored names that are not loadable built-in tools here: %s", strings.Join(unknown, ", "))
 	}
 	return marshalMCPToolLifecycleResult(res)
 }
