@@ -4845,6 +4845,15 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: include_total
+          in: query
+          description: >-
+            Set to `false` to skip counting every matching message in the chat; `total_count` is
+            then 0 and the client pages on `next_cursor`, which is absent once nothing older
+            remains. Omitted or any other value returns the exact `total_count` as before.
+          schema:
+            type: boolean
+            default: true
       responses:
         '200':
           description: Messages retrieved successfully

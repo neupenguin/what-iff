@@ -230,8 +230,8 @@ func (a *Agent) recognizeUserNameLine(ctx context.Context, userID uuid.UUID, mem
 // initialTurnContextLines are the lines a turn's memory context starts with: the user-name line on
 // a chat's first request only (so it does not spam the context), and never in a sandboxed chat
 // (strangers may be talking in it; see userNameLineAllowed).
-func initialTurnContextLines(username string, userMessageCount int, sandboxed bool) []string {
-	if userMessageCount == 0 && userNameLineAllowed(sandboxed) {
+func initialTurnContextLines(username string, hasUserMessages bool, sandboxed bool) []string {
+	if !hasUserMessages && userNameLineAllowed(sandboxed) {
 		return []string{userNameContextLine(username)}
 	}
 	return []string{}
@@ -245,12 +245,12 @@ func (a *Agent) getMemories(ctx context.Context, userID uuid.UUID, chatID uuid.U
 		a.logger.Error("failed to get chat user", zap.Error(err))
 		return nil, nil, err
 	}
-	userMessageCount, err := a.ds.GetChatMessageCount(ctx, userID, chatID, models.MessageOriginFilterUser)
+	hasUserMessages, err := a.ds.ChatHasMessages(ctx, userID, chatID, models.MessageOriginFilterUser)
 	if err != nil {
-		a.logger.Error("failed to get user message count", zap.Error(err))
+		a.logger.Error("failed to check for user messages", zap.Error(err))
 		return nil, nil, err
 	}
-	memories := initialTurnContextLines(chatUser.Username, userMessageCount, sandboxed)
+	memories := initialTurnContextLines(chatUser.Username, hasUserMessages, sandboxed)
 	liveMemories := []*models.Memory{}
 	prompt := MemoryQueryPrompt
 	memoryQuery, err := a.getMemoryQuery(ctx, userID, prompt, userMessage)

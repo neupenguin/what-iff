@@ -125,7 +125,7 @@ describe('ChatSessionService', () => {
         chatService.createChat.mockReturnValue(of(chat));
         chatService.markChatRead.mockReturnValue(of({ updated_count: 0 }));
         messageService.listMessages.mockReturnValue(of({ results: [], page: 1, total_count: 0 }));
-        messageService.reconcileLatestPage.mockReturnValue(of({ appended: 0, total: 0, gap: false }));
+        messageService.reconcileLatestPage.mockReturnValue(of({ appended: 0, gap: false }));
         messageService.sendMessage.mockReturnValue(of({ id: 'user-msg', job_id: 'job-1', type: 'chat_message' }));
         messageService.retryUserMessage.mockReturnValue(of({ id: 'user-msg', job_id: 'job-2', type: 'chat_message' }));
         draftService.getDraft.mockReturnValue({ chatId: 'chat-1', message: 'saved draft', timestamp: Date.now() });
@@ -664,6 +664,20 @@ describe('ChatSessionService', () => {
         const found = await service.loadOlderMessagesUntil('missing');
 
         expect(found).toBe(false);
+    });
+
+    it('has older messages exactly when the page carries a next_cursor, whatever the total', () => {
+        // The API was asked to skip the count (total_count 0), yet the cursor says older history exists.
+        messageService.listMessages.mockReturnValueOnce(
+            of({ results: [], page: 1, total_count: 0, next_cursor: 'cursor-1' }),
+        );
+        service.setActive('chat-1');
+        expect(service.hasMoreOlderMessages()).toBe(true);
+
+        // No cursor means the oldest message is loaded, even if a total is present.
+        messageService.listMessages.mockReturnValueOnce(of({ results: [], page: 1, total_count: 100 }));
+        service.setActive('chat-2');
+        expect(service.hasMoreOlderMessages()).toBe(false);
     });
 
     it('restores draft and error state when send fails', async () => {

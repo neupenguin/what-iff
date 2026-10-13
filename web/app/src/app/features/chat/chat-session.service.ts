@@ -44,7 +44,6 @@ export class ChatSessionService implements OnDestroy {
   private readonly _error = signal<string | null>(null);
 
   private activeThreadId: string | null = null;
-  private messagesTotalCount = 0;
   /**
    * Keyset token for the batch of messages immediately older than the oldest loaded one. Set from
    * each response's `next_cursor`; null when the oldest message in the thread is loaded. Older
@@ -164,7 +163,6 @@ export class ChatSessionService implements OnDestroy {
     this.turn.reset();
     this.deferredSync = null;
     this.activeThreadId = threadId;
-    this.messagesTotalCount = 0;
     this.olderCursor = null;
     this.lastCheckpointAt = '';
     this.checkpointBaselineInitialized = false;
@@ -201,9 +199,8 @@ export class ChatSessionService implements OnDestroy {
       this.messageService.listMessages(threadId, 1, MESSAGE_LIST_PAGE_SIZE).subscribe({
         next: response => {
           if (!this.isActiveThread(requestedThreadId)) return;
-          this.messagesTotalCount = response.total_count ?? response.results.length;
-          this.olderCursor = response.next_cursor ?? null;
-          this.hasMoreOlderMessages.set(this.messages().length < this.messagesTotalCount);
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
           this._loading.set(false);
           // Adopt the loaded thread's newest checkpoint as the baseline so only
           // checkpoints that complete afterward trigger an in-place context refresh.
@@ -277,8 +274,7 @@ export class ChatSessionService implements OnDestroy {
             if (nearBottom) this.reloadFromLatest(threadId);
             return;
           }
-          this.messagesTotalCount = result.total;
-          this.hasMoreOlderMessages.set(this.messages().length < this.messagesTotalCount);
+          // Only newer messages were merged in, so whether older ones remain is unchanged.
           this.turn.resumeIfRunning(threadId);
           this.markActiveThreadRead(threadId);
         },
@@ -302,9 +298,8 @@ export class ChatSessionService implements OnDestroy {
       this.messageService.listMessages(threadId, 1, MESSAGE_LIST_PAGE_SIZE).subscribe({
         next: response => {
           if (!this.isActiveThread(threadId)) return;
-          this.messagesTotalCount = response.total_count ?? response.results.length;
-          this.olderCursor = response.next_cursor ?? null;
-          this.hasMoreOlderMessages.set(this.messages().length < this.messagesTotalCount);
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
           this.turn.resumeIfRunning(threadId);
           this.markActiveThreadRead(threadId);
         },
@@ -344,9 +339,8 @@ export class ChatSessionService implements OnDestroy {
           if (!this.isActiveThread(threadId)) {
             return;
           }
-          this.olderCursor = response.next_cursor ?? null;
-          this.messagesTotalCount = response.total_count ?? this.messagesTotalCount;
-          this.hasMoreOlderMessages.set(!!this.olderCursor && this.messages().length < this.messagesTotalCount);
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
         },
         error: () => {
           if (!this.isActiveThread(threadId)) {
@@ -392,9 +386,8 @@ export class ChatSessionService implements OnDestroy {
                 resolve(false);
                 return;
               }
-              this.olderCursor = response.next_cursor ?? null;
-              this.messagesTotalCount = response.total_count ?? this.messagesTotalCount;
-              this.hasMoreOlderMessages.set(!!this.olderCursor && this.messages().length < this.messagesTotalCount);
+              this.olderCursor = response.next_cursor || null;
+              this.hasMoreOlderMessages.set(!!this.olderCursor);
               step();
             },
             error: () => resolve(isLoaded()),
@@ -408,7 +401,6 @@ export class ChatSessionService implements OnDestroy {
     this.turn.reset();
     this.deferredSync = null;
     this.activeThreadId = null;
-    this.messagesTotalCount = 0;
     this.olderCursor = null;
     this.hasMoreOlderMessages.set(false);
     this.loadingOlderMessages.set(false);

@@ -341,7 +341,10 @@ func (h *Handler) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 	minDateStr := queryParams.Get("min_date")
 	maxDateStr := queryParams.Get("max_date")
 
-	filters := models.ChatMessageFilters{}
+	// include_total=false skips counting every message in the chat; the client pages on
+	// next_cursor (empty when nothing older remains) instead. Omitted, total_count is returned
+	// as before.
+	filters := models.ChatMessageFilters{SkipTotal: queryParams.Get("include_total") == "false"}
 
 	if origin != "" {
 		msgOrigin := models.MessageOrigin(origin)
