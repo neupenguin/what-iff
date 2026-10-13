@@ -117,7 +117,7 @@ func autoMoodSelectionSkipped(chat *models.Chat) bool {
 
 func (a *Agent) isFirstUserMessageInChat(ctx context.Context, userID, chatID, currentMessageID uuid.UUID) bool {
 	origin := models.MessageOriginUser
-	resp, err := a.ds.ListChatMessages(ctx, userID, chatID, 1, 2, models.ChatMessageFilters{Origin: &origin})
+	resp, err := a.ds.ListChatMessages(ctx, userID, chatID, 1, 2, models.ChatMessageFilters{Origin: &origin, SkipTotal: true})
 	if err != nil {
 		a.logger.Warn("mood_context: failed to determine first user message", zap.Error(err))
 		return false

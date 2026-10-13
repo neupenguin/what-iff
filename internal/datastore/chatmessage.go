@@ -700,7 +700,8 @@ func (d *Datastore) ListChatMessagesAfter(ctx context.Context, userID, chatID uu
 
 // listChatMessages shares authorization, filters, and exact totals for the two message views.
 // chronological pages are strictly ascending by (sent_at, id) after their keyset position; the UI
-// view is descending and offset-paginated.
+// view is descending and offset-paginated. Every page fetches one row past pageSize to report
+// HasMore, so a caller that sets filters.SkipTotal can page without counting the whole chat.
 func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, afterSentAt time.Time, afterID uuid.UUID, chronological bool, beforeSentAt time.Time, beforeID uuid.UUID, filters models.ChatMessageFilters) (*models.PaginatedResponse, error) {
 	// Start transaction
 	tx, err := d.dbClient.Tx(ctx)
@@ -778,13 +779,16 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 	}
 
 	// Get total count
-	totalCount, err := query.Count(ctx)
-	if err != nil {
-		d.logger.Error(i18n.T1("count.failed", "Entity", "chat messages"), zap.Error(err))
-		if rerr := tx.Rollback(); rerr != nil {
-			d.logger.Error(i18n.T("tx.rollback_failed"), zap.Error(rerr))
+	totalCount := 0
+	if !filters.SkipTotal {
+		totalCount, err = query.Count(ctx)
+		if err != nil {
+			d.logger.Error(i18n.T1("count.failed", "Entity", "chat messages"), zap.Error(err))
+			if rerr := tx.Rollback(); rerr != nil {
+				d.logger.Error(i18n.T("tx.rollback_failed"), zap.Error(rerr))
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	// Apply pagination. Chronological retrieval uses keyset pagination so an insertion before a
@@ -801,7 +805,7 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 			))
 		}
 		query = query.
-			Limit(pageSize).
+			Limit(pageSize+1).
 			Order(ent.Asc(chatmessage.FieldSentAt), ent.Asc(chatmessage.FieldID))
 	} else {
 		query = query.Order(ent.Desc(chatmessage.FieldSentAt), ent.Desc(chatmessage.FieldID))
@@ -812,13 +816,13 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 			query = query.Where(chatmessage.Or(
 				chatmessage.SentAtLT(beforeSentAt),
 				chatmessage.And(chatmessage.SentAtEQ(beforeSentAt), chatmessage.IDLT(beforeID)),
-			)).Limit(pageSize)
+			)).Limit(pageSize + 1)
 		} else {
 			if pageNum < 1 {
 				pageNum = 1
 			}
 			offset := (pageNum - 1) * pageSize
-			query = query.Offset(offset).Limit(pageSize)
+			query = query.Offset(offset).Limit(pageSize + 1)
 		}
 	}
 
@@ -831,6 +835,10 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 		}
 		return nil, err
 	}
+	hasMore := len(entChatMessages) > pageSize
+	if hasMore {
+		entChatMessages = entChatMessages[:pageSize]
+	}
 
 	// Convert to model types
 	chatMessageModels := make([]any, len(entChatMessages))
@@ -839,9 +847,9 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 	}
 
 	// The descending UI view exposes a keyset cursor for continuing older: the (sent_at, id) of
-	// the oldest row in this batch. Empty when the batch is empty (nothing older to fetch).
+	// the oldest row in this batch. Empty when nothing older is left to fetch.
 	var nextCursor string
-	if !chronological && len(entChatMessages) > 0 {
+	if !chronological && hasMore {
 		oldest := entChatMessages[len(entChatMessages)-1]
 		nextCursor = models.EncodeMessageCursor(oldest.SentAt, oldest.ID)
 	}
@@ -857,6 +865,7 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 		TotalCount: totalCount,
 		Page:       pageNum,
 		NextCursor: nextCursor,
+		HasMore:    &hasMore,
 	}, nil
 }
 
@@ -887,6 +896,19 @@ func (d *Datastore) FirstChatMessageSentAtSince(ctx context.Context, userID, cha
 
 // GetChatMessageCount returns the count of messages in a chat, optionally filtered by origin
 func (d *Datastore) GetChatMessageCount(ctx context.Context, userID, chatID uuid.UUID, originFilter models.MessageOriginFilter) (int, error) {
+	return d.countChatMessages(ctx, userID, chatID, originFilter, false)
+}
+
+// ChatHasMessages reports whether a chat has any message matching originFilter. It stops at the
+// first match, where GetChatMessageCount reads every message in the chat.
+func (d *Datastore) ChatHasMessages(ctx context.Context, userID, chatID uuid.UUID, originFilter models.MessageOriginFilter) (bool, error) {
+	n, err := d.countChatMessages(ctx, userID, chatID, originFilter, true)
+	return n > 0, err
+}
+
+// countChatMessages backs GetChatMessageCount and ChatHasMessages. With existOnly it returns 1
+// or 0 from an EXISTS query instead of counting.
+func (d *Datastore) countChatMessages(ctx context.Context, userID, chatID uuid.UUID, originFilter models.MessageOriginFilter, existOnly bool) (int, error) {
 	// Default to ALL if empty
 	if originFilter == "" {
 		originFilter = models.MessageOriginFilterAll
@@ -957,7 +979,16 @@ func (d *Datastore) GetChatMessageCount(ctx context.Context, userID, chatID uuid
 	}
 
 	// Get count
-	count, err := query.Count(ctx)
+	var count int
+	if existOnly {
+		var exists bool
+		exists, err = query.Exist(ctx)
+		if exists {
+			count = 1
+		}
+	} else {
+		count, err = query.Count(ctx)
+	}
 	if err != nil {
 		d.logger.Error(i18n.T1("count.failed", "Entity", "chat messages"), zap.Error(err))
 		if rerr := tx.Rollback(); rerr != nil {

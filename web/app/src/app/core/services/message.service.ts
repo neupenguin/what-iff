@@ -49,9 +49,12 @@ export class MessageService {
    * decouples the batch size from a fixed page size, so scroll-back and jump-to-bookmark can
    * request large batches without offset math. A cursor request always prepends (it is an older
    * batch); otherwise `page === 1` replaces the list and later pages prepend.
+   *
+   * Asks the server to skip `total_count` (counting every message in the chat); callers page on
+   * `has_more` and `next_cursor` instead.
    */
   listMessages(chatId: string, page: number = 1, limit: number = 50, filters?: ChatMessageFilters, cursor?: string): Observable<PaginatedResponse<ChatMessage>> {
-    let params: any = { limit: limit.toString() };
+    let params: any = { limit: limit.toString(), include_total: 'false' };
     if (cursor) {
       params.cursor = cursor;
     } else {
@@ -92,28 +95,27 @@ export class MessageService {
    * Non-destructively reconcile the newest page into the loaded list: update messages already
    * present (streaming→final, read status, bookmarks, context breakdown) and append any that
    * arrived while away — without dropping older loaded pages or moving scroll. Returns how many
-   * new messages were appended, the server total, and whether a gap was detected (more than a
-   * page arrived while away, so the loaded tail no longer overlaps the newest page — the caller
-   * decides whether a full reload is worthwhile).
+   * new messages were appended and whether a gap was detected (more than a page arrived while
+   * away, so the loaded tail no longer overlaps the newest page — the caller decides whether a
+   * full reload is worthwhile).
    */
-  reconcileLatestPage(chatId: string, limit: number = 50): Observable<{ appended: number; total: number; gap: boolean }> {
-    const params = { page: '1', limit: limit.toString() };
+  reconcileLatestPage(chatId: string, limit: number = 50): Observable<{ appended: number; gap: boolean }> {
+    const params = { page: '1', limit: limit.toString(), include_total: 'false' };
     return this.http
       .get<PaginatedResponse<ChatMessage>>(`${this.apiUrl}/${chatId}/chat-message`, { params })
       .pipe(
         map(response => {
           const fresh = [...response.results].reverse(); // oldest-first
-          const total = response.total_count ?? fresh.length;
           const current = this.messagesSubject.getValue();
           if (current.length === 0) {
             this.messagesSubject.next(fresh);
-            return { appended: fresh.length, total, gap: false };
+            return { appended: fresh.length, gap: false };
           }
           const known = new Set(current.map(m => m.id));
           const hasOverlap = fresh.some(m => known.has(m.id));
           if (!hasOverlap) {
             // The loaded tail is older than the entire newest page — merging would leave a hole.
-            return { appended: 0, total, gap: true };
+            return { appended: 0, gap: true };
           }
           const freshById = new Map(fresh.map(m => [m.id, m]));
           // A server reconciliation is newer than a pending optimistic bookmark update.
@@ -121,7 +123,7 @@ export class MessageService {
           const merged = current.map(m => freshById.get(m.id) ?? m);
           const appended = fresh.filter(m => !known.has(m.id));
           this.messagesSubject.next(appended.length > 0 ? [...merged, ...appended] : merged);
-          return { appended: appended.length, total, gap: false };
+          return { appended: appended.length, gap: false };
         }),
         catchError(this.handleError),
       );

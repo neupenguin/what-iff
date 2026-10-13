@@ -99,6 +99,9 @@ func (Memory) Edges() []ent.Edge {
 // Indexes of the Memory.
 func (Memory) Indexes() []ent.Index {
 	return []ent.Index{
+		// The owner FK alone: ent puts fields before edge columns, so (scope, owner) below
+		// can't seek by owner.
+		index.Edges("owner"),
 		index.Edges("owner").Fields("scope"),
 		index.Fields("pinned_personality_id"),
 		index.Fields("link_group_id"),

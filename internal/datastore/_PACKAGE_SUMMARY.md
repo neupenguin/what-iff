@@ -74,6 +74,11 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   Because it is user-facing via the `limit` query param, it clamps the batch size to `[1, maxMessagePageSize]` (500, matching the OpenAPI max) rather than erroring on an oversized request.
   `ListChatMessagesAfter` is the forward-only retrieval path for agent thread walks; it orders by `(sent_at, id)` ascending and accepts that same keyset cursor to avoid unstable ties and offset drift.
   The opaque cursor token is minted/parsed by `models.EncodeMessageCursor`/`DecodeMessageCursor` (URL-safe base64 of `sent_at|id`), so the datastore and the HTTP handler share one contract.
+  Every variant fetches one row past the page to set `HasMore`, and `NextCursor` is set only when older rows remain.
+  The exact `TotalCount` costs a pass over every message in the chat, so callers that only need the page set `ChatMessageFilters.SkipTotal` (the agent's context build, mood and recall scans, and the web UI via `include_total=false`).
+  `ChatHasMessages` is the `EXISTS` form of `GetChatMessageCount` for "is there any?" checks.
+- **FK-first indexes:** ent orders an index's plain fields before its edge columns, so `index.Edges("chat").Fields("sent_at")` is `(sent_at, chat_messages)` and cannot seek by chat.
+  `chat_messages`, `chats` and `memories` therefore also carry a single-column index on their parent FK (`index.Edges(...)` alone); add one wherever queries filter by an edge without its leading field.
 - **Context X-ray column:** `chat_message.context_breakdown` is a typed **`jsonb`** column (`field.JSON` over `*models.ContextBreakdown`); ent handles (un)marshalling, so `toChatMessageModel` just surfaces it (guarding empty snapshots) and `SetChatMessageContextBreakdown` sets the pointer (assistant rows only; best-effort).
   It is a scalar column rather than a `ChatMessageContextItem` row on purpose — context items are re-fed into the model context, and this snapshot must not be.
   It's a value object (write-once, read-with-parent, never queried by field), so no child table; `jsonb` (not text) keeps DB-side JSON queries open and the embedded `version` guards shape evolution.

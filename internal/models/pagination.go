@@ -50,4 +50,8 @@ type PaginatedResponse struct {
 	// row in this response (empty when there is nothing more). Only the descending chat-message
 	// view sets it; other paginated endpoints omit it.
 	NextCursor string `json:"next_cursor,omitempty"`
+	// HasMore reports whether rows exist past this page, found by fetching one extra row rather
+	// than counting them. Only the chat-message views set it; it is how a caller that skipped
+	// the total (ChatMessageFilters.SkipTotal) knows whether to keep paging.
+	HasMore *bool `json:"has_more,omitempty"`
 }

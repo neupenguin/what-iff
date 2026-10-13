@@ -225,9 +225,11 @@ func (b *messageContextBuilder) loadHistoryMessages(ctx context.Context, userID,
 
 // fetchRecentMessages fetches up to pageSize messages from the DB (newest-first),
 // filtering out the excluded message ID and empty-body rows.
-// filters is applied directly to the DB query (e.g. MinDate, MaxDate).
+// filters is applied directly to the DB query (e.g. MinDate, MaxDate). The page's total is never
+// read here, so the count is skipped.
 // logContext is included in the debug log on error.
 func (b *messageContextBuilder) fetchRecentMessages(ctx context.Context, userID, chatID uuid.UUID, excludeMessageID *uuid.UUID, pageSize int, filters models.ChatMessageFilters, logContext string) []*models.ChatMessage {
+	filters.SkipTotal = true
 	resp, err := b.ds.ListChatMessages(ctx, userID, chatID, 1, pageSize, filters)
 	if err != nil {
 		b.telemetry.Logger.Info(logContext+": failed to fetch messages", zap.Error(err),

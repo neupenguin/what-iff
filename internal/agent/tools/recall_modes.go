@@ -141,7 +141,7 @@ func (t *RecallTool) gather(ctx context.Context, chat *models.Chat, query, src s
 	if wantsConversations(src) {
 		if currentConversation {
 			// Keyword + time scan of the current conversation (no per-message embeddings yet).
-			filters := models.ChatMessageFilters{Query: strPtr(query), MinDate: window.Min, MaxDate: window.Max}
+			filters := models.ChatMessageFilters{Query: strPtr(query), MinDate: window.Min, MaxDate: window.Max, SkipTotal: true}
 			page, err := t.store.ListChatMessages(ctx, chat.UserID, chat.ID, 1, maxChunks, filters)
 			if err != nil {
 				t.logger.Warn("recall: current-conversation scan failed", zap.Error(err))

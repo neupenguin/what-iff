@@ -7205,6 +7205,8 @@ export interface paths {
                     min_date?: string;
                     /** @description Filter messages sent before this date */
                     max_date?: string;
+                    /** @description Set to `false` to skip counting every matching message in the chat; `total_count` is then 0 and the client pages on `has_more`. Omitted or any other value returns the exact `total_count` as before. */
+                    include_total?: boolean;
                 };
                 header?: never;
                 path: {
@@ -12157,6 +12159,8 @@ export interface components {
             page?: number;
             /** @description Opaque keyset token for continuing a cursor-paginated view past the last row in this response (absent when there is nothing more). Only the descending chat-message view sets it. */
             next_cursor?: string;
+            /** @description Whether rows exist past this page, found by fetching one extra row rather than counting. Only the chat-message views set it. */
+            has_more?: boolean;
         };
         /**
          * @example {
