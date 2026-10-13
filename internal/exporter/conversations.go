@@ -223,6 +223,10 @@ func (cw *ConversationsWriter) Add(c ConversationInput) error {
 	return nil
 }
 
+// Written is the number of conversations written so far: those Added minus any omitted for having
+// no exportable messages.
+func (cw *ConversationsWriter) Written() int { return cw.written }
+
 // Close ends the array. It does not close the underlying writer.
 func (cw *ConversationsWriter) Close() error {
 	end := "\n]\n"

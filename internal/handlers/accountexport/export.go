@@ -217,11 +217,7 @@ func (h *Handler) writeAccountZip(ctx context.Context, src accountExportSource, 
 		return nil, err
 	}
 	conversations := exporter.NewConversationsWriter(convWriter)
-	convCount := 0
-	if err := src.ForEachExportConversation(ctx, userID, func(c exporter.ConversationInput) error {
-		convCount++
-		return conversations.Add(c)
-	}); err != nil {
+	if err := src.ForEachExportConversation(ctx, userID, conversations.Add); err != nil {
 		return nil, fmt.Errorf("conversations: %w", err)
 	}
 	if err := conversations.Close(); err != nil {
@@ -260,7 +256,8 @@ func (h *Handler) writeAccountZip(ctx context.Context, src accountExportSource, 
 	}
 
 	counts := map[string]int{
-		"conversations": convCount,
+		// What conversations.json holds: chats with no exportable message are omitted from it.
+		"conversations": conversations.Written(),
 		"personalities": len(personas),
 		"files":         len(fileObjs),
 	}

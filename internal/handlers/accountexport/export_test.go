@@ -169,7 +169,7 @@ func exportFixture(t *testing.T, conversations int) (*fakeExportSource, uuid.UUI
 			},
 		})
 	}
-	// One conversation with no exportable message: counted, but omitted from conversations.json.
+	// One conversation with no exportable message: omitted from conversations.json and its count.
 	src.convs = append(src.convs, exporter.ConversationInput{
 		ID: uuid.New(), Title: "empty", CreatedAt: base.Add(time.Duration(conversations) * time.Minute),
 		Messages: []exporter.MessageInput{{Origin: models.MessageOriginUser, Text: "", SentAt: base}},
@@ -244,7 +244,9 @@ func TestStreamAccountZipStreamsArchiveIntoUpload(t *testing.T) {
 	require.Greater(t, store.reads, 100, "the archive arrived in many small reads")
 	stored := store.objects["exports/a.zip"]
 	require.Equal(t, int64(len(stored)), builtSize, "the counted size is the uploaded size")
-	wantCounts := map[string]int{"conversations": 301, "personalities": 1, "files": 1}
+	// 300, not 301: the fixture's empty conversation is omitted from conversations.json, so it
+	// isn't counted either.
+	wantCounts := map[string]int{"conversations": 300, "personalities": 1, "files": 1}
 	require.Equal(t, wantCounts, counts)
 	require.Equal(t, wantCounts, builtCounts)
 
