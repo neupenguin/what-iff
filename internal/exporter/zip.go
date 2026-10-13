@@ -1,6 +1,9 @@
 package exporter
 
-import "archive/zip"
+import (
+	"archive/zip"
+	"io"
+)
 
 // ZipTree renders the projection into a zip archive (the MVP delivery format). It implements Tree by
 // creating one archive entry per Write. Entries are written in call order; the projection writers
@@ -15,10 +18,16 @@ func NewZipTree(zw *zip.Writer) *ZipTree {
 }
 
 func (t *ZipTree) Write(path string, content []byte) error {
-	w, err := t.zw.Create(path)
+	w, err := t.Create(path)
 	if err != nil {
 		return err
 	}
 	_, err = w.Write(content)
 	return err
+}
+
+// Create starts an entry at path for content too large to hold at once (written in pieces). The
+// writer is valid until the next Write or Create on the tree.
+func (t *ZipTree) Create(path string) (io.Writer, error) {
+	return t.zw.Create(path)
 }

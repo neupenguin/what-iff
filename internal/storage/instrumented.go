@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
@@ -22,7 +23,7 @@ const (
 //
 // The optional ObjectLister and Presigner interfaces are preserved, so callers' type
 // assertions keep working. Presigning is local signing with no network call, so it is passed
-// through untimed.
+// through untimed. The wrapper is always a StreamUploader (UploadStream, timed as put_object).
 func Instrument(fs FileStore) FileStore {
 	if fs == nil {
 		return nil
@@ -70,6 +71,15 @@ func (s instrumentedStore) time(ctx context.Context, op string) func(error) {
 func (s instrumentedStore) UploadFile(ctx context.Context, key string, content []byte, contentType string) error {
 	done := s.time(ctx, opPutObject)
 	err := s.inner.UploadFile(ctx, key, content, contentType)
+	done(err)
+	return err
+}
+
+// UploadStream is timed as put_object. It streams when the wrapped store does and otherwise falls
+// back to UploadFile, so every instrumented store is a StreamUploader.
+func (s instrumentedStore) UploadStream(ctx context.Context, key string, r io.Reader, contentType string) error {
+	done := s.time(ctx, opPutObject)
+	err := UploadStream(ctx, s.inner, key, r, contentType)
 	done(err)
 	return err
 }

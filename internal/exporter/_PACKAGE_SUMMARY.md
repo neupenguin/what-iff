@@ -28,6 +28,8 @@ memory-export format so `ds.ImportMemories` consumes them directly.)
 
 - `Tree` is the sink: `ZipTree` (production, over `archive/zip`) or `MemTree` (tests). The projection
   is pure and unit-tested; conversation output is deterministic (canonical ordering).
+- `ConversationsWriter` streams `conversations.json` one conversation at a time (callers add them in canonical order), and `ZipTree.Create` opens an entry for such streamed content.
+  Its bytes are identical to encoding the whole array at once; `BuildConversationsJSON` sorts and then uses it, and a test pins the equivalence.
 - Orchestration (fetch → project → ZIP → S3 → presign → email; and import) lives in
   `internal/handlers/accountexport`; the datastore fetchers are in `internal/datastore/accountexport.go`.
 

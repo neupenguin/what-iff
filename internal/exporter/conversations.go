@@ -3,6 +3,7 @@ package exporter
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"sort"
 	"time"
 
@@ -10,10 +11,10 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 )
 
-// conversationsFile is the repo path of the round-trippable conversation export. It uses the
+// ConversationsFile is the repo path of the round-trippable conversation export. It uses the
 // Anthropic (Claude) conversations.json shape, which our own importer parses in-house
 // (internal/handlers/chat/anthropic_import.go) — so an exported bundle re-imports cleanly.
-const conversationsFile = "conversations.json"
+const ConversationsFile = "conversations.json"
 
 // ConversationInput is a clean, id-stripped conversation ready for projection. The only identifier
 // carried is ID, and it is emitted solely as the export "uuid" the importer hashes for dedup
@@ -91,7 +92,7 @@ func WriteConversations(tree Tree, convs []ConversationInput) error {
 	if err != nil {
 		return err
 	}
-	return tree.Write(conversationsFile, b)
+	return tree.Write(ConversationsFile, b)
 }
 
 // ParsedConversation is a decoded conversations.json entry (import side). It mirrors the emitted
@@ -163,50 +164,108 @@ func BuildConversationsJSON(convs []ConversationInput) ([]byte, error) {
 		return ordered[i].ID.String() < ordered[j].ID.String()
 	})
 
-	out := make([]exportConversation, 0, len(ordered))
-	for _, c := range ordered {
-		msgs := make([]exportChatMessage, 0, len(c.Messages))
-		for _, m := range c.Messages {
-			sender, ok := senderForOrigin(m.Origin)
-			if !ok || m.Text == "" {
-				continue
-			}
-			msgs = append(msgs, exportChatMessage{
-				Sender:    sender,
-				Text:      m.Text,
-				CreatedAt: m.SentAt.UTC(),
-			})
-		}
-		if len(msgs) == 0 {
-			continue
-		}
-		out = append(out, exportConversation{
-			UUID:                            c.ID.String(),
-			Name:                            c.Title,
-			CreatedAt:                       c.CreatedAt.UTC(),
-			ChatMessages:                    msgs,
-			WhatiffPersonalityID:            c.PersonalityID,
-			WhatiffCheckpointSummary:        c.CheckpointSummary,
-			WhatiffCheckpointUserMessageCnt: c.CheckpointUserMessageCount,
-			WhatiffLastCheckpointAt:         c.LastCheckpointAt,
-			WhatiffDisabledTools:            c.DisabledTools,
-			WhatiffTags:                     c.Tags,
-			WhatiffIsFavorite:               c.IsFavorite,
-			WhatiffIsAutoMood:               c.IsAutoMood,
-			WhatiffContextScope:             exportedContextScope(c.ContextScope),
-		})
-	}
-
-	// Indented + HTML-escaping disabled: the bundle is meant to be read and diffed by humans and
-	// coding agents, and message text routinely contains <, >, & that must not become \u escapes.
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
+	cw := NewConversationsWriter(&buf)
+	for _, c := range ordered {
+		if err := cw.Add(c); err != nil {
+			return nil, err
+		}
+	}
+	if err := cw.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// ConversationsWriter streams conversations.json one conversation at a time, so an export never
+// holds every conversation at once. Callers Add conversations in (CreatedAt, ID) order, the order
+// BuildConversationsJSON sorts into, then Close; the bytes are the same as BuildConversationsJSON's.
+type ConversationsWriter struct {
+	w       io.Writer
+	written int
+	scratch bytes.Buffer
+}
+
+// NewConversationsWriter starts a conversations.json stream on w.
+func NewConversationsWriter(w io.Writer) *ConversationsWriter {
+	return &ConversationsWriter{w: w}
+}
+
+// Add writes one conversation as the next array element. A conversation with no surviving messages
+// is omitted, as in BuildConversationsJSON.
+func (cw *ConversationsWriter) Add(c ConversationInput) error {
+	conv, ok := projectConversation(c)
+	if !ok {
+		return nil
+	}
+	// Indented + HTML-escaping disabled: the bundle is meant to be read and diffed by humans and
+	// coding agents, and message text routinely contains <, >, & that must not become \u escapes.
+	// Each element is indented as it would be one level inside the array; the encoder leaves the
+	// first line unprefixed and appends a newline, which the separators below account for.
+	cw.scratch.Reset()
+	enc := json.NewEncoder(&cw.scratch)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("  ", "  ")
+	if err := enc.Encode(conv); err != nil {
+		return err
+	}
+	sep := ",\n  "
+	if cw.written == 0 {
+		sep = "[\n  "
+	}
+	if _, err := io.WriteString(cw.w, sep); err != nil {
+		return err
+	}
+	if _, err := cw.w.Write(bytes.TrimSuffix(cw.scratch.Bytes(), []byte("\n"))); err != nil {
+		return err
+	}
+	cw.written++
+	return nil
+}
+
+// Close ends the array. It does not close the underlying writer.
+func (cw *ConversationsWriter) Close() error {
+	end := "\n]\n"
+	if cw.written == 0 {
+		end = "[]\n"
+	}
+	_, err := io.WriteString(cw.w, end)
+	return err
+}
+
+// projectConversation maps c to its export shape. ok=false when no message survives the filter
+// (empty text or a non-user/assistant role), which drops the conversation from the export.
+func projectConversation(c ConversationInput) (exportConversation, bool) {
+	msgs := make([]exportChatMessage, 0, len(c.Messages))
+	for _, m := range c.Messages {
+		sender, ok := senderForOrigin(m.Origin)
+		if !ok || m.Text == "" {
+			continue
+		}
+		msgs = append(msgs, exportChatMessage{
+			Sender:    sender,
+			Text:      m.Text,
+			CreatedAt: m.SentAt.UTC(),
+		})
+	}
+	if len(msgs) == 0 {
+		return exportConversation{}, false
+	}
+	return exportConversation{
+		UUID:                            c.ID.String(),
+		Name:                            c.Title,
+		CreatedAt:                       c.CreatedAt.UTC(),
+		ChatMessages:                    msgs,
+		WhatiffPersonalityID:            c.PersonalityID,
+		WhatiffCheckpointSummary:        c.CheckpointSummary,
+		WhatiffCheckpointUserMessageCnt: c.CheckpointUserMessageCount,
+		WhatiffLastCheckpointAt:         c.LastCheckpointAt,
+		WhatiffDisabledTools:            c.DisabledTools,
+		WhatiffTags:                     c.Tags,
+		WhatiffIsFavorite:               c.IsFavorite,
+		WhatiffIsAutoMood:               c.IsAutoMood,
+		WhatiffContextScope:             exportedContextScope(c.ContextScope),
+	}, true
 }
 
 // exportedContextScope is the scope written to an export: nothing for the account default, so

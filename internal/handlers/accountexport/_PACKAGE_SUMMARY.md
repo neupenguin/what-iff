@@ -33,6 +33,11 @@ Authenticated user account portability: ZIP export by email and additive ZIP imp
 - The OpenAI client used to regenerate memory embeddings on import is built on the server's shared provider HTTP client (passed to `NewHandler`).
   That keeps import embeddings on the instrumented transport, and on the deny-network transport under a non-vendor `LLM_BACKEND`, like every other provider call.
 - Files are an inventory only; their bytes are deliberately outside this export format.
+- **Export runs in bounded memory, whatever the account's size.**
+  `streamAccountZip` writes the ZIP into one end of an `io.Pipe` while `storage.UploadStream` reads the other (S3 multipart parts), so the archive is never held whole.
+  Conversations stream into `conversations.json` one chat at a time (`ForEachExportConversation` + `exporter.ConversationsWriter`), and `ExportMemories` writes the nested `memories.zip` straight into its archive entry.
+  The archive bytes and entry order are unchanged from the earlier buffered build; size is counted as it streams.
+  A failed build or upload aborts the partial upload, and the failure is attributed to whichever side failed first.
 - `conversations.json` remains Anthropic-compatible but carries `whatiff_*` state for account round-trips.
   Personality IDs are source references only; import maps them to fresh destination IDs before restoring chats.
 - Import order is personalities → chats → memories.
@@ -51,12 +56,13 @@ Authenticated user account portability: ZIP export by email and additive ZIP imp
   The wait for an import slot (`acquireImportSlot`, capacity `maxConcurrentAccountImports`) is recorded on `whatiff.job.queue.wait`; it is the only real queue in the API.
   The import timeout (`importJobTimeout`, 30 minutes) starts before that wait and covers it, so an import stuck ahead of a queued one can't hold it forever: a queued import that times out without a slot is failed with a retry message and tracked with a `timeout` outcome.
   Imports run under the server's lifecycle context (passed to `NewHandler`), not the request that started them, so a shutdown interrupts a queued or running import: it is failed with a retry message and tracked with a `cancelled` outcome.
-  Phases are timed on `whatiff.file.operation.duration` (export: `build_zip`, `email`; import: `validate`, `personalities`, `conversations`, `summaries`, `memories`), and archive sizes and section counts go on `whatiff.file.size` and `whatiff.file.operation.items`.
+  Phases are timed on `whatiff.file.operation.duration` (export: `build_zip`, which includes the interleaved streaming upload, and `email`; import: `validate`, `personalities`, `conversations`, `summaries`, `memories`), and archive sizes and section counts go on `whatiff.file.size` and `whatiff.file.operation.items`.
   Memory counts are recorded by the datastore memory importer (operation `memory_import`), not repeated here.
 - Account-import uploads are staged to temporary files, restored by a bounded detached worker, and deleted regardless of terminal outcome; `AccountImportProgress` carries phases and the terminal result for polling.
 
 ## Testing
 - `import_test.go` covers bounded ZIP reads, archive-entry limits, duplicate nested-memory entries, reference remapping, and best-effort Summary-scope indexing candidates.
+- `export_test.go` covers the streamed export against a store that only accepts readers: bytes reach the upload before the build finishes, the archive matches the buffered build entry for entry, and build failures, upload failures and build panics abort the upload without deadlocking.
 - `metrics_test.go` covers the import-slot queue wait and the bounded item kinds recorded for imports and exports.
 - `internal/handlers/chat/accountexport_roundtrip_test.go` verifies exported conversations round-trip through the existing importer.
 

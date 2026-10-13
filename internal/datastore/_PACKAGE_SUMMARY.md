@@ -121,7 +121,8 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   It is **not one transaction**; partial restores are intentional, and operators can rerun the same archive after fixing the failure.
   JSONL sections are loaded one at a time under the admin upload cap; broader/non-internal use should switch this to streaming batch processing.
   **Audit:** one `account_backup` / `import` row summarizes all sections (including memory counts); the inner memory ZIP import does **not** also write `memory_pack` rows (avoids duplicate audit entries).
-- **User account export:** `ExportConversationInputs` walks each chat's messages by the ordered `(sent_at, id)` cursor, rather than `OFFSET`, so very long conversations preserve stable ordering without progressively slower page scans.
+- **User account export:** `ForEachExportConversation` hands chats to a callback one at a time, paging chats by the ordered `(created_at, id)` cursor and each chat's messages by `(sent_at, id)`, rather than `OFFSET`, so very long conversations preserve stable ordering without progressively slower page scans.
+  Only one page of chat rows and one conversation's messages are in memory at once; `ExportConversationInputs` collects the same walk into a slice.
 - **Batched embedding imports:** imported embeddings use the deterministic memory UUID as their primary key and conflict on that primary key.
   This preserves retry safety for legacy PostgreSQL databases that lack the Ent-declared unique constraint on `embedding_memory`.
 - **Personality auto-pin:** `autoPinPersonalityIDTx` (`memory.go`) is the one rule for every memory created while a personality is active: `CreateMemory` (the `create_memory` tool), `PersistMemoryMergeGroup` new-only folds and `PersistMemoryLinkGroup` new members.
