@@ -26,21 +26,70 @@ security:
   - bearerAuth: []
 
 paths:
-  # Health Check
+  # Health Checks
   /health:
     get:
-      summary: Health check endpoint
-      description: Returns the health status of the API
+      summary: Health check endpoint (legacy)
+      description: >
+        Pings the database and returns 503 if the ping fails; identical to
+        /health/ready. Kept for existing callers. Load
+        balancer health checks should use /health/live instead: a
+        database-backed check fails on every instance at once during a
+        database blip, so the load balancer would replace them all together.
       tags: [System]
       security: []
       responses:
         '200':
-          description: API is running
+          description: API and database are reachable
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: "API is running"
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database ping failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/live:
+    get:
+      summary: Liveness check
+      description: >
+        Process liveness only. Returns 200 whenever the HTTP server can answer
+        and never touches the database or other dependencies. This is the
+        endpoint for load balancer (ALB) target-group health checks.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      summary: Readiness check
+      description: >
+        Pings the database (short timeout) and returns 503 if the ping fails.
+        For dashboards and humans; not for load balancer health checks.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: API and database are reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database ping failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
 
   # Build provenance
   /version:
@@ -7088,6 +7137,25 @@ components:
       description: Static webhook API token created via /webhook-tokens. Webhook calls act as the user who created the token, limited to the scopes the token was created with (`messages:write`, `chat:read`); a route that needs a scope the token lacks returns 403.
 
   schemas:
+
+    # Health Check Schemas
+    HealthResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        checks:
+          type: object
+          description: Per-dependency results (e.g. `database`); empty for /health/live.
+          additionalProperties:
+            type: string
+            enum: [ok, error]
+      example:
+        status: healthy
+        checks:
+          database: ok
 
     # User Management Schemas
     UserRegisterRequest:
