@@ -16,7 +16,7 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 )
 
-// accountExportBatchSize bounds per-query rows when walking a user's messages.
+// accountExportBatchSize bounds per-query rows when walking a user's chats and messages.
 const accountExportBatchSize = 200
 
 // HasRecentAccountExport reports whether this user has requested an export since the supplied time.
@@ -44,93 +44,142 @@ func (d *Datastore) HasRecentAccountImport(ctx context.Context, userID uuid.UUID
 		Exist(ctx)
 }
 
-// ExportConversationInputs assembles a user's chats as clean, id-stripped exporter.ConversationInput
-// values (the round-trippable conversations.json projection). Unlike the admin backup, this carries
-// no Postgres identity beyond chat.ID (used only as the importer's dedup key), and no
-// response_id / read_status / message ids.
+// ExportConversationInputs assembles all of a user's chats as clean, id-stripped
+// exporter.ConversationInput values (the round-trippable conversations.json projection). It holds
+// every conversation at once; the account export streams with ForEachExportConversation instead.
 func (d *Datastore) ExportConversationInputs(ctx context.Context, userID uuid.UUID) ([]exporter.ConversationInput, error) {
-	chats, err := d.dbClient.Chat.Query().
-		Where(entchat.HasOwnerWith(user.ID(userID))).
-		WithPersonality().
-		Order(ent.Asc(entchat.FieldCreatedAt), ent.Asc(entchat.FieldID)).
-		All(ctx)
+	convs := make([]exporter.ConversationInput, 0)
+	err := d.ForEachExportConversation(ctx, userID, func(c exporter.ConversationInput) error {
+		convs = append(convs, c)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
+	return convs, nil
+}
 
-	convs := make([]exporter.ConversationInput, 0, len(chats))
-	for _, c := range chats {
-		var personalityID *uuid.UUID
-		if c.Edges.Personality != nil {
-			id := c.Edges.Personality.ID
-			personalityID = &id
-		}
-		msgs := make([]exporter.MessageInput, 0)
-		var lastSentAt time.Time
-		var lastMessageID uuid.UUID
-		hasCursor := false
-		for {
-			query := d.dbClient.ChatMessage.Query().
-				Where(chatmessage.HasChatWith(entchat.ID(c.ID)))
-			if hasCursor {
-				// sent_at alone is not unique, so retain the ID tie-breaker used by the
-				// chronological ordering. The schema requires sent_at to be non-null.
-				// This avoids both skipped same-timestamp rows and increasingly
-				// expensive OFFSET scans on long conversations.
-				query = query.Where(
-					chatmessage.Or(
-						chatmessage.SentAtGT(lastSentAt),
-						chatmessage.And(
-							chatmessage.SentAtEQ(lastSentAt),
-							chatmessage.IDGT(lastMessageID),
-						),
+// ForEachExportConversation calls fn with each of a user's chats as a clean, id-stripped
+// exporter.ConversationInput, in (created_at, id) order. Unlike the admin backup, this carries no
+// Postgres identity beyond chat.ID (used only as the importer's dedup key), and no
+// response_id / read_status / message ids. Chats are paged, so only one page of chat rows and one
+// conversation's messages are held at a time. An error from fn stops the walk and is returned.
+func (d *Datastore) ForEachExportConversation(ctx context.Context, userID uuid.UUID, fn func(exporter.ConversationInput) error) error {
+	var lastCreatedAt time.Time
+	var lastChatID uuid.UUID
+	hasCursor := false
+	for {
+		query := d.dbClient.Chat.Query().
+			Where(entchat.HasOwnerWith(user.ID(userID)))
+		if hasCursor {
+			// Keyset on the export order, with the ID tie-breaker for chats created together.
+			query = query.Where(
+				entchat.Or(
+					entchat.CreatedAtGT(lastCreatedAt),
+					entchat.And(
+						entchat.CreatedAtEQ(lastCreatedAt),
+						entchat.IDGT(lastChatID),
 					),
-				)
-			}
-			batch, err := query.
-				Order(ent.Asc(chatmessage.FieldSentAt), ent.Asc(chatmessage.FieldID)).
-				Limit(accountExportBatchSize).
-				All(ctx)
+				),
+			)
+		}
+		chats, err := query.
+			WithPersonality().
+			Order(ent.Asc(entchat.FieldCreatedAt), ent.Asc(entchat.FieldID)).
+			Limit(accountExportBatchSize).
+			All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, c := range chats {
+			conv, err := d.exportConversationInput(ctx, c)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			if len(batch) == 0 {
-				break
-			}
-			for _, m := range batch {
-				msgs = append(msgs, exporter.MessageInput{
-					Origin: models.MessageOrigin(m.Origin),
-					Text:   m.Message,
-					SentAt: m.SentAt,
-				})
-			}
-			last := batch[len(batch)-1]
-			lastSentAt = last.SentAt
-			lastMessageID = last.ID
-			hasCursor = true
-			if len(batch) < accountExportBatchSize {
-				break
+			if err := fn(conv); err != nil {
+				return err
 			}
 		}
+		if len(chats) < accountExportBatchSize {
+			return nil
+		}
+		last := chats[len(chats)-1]
+		lastCreatedAt = last.CreatedAt
+		lastChatID = last.ID
+		hasCursor = true
+	}
+}
 
-		convs = append(convs, exporter.ConversationInput{
-			ID:                         c.ID,
-			Title:                      c.Name,
-			CreatedAt:                  c.CreatedAt,
-			Messages:                   msgs,
-			PersonalityID:              personalityID,
-			CheckpointSummary:          c.CheckpointSummary,
-			CheckpointUserMessageCount: c.CheckpointUserMessageCount,
-			LastCheckpointAt:           c.LastCheckpointAt,
-			DisabledTools:              c.DisabledTools,
-			Tags:                       c.Tags,
-			IsFavorite:                 c.IsFavorite,
-			IsAutoMood:                 c.IsAutoMood,
-			ContextScope:               string(models.ContextScope(c.ContextScope).OrDefault()),
-		})
+// exportConversationInput loads one chat's messages and projects it for export.
+func (d *Datastore) exportConversationInput(ctx context.Context, c *ent.Chat) (exporter.ConversationInput, error) {
+	var personalityID *uuid.UUID
+	if c.Edges.Personality != nil {
+		id := c.Edges.Personality.ID
+		personalityID = &id
+	}
+	msgs := make([]exporter.MessageInput, 0)
+	var lastSentAt time.Time
+	var lastMessageID uuid.UUID
+	hasCursor := false
+	for {
+		query := d.dbClient.ChatMessage.Query().
+			Where(chatmessage.HasChatWith(entchat.ID(c.ID)))
+		if hasCursor {
+			// sent_at alone is not unique, so retain the ID tie-breaker used by the
+			// chronological ordering. The schema requires sent_at to be non-null.
+			// This avoids both skipped same-timestamp rows and increasingly
+			// expensive OFFSET scans on long conversations.
+			query = query.Where(
+				chatmessage.Or(
+					chatmessage.SentAtGT(lastSentAt),
+					chatmessage.And(
+						chatmessage.SentAtEQ(lastSentAt),
+						chatmessage.IDGT(lastMessageID),
+					),
+				),
+			)
+		}
+		batch, err := query.
+			Order(ent.Asc(chatmessage.FieldSentAt), ent.Asc(chatmessage.FieldID)).
+			Limit(accountExportBatchSize).
+			All(ctx)
+		if err != nil {
+			return exporter.ConversationInput{}, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, m := range batch {
+			msgs = append(msgs, exporter.MessageInput{
+				Origin: models.MessageOrigin(m.Origin),
+				Text:   m.Message,
+				SentAt: m.SentAt,
+			})
+		}
+		last := batch[len(batch)-1]
+		lastSentAt = last.SentAt
+		lastMessageID = last.ID
+		hasCursor = true
+		if len(batch) < accountExportBatchSize {
+			break
+		}
 	}
 
-	return convs, nil
+	return exporter.ConversationInput{
+		ID:                         c.ID,
+		Title:                      c.Name,
+		CreatedAt:                  c.CreatedAt,
+		Messages:                   msgs,
+		PersonalityID:              personalityID,
+		CheckpointSummary:          c.CheckpointSummary,
+		CheckpointUserMessageCount: c.CheckpointUserMessageCount,
+		LastCheckpointAt:           c.LastCheckpointAt,
+		DisabledTools:              c.DisabledTools,
+		Tags:                       c.Tags,
+		IsFavorite:                 c.IsFavorite,
+		IsAutoMood:                 c.IsAutoMood,
+		ContextScope:               string(models.ContextScope(c.ContextScope).OrDefault()),
+	}, nil
 }
 
 // ImportedChatIDsByHash returns destination chat IDs for the supplied stable import hashes. It
