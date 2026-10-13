@@ -68,21 +68,14 @@
           </label>
           <label class="profile-settings__field">
             <span>Timezone</span>
-            <select
-              formControlName="timezone"
-              aria-describedby="profile-settings-timezone-help"
-              (change)="timezoneSuggested.set(false)">
+            <select formControlName="timezone" aria-describedby="profile-settings-timezone-help">
               <option value="">Select a timezone</option>
               @for (tz of timezones(); track tz) {
                 <option [value]="tz">{{ tz }}</option>
               }
             </select>
             <small id="profile-settings-timezone-help">
-              @if (timezoneSuggested()) {
-                Detected from your browser and not saved yet. Click Save Changes to keep it.
-              } @else {
-                Scheduled jobs read times like "every weekday at 8" in this timezone.
-              }
+              Scheduled jobs read times like "every weekday at 8" in this timezone.
             </small>
             @if (profileForm.controls.timezone.invalid && profileForm.controls.timezone.touched) {
               <small class="profile-settings__timezone-error" role="alert">
@@ -94,6 +87,12 @@
               </small>
             }
           </label>
+          @if (timezoneOffer(); as offer) {
+            <div class="profile-settings__timezone-offer" data-testid="timezone-offer">
+              <small>Your browser is set to {{ offer }}.</small>
+              <button class="profile-settings__button" type="button" (click)="useBrowserTimezone()">Use {{ offer }}</button>
+            </div>
+          }
           <label class="profile-settings__field">
             <span>Theme</span>
             <select [value]="themeMode()" [disabled]="loadingAction()" (change)="onThemeModeChange($any($event.target).value)">

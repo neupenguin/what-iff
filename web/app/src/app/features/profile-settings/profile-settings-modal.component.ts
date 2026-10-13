@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { AbstractControl, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -71,10 +72,15 @@ export class ProfileSettingsModalComponent {
    */
   readonly timezones = signal<readonly string[]>(listTimezones());
   /**
-   * True while the Timezone field shows the browser-detected zone because none is
-   * saved yet. Nothing is persisted until the user clicks Save Changes.
+   * The browser's timezone. Every account has a saved timezone (the server defaults it to
+   * America/New_York), so instead of prefilling, the field offers this zone as a one-click choice
+   * whenever it differs from the selected one. Nothing is saved until Save Changes.
    */
-  readonly timezoneSuggested = signal(false);
+  readonly browserTimezone = detectBrowserTimezone();
+  private readonly selectedTimezone = toSignal(this.profileForm.controls.timezone.valueChanges, { initialValue: '' });
+  readonly timezoneOffer = computed(() =>
+    this.browserTimezone && this.browserTimezone !== this.selectedTimezone() ? this.browserTimezone : '',
+  );
   readonly loadingProfile = signal(false);
   readonly loadingAction = signal(false);
   readonly message = signal<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -111,6 +117,13 @@ export class ProfileSettingsModalComponent {
   }
 
   close(): void { this.modal.close(); }
+
+  /** Selects the browser's timezone in the form; it is saved with the next Save Changes. */
+  useBrowserTimezone(): void {
+    const control = this.profileForm.controls.timezone;
+    control.setValue(this.browserTimezone);
+    control.markAsDirty();
+  }
   setTab(tab: ProfileSettingsTab): void { this.modal.setTab(tab); }
 
   /** Closes the modal and opens the Import & Export screen. */
@@ -157,7 +170,6 @@ export class ProfileSettingsModalComponent {
       const user = await firstValueFrom(this.authService.updateProfile(updateData));
       this.currentUser.set(user);
       this.profileForm.markAsPristine();
-      this.timezoneSuggested.set(false);
       this.message.set({ type: 'success', text: 'Profile updated.' });
     } catch (error) {
       this.message.set({ type: 'error', text: this.formatProfileError(error) });
@@ -219,19 +231,14 @@ export class ProfileSettingsModalComponent {
       this.preferences.set(preferences);
       this.models.set(models);
       this.personalities.set(personalities);
-      // With no saved timezone, suggest the browser's; it is only stored on an explicit save.
-      const suggestedTimezone = user.timezone ? '' : detectBrowserTimezone();
-      const shownTimezone = user.timezone || suggestedTimezone;
-      if (shownTimezone && !this.timezones().includes(shownTimezone)) {
-        this.timezones.update((list) => [...list, shownTimezone].sort());
-      }
+      const savedTimezone = user.timezone || '';
+      this.includeTimezoneOptions(savedTimezone, this.browserTimezone);
       this.profileForm.patchValue({
         email: user.email || '',
         first_name: user.first_name || '',
         last_name: user.last_name || '',
-        timezone: shownTimezone,
+        timezone: savedTimezone,
       });
-      this.timezoneSuggested.set(Boolean(suggestedTimezone));
       this.themeMode.set(this.themeService.mode());
       this.profileForm.markAsPristine();
     } catch (error) {
@@ -239,6 +246,12 @@ export class ProfileSettingsModalComponent {
     } finally {
       this.loadingProfile.set(false);
     }
+  }
+
+  /** Adds zones the select must be able to show (e.g. a saved legacy name) that the runtime doesn't list. */
+  private includeTimezoneOptions(...zones: string[]): void {
+    const missing = zones.filter(zone => zone && !this.timezones().includes(zone));
+    if (missing.length > 0) this.timezones.update(list => [...list, ...missing].sort());
   }
 
   private async loadAllPersonalities(): Promise<readonly Personality[]> {

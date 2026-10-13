@@ -25,6 +25,12 @@ describe('timezone helpers', () => {
     expect(detectBrowserTimezone()).toBe('Europe/Berlin');
   });
 
+  it('treats a placeholder zone the runtime cannot use as undetected', () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ timeZone: 'Etc/Unknown' } as Intl.ResolvedDateTimeFormatOptions);
+    expect(detectBrowserTimezone()).toBe('');
+    expect(resolveDefaultTimezone(undefined)).toBe('UTC');
+  });
+
   describe('resolveDefaultTimezone', () => {
     it('prefers the saved timezone', () => {
       expect(resolveDefaultTimezone('  Asia/Tokyo ')).toBe('Asia/Tokyo');

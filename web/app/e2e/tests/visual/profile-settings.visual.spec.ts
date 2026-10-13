@@ -11,6 +11,11 @@ import { commonMasks } from './visual.helpers';
  * e2e/scripts/check-visual-coverage.mjs.
  */
 
+// The Timezone field offers the browser's zone when it differs from the saved one,
+// and a fresh account is saved as America/New_York. Pin the browser to that zone so
+// the offer row stays hidden whatever timezone the runner's host is in.
+test.use({ timezoneId: 'America/New_York' });
+
 test(
   'profile & settings modal, profile tab open',
   { tag: ['@visual', '@mock-only'] },

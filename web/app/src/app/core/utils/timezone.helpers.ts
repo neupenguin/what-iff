@@ -28,10 +28,14 @@ export function listTimezones(): string[] {
   }
 }
 
-/** The browser's IANA timezone, or '' when it cannot be determined. */
+/**
+ * The browser's IANA timezone, or '' when it cannot be determined or is not a usable zone name
+ * (some runtimes report placeholders such as `Etc/Unknown`). Never throws.
+ */
 export function detectBrowserTimezone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    return zone && isValidTimezone(zone) ? zone : '';
   } catch {
     return '';
   }

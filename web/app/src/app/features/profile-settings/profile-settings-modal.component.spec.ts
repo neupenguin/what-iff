@@ -234,14 +234,17 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       vi.restoreAllMocks();
     });
 
-    it('shows the saved timezone and does not flag it as a suggestion', async () => {
+    const timezoneOffer = (fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>) =>
+      fixture.nativeElement.querySelector('[data-testid="timezone-offer"]') as HTMLElement | null;
+
+    it('shows the saved timezone with no offer when the browser agrees', async () => {
+      mockBrowserTimezone('America/Chicago');
       user['timezone'] = 'America/Chicago';
       const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
       await openAndWaitForProfile(fixture);
 
       expect(timezoneInput(fixture).value).toBe('America/Chicago');
-      expect(fixture.componentInstance.timezoneSuggested()).toBe(false);
-      expect(fixture.nativeElement.textContent).not.toContain('Detected from your browser');
+      expect(timezoneOffer(fixture)).toBeNull();
     });
 
     it('offers every zone in a select and keeps a saved zone the browser does not list', async () => {
@@ -257,15 +260,44 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       expect(select.value).toBe('Legacy/Zone');
     });
 
-    it('suggests the browser timezone when none is saved, without persisting it', async () => {
+    // The server gives every account a timezone (America/New_York by default), so a saved
+    // zone that differs from the browser's is the normal case for a user who never chose one.
+    it('offers the browser timezone when it differs from the saved one, without changing the form', async () => {
       mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      expect(timezoneInput(fixture).value).toBe('America/New_York');
+      expect(timezoneOffer(fixture)?.textContent).toContain('Your browser is set to Europe/Berlin.');
+      expect(component.profileForm.pristine).toBe(true);
+      expect(authService.updateProfile).not.toHaveBeenCalled();
+    });
+
+    it('does not slip the browser timezone into an unrelated save', async () => {
+      mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      component.profileForm.patchValue({ first_name: 'Ada' });
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ first_name: 'Ada', timezone: 'America/New_York' }),
+      );
+    });
+
+    it('offers nothing when the browser reports an unusable zone', async () => {
+      mockBrowserTimezone('Etc/Unknown');
+      user['timezone'] = 'America/New_York';
       const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
       await openAndWaitForProfile(fixture);
 
-      expect(timezoneInput(fixture).value).toBe('Europe/Berlin');
-      expect(fixture.componentInstance.timezoneSuggested()).toBe(true);
-      expect(fixture.nativeElement.textContent).toContain('Detected from your browser and not saved yet');
-      expect(authService.updateProfile).not.toHaveBeenCalled();
+      expect(timezoneOffer(fixture)).toBeNull();
+      expect(fixture.componentInstance.profileForm.valid).toBe(true);
     });
 
     it('saves the timezone through the profile API on Save Changes', async () => {
@@ -281,14 +313,22 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
         expect.objectContaining({ email: 'testuser@example.com', timezone: 'Asia/Tokyo' }),
       );
       expect(component.message()?.type).toBe('success');
-      expect(component.timezoneSuggested()).toBe(false);
     });
 
-    it('persists the suggested browser timezone on explicit save', async () => {
+    it('selects the offered browser timezone on click and saves it on Save Changes', async () => {
       mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
       const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
       const component = fixture.componentInstance;
       await openAndWaitForProfile(fixture);
+
+      (timezoneOffer(fixture)?.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(timezoneInput(fixture).value).toBe('Europe/Berlin');
+      expect(component.profileForm.dirty).toBe(true);
+      expect(timezoneOffer(fixture)).toBeNull();
+      expect(authService.updateProfile).not.toHaveBeenCalled();
 
       await component.saveProfile();
 
