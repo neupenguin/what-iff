@@ -171,7 +171,7 @@ export class ProfileSettingsModalComponent {
       this.passwordForm.reset();
       this.message.set({ type: 'success', text: 'Password updated.' });
     } catch (error) {
-      this.message.set({ type: 'error', text: this.formatPasswordError(error) });
+      this.message.set({ type: 'error', text: this.getErrorMessage(error, 'Failed to update password.') });
     } finally {
       this.loadingAction.set(false);
     }
@@ -282,11 +282,9 @@ export class ProfileSettingsModalComponent {
   }
 
   /**
-   * Best-effort copy of the saved name to the external identity provider. The profile API is the
-   * source of truth (the provider's name claims are only read when an account is first
-   * provisioned), and some sessions cannot write provider attributes at all: a Cognito session
-   * from federated (Google) sign-in lacks the scope UpdateUserAttributes needs and fails with
-   * NotAuthorizedException (#319). So this runs after the save and never fails it.
+   * Best-effort copy of the saved name to the external identity provider, when one is in use. The
+   * profile API is the source of truth, and a provider may refuse attribute writes for some
+   * sessions, so this runs after the save and never fails it.
    */
   private async mirrorExternalProfile(firstName: string, lastName: string): Promise<void> {
     const attributes: Record<string, string> = {};
@@ -299,13 +297,6 @@ export class ProfileSettingsModalComponent {
     } catch (error) {
       this.logger.error('Profile saved, but the identity provider name could not be updated', error);
     }
-  }
-
-  private formatPasswordError(error: unknown): string {
-    const name = (error as { name?: string })?.name;
-    if (name === 'NotAuthorizedException') return 'Current password is incorrect.';
-    if (name === 'InvalidPasswordException') return this.getErrorMessage(error, 'New password does not meet complexity requirements.');
-    return this.getErrorMessage(error, 'Failed to update password.');
   }
 
   private getErrorMessage(error: unknown, fallback: string): string {

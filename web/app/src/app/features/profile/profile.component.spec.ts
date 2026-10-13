@@ -425,13 +425,12 @@ describe('ProfileComponent', () => {
                 expect(component.successMessage()).toBeNull();
             });
 
-            it('still saves when the identity provider rejects the name update (#319)', async () => {
-                // A federated (Google) Cognito session cannot write user attributes.
+            it('still saves when the identity provider rejects the name update', async () => {
                 const externalAuth = TestBed.inject(ExternalAuthProvider);
                 Object.defineProperty(externalAuth, 'available', { value: true });
                 vi.spyOn(externalAuth, 'fetchSession').mockResolvedValue({ accessToken: 'access', idToken: 'id' });
                 const updateAttributes = vi.spyOn(externalAuth, 'updateProfileAttributes').mockRejectedValue(
-                    Object.assign(new Error('Access Token does not have required scopes'), { name: 'NotAuthorizedException' }),
+                    new Error('attribute write refused'),
                 );
                 vi.spyOn(console, 'error').mockImplementation(() => undefined);
                 mockAuthService.updateProfile.mockReturnValue(of(mockUser));

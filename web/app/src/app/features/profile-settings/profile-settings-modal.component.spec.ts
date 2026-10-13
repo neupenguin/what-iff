@@ -33,17 +33,15 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
   /** Swapped per test before the component is created; the provider factory reads it lazily. */
   let externalAuth: ExternalAuthProvider;
 
-  /** An external provider with a live session whose attribute write fails as Cognito does for a federated session (#319). */
-  function federatedSessionProvider(): ExternalAuthProvider & { updateProfileAttributes: ReturnType<typeof vi.fn> } {
+  /** An external provider with a live session that refuses attribute writes. */
+  function attributeRefusingProvider(): ExternalAuthProvider & { updateProfileAttributes: ReturnType<typeof vi.fn> } {
     const provider = new NoopExternalAuthProvider() as unknown as ExternalAuthProvider & {
       available: boolean;
       updateProfileAttributes: ReturnType<typeof vi.fn>;
     };
     Object.defineProperty(provider, 'available', { value: true });
     provider.fetchSession = vi.fn().mockResolvedValue({ accessToken: 'access', idToken: 'id' });
-    provider.updateProfileAttributes = vi.fn().mockRejectedValue(
-      Object.assign(new Error('Access Token does not have required scopes'), { name: 'NotAuthorizedException' }),
-    );
+    provider.updateProfileAttributes = vi.fn().mockRejectedValue(new Error('attribute write refused'));
     return provider;
   }
 
@@ -264,8 +262,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
     });
 
-    it('still saves when the identity provider rejects the name update (#319)', async () => {
-      const provider = federatedSessionProvider();
+    it('still saves when the identity provider rejects the name update', async () => {
+      const provider = attributeRefusingProvider();
       externalAuth = provider;
       const component = await openAndEditName();
 
@@ -277,8 +275,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       expect(logger.error).toHaveBeenCalled();
     });
 
-    it('shows the server error instead of a session-expired message, and skips the provider update', async () => {
-      const provider = federatedSessionProvider();
+    it('shows the server error and skips the provider update when the save fails', async () => {
+      const provider = attributeRefusingProvider();
       externalAuth = provider;
       authService.updateProfile.mockReturnValue(throwError(() => new Error('Email already in use')));
       const component = await openAndEditName();

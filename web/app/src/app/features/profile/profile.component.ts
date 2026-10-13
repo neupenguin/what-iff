@@ -305,11 +305,9 @@ export class ProfileComponent implements OnInit {
         timezone: timezoneValue || undefined
       };
 
-      const isCognitoUser = await this.isExternalAuthenticated();
-
-      if (isCognitoUser) {
-        // Best effort: the profile API below is the source of truth, and a federated (Google)
-        // Cognito session cannot write user attributes at all (NotAuthorizedException, #319).
+      if (await this.isExternalAuthenticated()) {
+        // Best effort: the profile API below is the source of truth, and an external identity
+        // provider may refuse attribute writes for some sessions.
         try {
           await this.syncExternalProfile(firstNameValue, lastNameValue);
         } catch (error) {
@@ -347,9 +345,7 @@ export class ProfileComponent implements OnInit {
         new_password: this.passwordForm.value.new_password
       };
 
-      const isCognitoUser = await this.isExternalAuthenticated();
-
-      if (isCognitoUser) {
+      if (await this.isExternalAuthenticated()) {
         try {
           await this.externalAuth.updatePassword(
             passwordData.current_password,
