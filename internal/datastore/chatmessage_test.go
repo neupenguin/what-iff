@@ -861,7 +861,6 @@ func TestListChatMessagesBefore_KeysetWalk(t *testing.T) {
 	require.Equal(t, ids[4], page.Results[0].(*models.ChatMessage).ID)
 	require.Equal(t, ids[3], page.Results[1].(*models.ChatMessage).ID)
 	require.NotEmpty(t, page.NextCursor)
-	require.True(t, *page.HasMore)
 
 	// Walk older via the cursor: batch size can differ from the first request without gaps.
 	beforeSentAt, beforeID, err := models.DecodeMessageCursor(page.NextCursor)
@@ -875,7 +874,6 @@ func TestListChatMessagesBefore_KeysetWalk(t *testing.T) {
 
 	// The batch reached the oldest message: no continuation cursor, nothing more.
 	require.Empty(t, page2.NextCursor)
-	require.False(t, *page2.HasMore)
 
 	// A batch that ends exactly on the oldest message reports the same (the extra-row probe
 	// finds nothing past it).
@@ -883,7 +881,6 @@ func TestListChatMessagesBefore_KeysetWalk(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, exact.Results, 3)
 	require.Empty(t, exact.NextCursor)
-	require.False(t, *exact.HasMore)
 }
 
 func TestListChatMessages_SkipTotal(t *testing.T) {
@@ -901,21 +898,19 @@ func TestListChatMessages_SkipTotal(t *testing.T) {
 	require.Zero(t, page.TotalCount, "SkipTotal leaves the total uncounted")
 	require.Len(t, page.Results, 2)
 	require.Equal(t, ids[2], page.Results[0].(*models.ChatMessage).ID)
-	require.True(t, *page.HasMore)
-	require.NotEmpty(t, page.NextCursor)
+	require.NotEmpty(t, page.NextCursor, "older rows remain")
 
 	last, err := ds.ListChatMessages(ctx, userID, chatID, 2, 2, models.ChatMessageFilters{SkipTotal: true})
 	require.NoError(t, err)
 	require.Len(t, last.Results, 1)
-	require.False(t, *last.HasMore)
-	require.Empty(t, last.NextCursor)
+	require.Empty(t, last.NextCursor, "nothing older remains")
 
-	// Chronological pages report HasMore the same way.
+	// Chronological pages honour SkipTotal and still return exactly pageSize rows.
 	chrono, err := ds.ListChatMessagesAfter(ctx, userID, chatID, time.Time{}, uuid.Nil, 2, models.ChatMessageFilters{SkipTotal: true})
 	require.NoError(t, err)
+	require.Zero(t, chrono.TotalCount)
 	require.Len(t, chrono.Results, 2)
 	require.Equal(t, ids[0], chrono.Results[0].(*models.ChatMessage).ID)
-	require.True(t, *chrono.HasMore)
 }
 
 func TestClampMessagePageSize(t *testing.T) {

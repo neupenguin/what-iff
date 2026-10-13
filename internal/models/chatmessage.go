@@ -138,7 +138,7 @@ type ChatMessageFilters struct {
 	MaxDate *time.Time     `json:"max_date,omitempty"`
 	// SkipTotal leaves PaginatedResponse.TotalCount at zero instead of counting every matching
 	// message in the chat, a full pass over a long chat. Set it when the caller only needs the
-	// page (and HasMore).
+	// page; an empty NextCursor already says nothing older remains.
 	SkipTotal bool `json:"-"`
 }
 

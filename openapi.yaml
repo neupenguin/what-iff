@@ -4849,8 +4849,8 @@ paths:
           in: query
           description: >-
             Set to `false` to skip counting every matching message in the chat; `total_count` is
-            then 0 and the client pages on `has_more`. Omitted or any other value returns the
-            exact `total_count` as before.
+            then 0 and the client pages on `next_cursor`, which is absent once nothing older
+            remains. Omitted or any other value returns the exact `total_count` as before.
           schema:
             type: boolean
             default: true
@@ -10365,11 +10365,6 @@ components:
             Opaque keyset token for continuing a cursor-paginated view past the last row in this
             response (absent when there is nothing more). Only the descending chat-message view
             sets it.
-        has_more:
-          type: boolean
-          description: >-
-            Whether rows exist past this page, found by fetching one extra row rather than
-            counting. Only the chat-message views set it.
       example:
         results: []
         total_count: 25

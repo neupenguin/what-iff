@@ -666,31 +666,18 @@ describe('ChatSessionService', () => {
         expect(found).toBe(false);
     });
 
-    it('pages on has_more without needing a total', () => {
-        // The API was asked to skip the count, so total_count is 0; has_more still says older
-        // history exists.
+    it('has older messages exactly when the page carries a next_cursor, whatever the total', () => {
+        // The API was asked to skip the count (total_count 0), yet the cursor says older history exists.
         messageService.listMessages.mockReturnValueOnce(
-            of({ results: [], page: 1, total_count: 0, has_more: true, next_cursor: 'cursor-1' }),
+            of({ results: [], page: 1, total_count: 0, next_cursor: 'cursor-1' }),
         );
-
         service.setActive('chat-1');
-
         expect(service.hasMoreOlderMessages()).toBe(true);
-    });
 
-    it('prefers has_more over a stale total, and falls back to the total without it', () => {
-        messageService.listMessages.mockReturnValueOnce(
-            of({ results: [], page: 1, total_count: 100, has_more: false }),
-        );
-        service.setActive('chat-1');
-        expect(service.hasMoreOlderMessages()).toBe(false);
-
-        // An API that predates has_more: the total against what is loaded decides.
-        messageService.listMessages.mockReturnValueOnce(
-            of({ results: [], page: 1, total_count: 100, next_cursor: 'cursor-1' }),
-        );
+        // No cursor means the oldest message is loaded, even if a total is present.
+        messageService.listMessages.mockReturnValueOnce(of({ results: [], page: 1, total_count: 100 }));
         service.setActive('chat-2');
-        expect(service.hasMoreOlderMessages()).toBe(true);
+        expect(service.hasMoreOlderMessages()).toBe(false);
     });
 
     it('restores draft and error state when send fails', async () => {

@@ -49,9 +49,4 @@ export interface PaginatedResponse<T> {
    * response (absent when there is nothing more). Only the descending chat-message view sets it.
    */
   next_cursor?: string;
-  /**
-   * Whether rows exist past this page, found without counting. Only the chat-message views set
-   * it; with `include_total=false` it is how to tell whether to keep paging.
-   */
-  has_more?: boolean;
 }

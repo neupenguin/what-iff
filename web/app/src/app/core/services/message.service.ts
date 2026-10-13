@@ -51,7 +51,7 @@ export class MessageService {
    * batch); otherwise `page === 1` replaces the list and later pages prepend.
    *
    * Asks the server to skip `total_count` (counting every message in the chat); callers page on
-   * `has_more` and `next_cursor` instead.
+   * `next_cursor` instead, which is absent once nothing older remains.
    */
   listMessages(chatId: string, page: number = 1, limit: number = 50, filters?: ChatMessageFilters, cursor?: string): Observable<PaginatedResponse<ChatMessage>> {
     let params: any = { limit: limit.toString(), include_total: 'false' };

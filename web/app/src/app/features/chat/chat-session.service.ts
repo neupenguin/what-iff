@@ -12,7 +12,6 @@ import { MessageService } from '../../core/services/message.service';
 import { Chat, DEFAULT_THREAD_NAME } from '../../core/models/chat.model';
 import { FileAttachment, PendingFileAttachment } from '../../core/models/file-attachment.model';
 import { ChatMessage } from '../../core/models/message.model';
-import { PaginatedResponse } from '../../core/models/common.model';
 import { Model } from '../../core/models/model.model';
 import { Ritual } from '../../core/models/ritual.model';
 import { apiErrorMessage } from '../../core/utils/api-error.helpers';
@@ -200,8 +199,8 @@ export class ChatSessionService implements OnDestroy {
       this.messageService.listMessages(threadId, 1, MESSAGE_LIST_PAGE_SIZE).subscribe({
         next: response => {
           if (!this.isActiveThread(requestedThreadId)) return;
-          this.olderCursor = response.next_cursor ?? null;
-          this.hasMoreOlderMessages.set(this.olderMessagesRemain(response));
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
           this._loading.set(false);
           // Adopt the loaded thread's newest checkpoint as the baseline so only
           // checkpoints that complete afterward trigger an in-place context refresh.
@@ -299,8 +298,8 @@ export class ChatSessionService implements OnDestroy {
       this.messageService.listMessages(threadId, 1, MESSAGE_LIST_PAGE_SIZE).subscribe({
         next: response => {
           if (!this.isActiveThread(threadId)) return;
-          this.olderCursor = response.next_cursor ?? null;
-          this.hasMoreOlderMessages.set(this.olderMessagesRemain(response));
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
           this.turn.resumeIfRunning(threadId);
           this.markActiveThreadRead(threadId);
         },
@@ -309,14 +308,6 @@ export class ChatSessionService implements OnDestroy {
         },
       }),
     );
-  }
-
-  /**
-   * Whether messages older than the loaded ones remain after a page. `has_more` answers it without
-   * a count; an API that predates it still sends `total_count`, compared against what is loaded.
-   */
-  private olderMessagesRemain(response: PaginatedResponse<ChatMessage>): boolean {
-    return response.has_more ?? this.messages().length < (response.total_count ?? 0);
   }
 
   private markActiveThreadRead(threadId: string): void {
@@ -348,8 +339,8 @@ export class ChatSessionService implements OnDestroy {
           if (!this.isActiveThread(threadId)) {
             return;
           }
-          this.olderCursor = response.next_cursor ?? null;
-          this.hasMoreOlderMessages.set(!!this.olderCursor && this.olderMessagesRemain(response));
+          this.olderCursor = response.next_cursor || null;
+          this.hasMoreOlderMessages.set(!!this.olderCursor);
         },
         error: () => {
           if (!this.isActiveThread(threadId)) {
@@ -395,8 +386,8 @@ export class ChatSessionService implements OnDestroy {
                 resolve(false);
                 return;
               }
-              this.olderCursor = response.next_cursor ?? null;
-              this.hasMoreOlderMessages.set(!!this.olderCursor && this.olderMessagesRemain(response));
+              this.olderCursor = response.next_cursor || null;
+              this.hasMoreOlderMessages.set(!!this.olderCursor);
               step();
             },
             error: () => resolve(isLoaded()),

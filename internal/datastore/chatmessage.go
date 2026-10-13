@@ -700,8 +700,9 @@ func (d *Datastore) ListChatMessagesAfter(ctx context.Context, userID, chatID uu
 
 // listChatMessages shares authorization, filters, and exact totals for the two message views.
 // chronological pages are strictly ascending by (sent_at, id) after their keyset position; the UI
-// view is descending and offset-paginated. Every page fetches one row past pageSize to report
-// HasMore, so a caller that sets filters.SkipTotal can page without counting the whole chat.
+// view is descending and offset-paginated. Descending pages fetch one row past pageSize so
+// NextCursor is set only when older rows remain, which lets a caller that sets
+// filters.SkipTotal page without counting the whole chat.
 func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, afterSentAt time.Time, afterID uuid.UUID, chronological bool, beforeSentAt time.Time, beforeID uuid.UUID, filters models.ChatMessageFilters) (*models.PaginatedResponse, error) {
 	// Start transaction
 	tx, err := d.dbClient.Tx(ctx)
@@ -805,7 +806,7 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 			))
 		}
 		query = query.
-			Limit(pageSize+1).
+			Limit(pageSize).
 			Order(ent.Asc(chatmessage.FieldSentAt), ent.Asc(chatmessage.FieldID))
 	} else {
 		query = query.Order(ent.Desc(chatmessage.FieldSentAt), ent.Desc(chatmessage.FieldID))
@@ -835,8 +836,9 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 		}
 		return nil, err
 	}
-	hasMore := len(entChatMessages) > pageSize
-	if hasMore {
+	// Descending pages fetched one extra row to learn whether older rows remain.
+	hasOlder := !chronological && len(entChatMessages) > pageSize
+	if hasOlder {
 		entChatMessages = entChatMessages[:pageSize]
 	}
 
@@ -849,7 +851,7 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 	// The descending UI view exposes a keyset cursor for continuing older: the (sent_at, id) of
 	// the oldest row in this batch. Empty when nothing older is left to fetch.
 	var nextCursor string
-	if !chronological && hasMore {
+	if hasOlder {
 		oldest := entChatMessages[len(entChatMessages)-1]
 		nextCursor = models.EncodeMessageCursor(oldest.SentAt, oldest.ID)
 	}
@@ -865,7 +867,6 @@ func (d *Datastore) listChatMessages(ctx context.Context, userID, chatID uuid.UU
 		TotalCount: totalCount,
 		Page:       pageNum,
 		NextCursor: nextCursor,
-		HasMore:    &hasMore,
 	}, nil
 }
 
