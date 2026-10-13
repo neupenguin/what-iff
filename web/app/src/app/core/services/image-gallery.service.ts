@@ -6,6 +6,19 @@ import { FileAttachment } from '../models/file-attachment.model';
 import { PaginatedResponse } from '../models/common.model';
 import { GalleryFolder } from '../../features/gallery/helpers/gallery-folder.helpers';
 
+/** Which gallery files to list: images (the server's default), every other file, or both. */
+export type GalleryKind = 'images' | 'files' | 'all';
+
+/** The most ids one move or bulk delete request takes (the server's cap); send more in chunks. */
+export const GALLERY_BATCH_LIMIT = 500;
+
+/** What POST /image-gallery/delete did with each id. */
+export interface GalleryDeleteResult {
+  deleted: string[];
+  /** Ids not deleted, with a reason safe to show ("not found", "could not delete the stored image", …). */
+  failed: { id: string; error: string }[];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -16,7 +29,7 @@ export class ImageGalleryService {
   listImages(
     page: number = 1,
     limit: number = 20,
-    filters?: { name?: string; personalityId?: string; globalOnly?: boolean; folder?: string },
+    filters?: { name?: string; personalityId?: string; globalOnly?: boolean; folder?: string; kind?: GalleryKind },
   ): Observable<PaginatedResponse<FileAttachment>> {
     let params = new HttpParams()
       .set('page', page.toString())
@@ -35,6 +48,9 @@ export class ImageGalleryService {
     if (filters?.folder !== undefined) {
       params = params.set('folder', filters.folder);
     }
+    if (filters?.kind) {
+      params = params.set('kind', filters.kind);
+    }
 
     return this.http.get<PaginatedResponse<FileAttachment>>(`${this.apiUrl}/image-gallery`, { params });
   }
@@ -46,6 +62,15 @@ export class ImageGalleryService {
 
   deleteImage(id: string): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/image-gallery/${id}`);
+  }
+
+  /**
+   * Deletes up to {@link GALLERY_BATCH_LIMIT} gallery files of any kind, each with its own route's
+   * cleanup. Resolves with which went and which did not (and why); ids that are not the caller's
+   * come back as failed, "not found".
+   */
+  deleteFiles(ids: readonly string[]): Observable<GalleryDeleteResult> {
+    return this.http.post<GalleryDeleteResult>(`${this.apiUrl}/image-gallery/delete`, { ids });
   }
 
   importImage(file: File, metadata?: { title?: string; description?: string; folder?: string }): Observable<FileAttachment> {
@@ -67,14 +92,20 @@ export class ImageGalleryService {
     return this.http.patch<FileAttachment>(`${this.apiUrl}/image-gallery/${id}`, { name });
   }
 
-  /** Folders that hold gallery images, with the number of images directly in each. */
-  listFolders(): Observable<GalleryFolder[]> {
+  /** Folders that hold gallery files of this kind (images by default), with how many are directly in each. */
+  listFolders(kind?: GalleryKind): Observable<GalleryFolder[]> {
+    const params = kind ? new HttpParams().set('kind', kind) : undefined;
     return this.http
-      .get<{ folders: GalleryFolder[] }>(`${this.apiUrl}/image-gallery/folders`)
+      .get<{ folders: GalleryFolder[] }>(`${this.apiUrl}/image-gallery/folders`, { params })
       .pipe(map(response => response.folders ?? []));
   }
 
-  /** Files images in a folder ("" is the top level); resolves with how many were moved. */
+  /** One file's metadata, any kind, for opening the viewer from a link. */
+  getFileInfo(id: string): Observable<FileAttachment> {
+    return this.http.get<FileAttachment>(`${this.apiUrl}/image-gallery/${id}/info`);
+  }
+
+  /** Files images or other files in a folder ("" is the top level); resolves with how many were moved. */
   moveImages(ids: readonly string[], folder: string): Observable<number> {
     return this.http
       .post<{ moved: number }>(`${this.apiUrl}/image-gallery/move`, { ids, folder })

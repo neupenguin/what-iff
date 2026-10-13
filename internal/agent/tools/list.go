@@ -49,7 +49,7 @@ const ListDescription = `List your available resources. Pick a kind:
 - models — chat models you can run (id, name, provider, tool support).
 - personalities — personalities you can switch to or run as a subagent.
 - skills — skills you can attach to a subagent or scheduled job (id, name, description).
-- files — your uploaded files, most-recent first. Filter with file_type (e.g. "image", "pdf"), scope ("personality" docs, "conversation" attachments, or "all") and folder. Images dominate most libraries, so pass file_type to cut through them. Gallery images can be filed in folders (e.g. "charts/oura"); folder lists that folder and everything beneath it, and each row shows its folder.
+- files — your uploaded files, most-recent first. Filter with file_type (e.g. "image", "pdf"), scope ("personality" docs, "conversation" attachments, or "all") and folder. Images dominate most libraries, so pass file_type to cut through them. Files, images and documents alike, can be filed in gallery folders (e.g. "charts/oura"); folder lists that folder and everything beneath it, and each row shows its folder.
 - conversations — your past conversations, including archived imports, that have messages, most-recent first (id, name). Pass an id to find_context (mode="conversation"/"origin") to read one.
 - jobs — your scheduled jobs (id, name, status, next_runtime for still-active ones). Active by default; set include_completed=true to also see finished/failed one-offs.
 - mcp_servers — MCP servers available to the current conversation (attached to it, or linked to a skill that is active now), with discoverable MCP tools and currently loaded tools for this chat.
@@ -112,6 +112,8 @@ type listStore interface {
 	ListPersonalities(ctx context.Context, userID uuid.UUID, pageNum, pageSize int, filters models.PersonalityFilters) (*models.PaginatedResponse, error)
 	ListRituals(ctx context.Context, userID uuid.UUID, pageNum, pageSize int, filters models.RitualFilters) (*models.PaginatedResponse, error)
 	ListFileAttachments(ctx context.Context, userID uuid.UUID, pageNum, pageSize int, filters models.FileAttachmentFilters) (*models.PaginatedResponse, error)
+	// ListFileAttachmentsInChatScope backs a sandboxed chat's file listing (its own uploads).
+	ListFileAttachmentsInChatScope(ctx context.Context, userID, chatID uuid.UUID, personalityID *uuid.UUID, limit int) ([]*models.FileAttachment, error)
 	ListChats(ctx context.Context, userID uuid.UUID, pageNum, pageSize int, filters models.ChatFilters) (*models.PaginatedResponse, error)
 	ListAgentJobs(ctx context.Context, userID uuid.UUID, pageNum, pageSize int, filters models.AgentJobFilters) (*models.PaginatedResponse, error)
 	ListChatMCPServers(ctx context.Context, userID, chatID uuid.UUID) ([]*models.MCPServer, error)
@@ -161,7 +163,7 @@ type listItem struct {
 	Provider     string   `json:"provider,omitempty"`      // models
 	ToolSupport  *bool    `json:"tool_support,omitempty"`  // models
 	FileType     string   `json:"file_type,omitempty"`     // files
-	Folder       string   `json:"folder,omitempty"`        // files (gallery images that are filed in a folder)
+	Folder       string   `json:"folder,omitempty"`        // files (gallery files that are filed in a folder)
 	Status       string   `json:"status,omitempty"`        // jobs, mcp_servers
 	StatusDetail string   `json:"status_detail,omitempty"` // mcp_servers
 	MCPTools     []string `json:"tools,omitempty"`         // mcp_servers
@@ -194,7 +196,7 @@ type listPageMeta struct {
 
 // MCPScopeFunc resolves the MCP connectors in scope for the current turn (attached to the
 // thread plus those of the skills active now). The agent supplies it so kind="mcp_servers"
-// agrees with what load_mcp_tools can load and what the turn registers.
+// agrees with what load_tools can load and what the turn registers.
 type MCPScopeFunc func(ctx context.Context) ([]*models.MCPServer, error)
 
 // List executes a list tool call, routing on `kind`. kind="mcp_servers" lists only the
@@ -212,6 +214,9 @@ func (t *ListTool) ListInMCPScope(ctx context.Context, chat *models.Chat, args [
 	}
 
 	kind := strings.ToLower(strings.TrimSpace(a.Kind))
+	if what, blocked := sandboxedListKind(chat, kind); blocked {
+		return t.fail(kind, sandboxedNote(what))
+	}
 	switch kind {
 	case listKindModels:
 		return t.listModels(ctx)
@@ -232,6 +237,26 @@ func (t *ListTool) ListInMCPScope(ctx context.Context, chat *models.Chat, args [
 	default:
 		return t.fail(kind, fmt.Sprintf("unknown kind %q; expected one of: models, personalities, skills, files, conversations, jobs, mcp_servers", a.Kind))
 	}
+}
+
+// sandboxedListKind reports whether a sandboxed chat may not list this kind, and what to call it
+// in the refusal. Jobs, skills and personalities are account content outside the sandbox.
+// Conversations lists just this one (listConversations), so the model can reach its own id for
+// find_context. Files are listed (listSandboxFiles shows only this conversation's own uploads).
+// Models and MCP servers are not account content.
+func sandboxedListKind(chat *models.Chat, kind string) (what string, blocked bool) {
+	if !chat.IsSandboxed() {
+		return "", false
+	}
+	switch kind {
+	case listKindJobs:
+		return "Listing scheduled jobs", true
+	case listKindSkills:
+		return "Listing your skills", true
+	case listKindPersonalities:
+		return "Listing your other personalities", true
+	}
+	return "", false
 }
 
 func (t *ListTool) fail(kind, msg string) (string, error) {

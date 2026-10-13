@@ -294,16 +294,6 @@ func TestRunGeneration_FailsTurnOnEmptyModelResponse(t *testing.T) {
 	require.Nil(t, result)
 }
 
-func TestBackfillSummaryMemoriesSkipsWithoutMemoryTool(t *testing.T) {
-	a := &Agent{logger: zap.NewNop()}
-
-	stats := a.BackfillSummaryMemories(context.Background(), 10)
-
-	assert.Equal(t, 0, stats.Processed)
-	assert.Equal(t, 1, stats.Skipped)
-	assert.Equal(t, 0, stats.Failed)
-}
-
 func TestBuildAttachmentLabels_AttachmentsWithoutFileID(t *testing.T) {
 	attachments := []*models.FileAttachment{
 		{Name: "document.pdf", FileID: nil},
@@ -487,7 +477,7 @@ func TestGetMemoriesBestEffort_DegradesOnError(t *testing.T) {
 		},
 	}
 
-	memories, liveMemories, failed := a.getMemoriesBestEffort(context.Background(), uuid.New(), uuid.New(), uuid.New(), "hi")
+	memories, liveMemories, failed := a.getMemoriesBestEffort(context.Background(), uuid.New(), uuid.New(), uuid.New(), "hi", false)
 	assert.True(t, failed)
 	assert.Equal(t, []string{}, memories)
 	assert.Nil(t, liveMemories)
@@ -505,7 +495,7 @@ func TestGetMemoriesBestEffort_PassesThroughOnSuccess(t *testing.T) {
 		},
 	}
 
-	memories, liveMemories, failed := a.getMemoriesBestEffort(context.Background(), uuid.New(), uuid.New(), uuid.New(), "hi")
+	memories, liveMemories, failed := a.getMemoriesBestEffort(context.Background(), uuid.New(), uuid.New(), uuid.New(), "hi", false)
 	assert.False(t, failed)
 	assert.Equal(t, []string{"m1"}, memories)
 	assert.Nil(t, liveMemories)

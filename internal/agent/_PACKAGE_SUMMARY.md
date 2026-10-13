@@ -14,14 +14,20 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 - **Mode tools/context:** agent-facing tools `list_modes` + `change_mode` map to internal mood records (`active_mood_id` / `is_auto_mood`), with active-mood resolution/reconciliation and mood prompt text as **`SegmentKindMood`** appended inside **`messageContextBuilder.build`** after merged additional context and before expression continuity and the final user turn (same segment order for OpenAI and Claude).
 - **Remote MCP parity:** Chat/ritual MCP server selection is shared across providers; OpenAI uses Responses MCP tools and Claude uses Anthropic Beta MCP client mood when MCP servers are present.
 - **MCP connector scope:** one in-scope list per turn — thread-attached connectors plus those linked to the active skills (the Mode's skill, a `/skill` call, or an agent job's skills) — built by `resolveChatMCPServers`, cached on `chatContext` by `prepareTurnMCPToolSpecs` (with the skill IDs, `mcpRitualIDs`), and read through `mcpServersInScope`.
-  Tool registration, `list(kind="mcp_servers")`, `load_mcp_tools`, and `dispatchMCPToolUse` all use it, so a skill-only connector is listed, loadable and callable.
+  Tool registration, `list(kind="mcp_servers")`, `load_tools`, and `dispatchMCPToolUse` all use it, so a skill-only connector is listed, loadable and callable.
   Loaded state (`ChatMCPToolState`) is per chat and survives Mode changes; a tool loaded for a connector that has fallen out of scope is neither sent nor callable until its skill is active again.
-  `unload_mcp_tools` is not scope-gated so stale state can still be cleared.
+  `unload_tools` is not scope-gated so stale state can still be cleared.
+- **Loadable tools (`tool_loading.go`, #305):** MCP tools and the built-in tools the catalog marks `Loadable` (web search and `fetch_page`, image generation, sub-agents, agent jobs, and any a build adds such as `shell_exec`) are only sent to the model once loaded in the chat.
+  A chat turn registers them all with its adapter (`turnFunctionToolSpecs`), and before every round `handleAgentLoop` calls the adapter's `provider.ToolScoper.ScopeTools` with `chatContext.loadedToolFilter`, so a tool loaded by `load_tools` is sent from the next round of the same turn and an unloaded one costs no tokens.
+  The built-in tools a turn can load are listed by name and one-line summary in the developer context (`loadableToolsDeveloperContext`); dispatch refuses an unloaded one with a pointer to `load_tools`.
+  `load_tools`/`unload_tools` without `mcp_server_id` act on built-in tools (unload by name also finds MCP tools on any connector); their loaded set is the chat's built-in row in `ChatMCPToolState`.
+  Sub-agent loops are not load-gated: `loadedToolFilter` is nil there, so their skills' MCP tools are all sent.
+- **Checkpoint tool unload (`checkpoint_tool_unload.go`, #304):** after a checkpoint persists its summary, `unloadToolsUnusedInSegment` unloads every loaded tool (MCP or built-in) that no message since the previous checkpoint's window start called (`ChatToolNamesUsedSince` + `RetainChatLoadedTools`), so unused tool definitions are not carried into the next segment.
+  It runs inside the turn, under the chat's turn gate, so no later turn can load a tool mid-prune; the model reloads what it needs with `load_tools`.
 - **Maintenance prompts:** Chat naming, personality generation, conversation summaries, memory extraction, scratchpad summarize/update (often **manual** `ResponseNewParams` — see architecture doc).
   **Archival** checkpoint scratchpad update and memory extraction use fixed small models (`archivalOpenAIModel` / `archivalClaudeModel` in `archival_models.go`); **checkpoint conversation summary always uses `archivalOpenAIModel` (`gpt-5.6-luna`)** for both OpenAI and Claude chats via unified `summarizeConversationForCheckpoint` (OpenAI threads `PreviousResponseID`; Claude renders explicit input items from inference `ModelContext`).
   Persona `archival_model` and custom memory read/write prompts are deprecated and ignored; optional `scratchpad_update_prompt` is still used for checkpoint scratchpad updates.
-- **Background backfills** (started from `internal/server`): `StartSummaryMemoryBackfill` (`message.go`) copies legacy checkpoint summaries into Summary memories once at boot.
-  `StartMemoryEmbeddingBackfill` (`memory_embedding_backfill.go`) embeds active non-Summary memories that have no Embedding row, via `datastore.BackfillMemoryEmbeddings` and the memory tool's batch embeddings call.
+- **Background backfill** (started from `internal/server`): `StartMemoryEmbeddingBackfill` (`memory_embedding_backfill.go`) embeds active non-Summary memories that have no Embedding row, via `datastore.BackfillMemoryEmbeddings` and the memory tool's batch embeddings call.
   It runs once, at startup, on the server lifecycle context, and never on a timer: memories are embedded when they are saved, so it only catches up older rows and any save-time failure since the last restart.
   The pass runs only on the instance that wins the Postgres advisory lock `MemoryEmbeddingBackfillLockKey` (default 80920033); other instances, and databases without advisory locks, skip it quietly.
   It does not start at all under mock/local LLM backends (`nonVendorLLM`), where embeddings have no provider.
@@ -178,6 +184,29 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   metering implementation may be linked to enforce usage limits and record
   usage, while builds without one fall back to `metering.NoopMeter` (allow
   all, record nothing). See `internal/metering`.
+- **Sandboxed chats:** `sandbox_context.go` assembles context for a chat whose `Chat.ContextScope` is `sandbox` (`Chat.IsSandboxed()`); the tool-side rules are in `internal/agent/tools/sandbox.go`.
+  A sandboxed chat is one that strangers can talk in (for example a Discord thread): it cannot read anything outside itself and has a locked-down tool set.
+  `getMemories` retrieves only the chat's own Chat-scoped memories (scoped in SQL) and adds no owner-name line.
+  `messageContextBuilder.build` re-checks the memory items persisted on earlier messages against the chat's own memories in one `MemoryIDsCreatedInChat` query (an id the chat did not create, an id-less memory line and a failed lookup are all dropped), so a memory moved or re-scoped in the memory manager since is not replayed.
+  A persisted `USER_NAME` item is dropped too, so the name is never replayed.
+  A sandboxed chat replays persisted tool results like any chat, so a thread keeps its recent tool output across turns.
+  The scratchpad is never injected (the loader blanks it; the builder, the sub-agent, the agent-job personality override and `update_scratchpad` are guarded too), and `buildTurnToolPolicy` removes the catalog's `SandboxNever` tools (`update_scratchpad`, `create_agent_job`, `move_files`) from the offered tools whatever the user's `disabled_tools` say, and loads no skills (the message's or the mood's), so no skill text or linked MCP server reaches the turn.
+  The `SandboxDefaultOff` tools (web search, page fetching, image generation, sub-agents) are offered by policy but start in a new sandbox's `disabled_tools` (`datastore.CreateChat` applies `models.SandboxDefaultDisabledTools`), so the owner enables each one deliberately; MCP tools come only from connectors the owner attached to the sandbox itself (the chat handler attaches no default connectors to a sandbox).
+  `sandboxed_tool_surface_test.go` classifies every catalog tool as offered or not in a sandboxed chat and checks that against each tool's `SandboxPolicy`, so a new tool must be placed deliberately (a tool declaring no policy fails closed); `conditionalSandboxedTools` lets other builds mark conditionally offered tools.
+  `checkpointSteps` decides the checkpoint plan: a sandboxed chat skips the scratchpad step but still extracts memories, from the turn's own response and without the scratchpad delta.
+  A sandboxed chat's checkpoint merges only memories that chat created (`sandboxedCompactionLiveMemories`, then `datastore.WithChatMemoriesOnly` on the fold and link writes, which also forces Chat scope), so it cannot fold, rewrite or retire the owner's memories.
+  `contextInputs` records `context_scope` in the X-ray manifest.
+  `run_subagent` (default off in a sandbox) refuses another `personality_id` and any `skill_ids` there, and its tool loop runs under a chat carrying the parent's scope.
+  `create_agent_job` is neither offered nor accepted in a sandboxed chat (the job would run in a new chat that is not sandboxed).
+  Auto mood selection does not run in a sandboxed chat (`autoMoodSelectionSkipped`); its `change_mood` picks only its own personality's modes, refuses `model_override`, and mood rituals are not loaded.
+  In every chat, dispatch refuses a tool the model was not offered that turn (`setOfferedTools`, recorded on every generation path including the sub-agent loops).
+- **Memory provenance (Discord relay threads):** `memory_provenance.go`.
+  `prepareChatContext` records `chatContext.memoryProvenance` (`memoryProvenanceForChat`: external for any chat bound to a Discord channel, sandboxed or not, `datastore.IsExternalRelayChat`; a failed lookup in a sandboxed chat reads as external) and the trigger message id.
+  `create_memory` writes with `createMemoryOrigin` (the Discord author of the message being answered, read when the tool runs; the tool's `speaker` argument overrides it).
+  Checkpoint extraction in such a thread uses the `ExtractedRelayMemory` schema (a `speaker` per memory) and `relayMemoryExtractionNote` (the speakers are Discord users labelled by name, not the owner); `stampExtractedProvenance` marks every extracted memory external, and the merge plan carries the new members' combined origin (`memoryFoldPlan.NewOrigin`, link members' `Origin`) to the datastore.
+  Scope is chosen exactly as in any chat (a sandboxed relay thread always writes Chat scope); provenance only records where a memory came from, and the shared formatter shows it to the model as unverified.
+- **Discord relay tool (`discord_post_tool.go`):** `post_to_discord` registers through the extension seams (`tools.AdditionalFunctionToolCatalog`, `extraToolHandlersForChat`, `additionalDisabledToolsForChat`, `additionalDeveloperContextForChat`), wrapping whatever another build already set there.
+  It is offered only when the chat's persona has a bot with an active binding (hidden otherwise), marks the reply for posting rather than sending text, and in a sandboxed chat reaches only that thread's own channel.
 
 ## Testing
 

@@ -9,6 +9,7 @@
 - Request/response structs for chats, messages, memories, personalities, rituals, models, jobs, agent jobs (including schedule types), billing-related payloads, file attachments, MCP servers, users, quotas, etc.
 - **Defaults and validation helpers** where present (e.g. `model_defaults.go` for model configuration).
 - **Gallery folder paths (`folder.go`):** `NormalizeFolder` is the one definition of a valid folder path, used by the gallery API and the agent tools (trimmed, lower-cased, `/` or `\` separate, no `.` or `..`, at most 8 levels and 255 characters), plus `FolderIsWithin` and `FolderCount`.
+  `GalleryKind` (`images`, `files`, `all`) narrows the gallery and its folder counts; `ParseGalleryKind` reads an empty value as `images`, so clients that do not ask keep the image-only list.
   `ExpressionFolder` gives the folder a personality's generated expression images are filed under (`expressions/<name>`, always one level, always valid), so they do not crowd the top level of the gallery.
 - Keeps handler payloads decoupled from Ent generated types (handlers map to/from Ent in datastore or thin adapters).
 
@@ -41,6 +42,17 @@
   Generic codes are status-derived defaults and explicitly *not* stable branch targets, so a call site may narrow from a generic to a specific code freely.
   `ErrorResponse.Code` deliberately omits `omitempty`, so a missing code shows up as `""` rather than disappearing.
 - **`ErrorResponse.Error` is deprecated** and duplicates `Message`. It exists only until the frontend reads `Message`/`Code`; it should not gain new meaning.
+- **Context scope:** `context_scope.go` defines `ContextScope` (`account`, the default, or `sandbox`), a string rather than a flag so later scopes need no schema or API change; `Chat.ContextScope` carries it and `Chat.IsSandboxed()` is the one accessor every sandbox rule asks.
+  `Chat.SetContextScope` marks it as an explicit change on `UpdateChat`, so internal writers that save a stale copy of the chat cannot write the scope back.
+  `sandbox_tools.go` is the registry of tools a new sandbox starts with switched off (`RegisterSandboxDefaultDisabledTool`, `SandboxDefaultDisabledTools`); the tool catalog and other builds fill it from `init()`, and `datastore.CreateChat` reads it.
+  `AdditionalContextTypeUserName` tags the first-message line naming the user, so a sandboxed chat can drop it when it replays persisted context.
+  `MemoryMergeEventFilters.OnlyChatID` limits merge history to folds of memories created in one chat.
+- **Memory provenance:** `provenance.go` defines `MemoryProvenance` (`user`, the default, or `external`: learned from people outside the account in a Discord relay thread, unverified) and `MemoryOrigin` (provenance plus the Discord speaker).
+  `Memory.Provenance` / `Memory.SourceSpeaker` carry it; an empty value reads as `user`, an unknown non-empty one as `external`.
+  `MergeOrigins` combines folded members: external when any member is, a speaker only when every member names the same one.
+  `CleanSpeakerName` makes an untrusted display name safe to store and render inside a memory's metadata block.
+  `ExtractedRelayMemory` is the relay-thread extraction schema variant with a `speaker` per memory; `ExtractedMemory.Speaker` carries it without being part of the default schema.
+- **Discord relay:** `discord.go` holds the relay's models (`DiscordBot`, `DiscordBinding`, `DiscordMessageLink`, and the server-only `DiscordBotCredentials`, which carries the decrypted token and never leaves the server).
 
 ## Testing
 

@@ -81,6 +81,9 @@ type Usage struct {
 	Metadata map[string]interface{}
 	// SubagentRun marks the usage as originating from a subagent job.
 	SubagentRun bool
+	// Source is where the turn was started from (TurnSourceApp, TurnSourceWebhook, or a plugin's
+	// own name such as "discord"); "" when the entry point did not say. See TurnSource.
+	Source string
 	// WebSearchCount is the number of billable web actions this turn (ADR 0x021): the
 	// provider's native searches, or, when WebSearchFirstParty is set, successful
 	// first-party web_search and fetch_page calls.
@@ -90,6 +93,12 @@ type Usage struct {
 	// vendor-native searches, which cost the operator very different amounts, so an
 	// implementation can price them separately.
 	WebSearchFirstParty bool
+	// ImageQuality is the quality tier ("low"|"medium"|"high") of one image the
+	// generate_image tool produced, so an implementation can price it. Only
+	// meaningful when ActionType is models.ActionTypeImageGeneration; empty means the
+	// turn itself is an image-generation ritual, which the implementation prices as a
+	// fixed low-quality image.
+	ImageQuality string
 }
 
 // New constructs the production Meter. It is nil in builds that do not link a

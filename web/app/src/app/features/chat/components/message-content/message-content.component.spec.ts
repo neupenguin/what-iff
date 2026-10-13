@@ -2,8 +2,9 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { SecurityContext, provideZonelessChangeDetection } from '@angular/core';
 import { provideHttpClient, withXhr } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { SANITIZE, provideMarkdown } from 'ngx-markdown';
+import { MARKED_EXTENSIONS, SANITIZE, provideMarkdown } from 'ngx-markdown';
 
+import { latexMathExtension } from '../../../../core/utils/latex-math.helpers';
 import { MessageContentComponent } from './message-content.component';
 
 describe('MessageContentComponent', () => {
@@ -19,6 +20,7 @@ describe('MessageContentComponent', () => {
                 provideHttpClientTesting(),
                 provideMarkdown({
                     sanitize: { provide: SANITIZE, useValue: SecurityContext.HTML },
+                    markedExtensions: [{ provide: MARKED_EXTENSIONS, useFactory: latexMathExtension, multi: true }],
                 }),
             ],
         }).compileComponents();
@@ -50,6 +52,21 @@ describe('MessageContentComponent', () => {
         expect(html).not.toContain('onerror');
     });
 
+    it('renders LaTeX through the sanitizer with KaTeX styling intact', async () => {
+        fixture.componentRef.setInput(
+            'content',
+            String.raw`Normalize by $\sqrt{d}$:` + '\n\n' + String.raw`\[ \text{RMSNorm}(x)=\frac{x}{\sqrt{\frac{1}{d}\sum_i x_i^2+\epsilon}}\odot g \]`,
+        );
+        fixture.detectChanges();
+        await vi.waitFor(() => expect(fixture.nativeElement.querySelectorAll('.katex')).toHaveLength(2));
+
+        const host = fixture.nativeElement as HTMLElement;
+        expect(host.querySelectorAll('.katex-display')).toHaveLength(1);
+        // Inline styles are what KaTeX layout depends on; Angular's sanitizer would have stripped them.
+        expect(host.querySelector('.katex-html [style]')).not.toBeNull();
+        expect(host.querySelector('em')).toBeNull();
+    });
+
     it('renders image attachments as constrained preview cards', () => {
         fixture.componentRef.setInput('attachments', [
             imageAttachment('image-1', 'first.png'),
@@ -67,6 +84,17 @@ describe('MessageContentComponent', () => {
             .flush(new Blob(['one'], { type: 'image/png' }));
         httpMock.expectOne(req => req.urlWithParams.includes('/image-gallery/image-2?size=thumbnail'))
             .flush(new Blob(['two'], { type: 'image/png' }));
+    });
+
+    it('requests the full-resolution variant when imageSize is full', () => {
+        fixture.componentRef.setInput('imageSize', 'full');
+        fixture.componentRef.setInput('attachments', [imageAttachment('image-1', 'first.png')]);
+        fixture.detectChanges();
+
+        httpMock.expectNone(req => req.urlWithParams.includes('/image-gallery/image-1?size=thumbnail'));
+        httpMock.expectOne(req => req.urlWithParams.includes('/image-gallery/image-1?size=full'))
+            .flush(new Blob(['full'], { type: 'image/png' }));
+        expect(fixture.nativeElement.querySelector('.message-images--full')).toBeTruthy();
     });
 
     it('downloads the full image attachment from the preview card', () => {

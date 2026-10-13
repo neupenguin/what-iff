@@ -1072,7 +1072,7 @@ func TestListMemories_DefaultsAndSort(t *testing.T) {
 	require.Equal(t, first.ID, resp.Results[1].(*models.Memory).ID)
 }
 
-// --- UpsertChatSummaryMemory / GetChatSummaryMemory / ListChatsMissingSummaryMemory ---
+// --- UpsertChatSummaryMemory / GetChatSummaryMemory ---
 
 func TestUpsertChatSummaryMemory_CreatesThenUpdates(t *testing.T) {
 	ctx := context.Background()
@@ -1146,47 +1146,6 @@ func TestGetChatSummaryMemory_NotFoundReturnsNilNil(t *testing.T) {
 	got, err := ds.GetChatSummaryMemory(ctx, userID, chatID)
 	require.NoError(t, err)
 	require.Nil(t, got)
-}
-
-func TestListChatsMissingSummaryMemory(t *testing.T) {
-	ctx := context.Background()
-	ds, cleanup := newMemoryTestDatastore(t)
-	defer cleanup()
-
-	userID := uuid.New()
-	createTestUser(t, ds, userID)
-
-	// Chat with a legacy checkpoint summary but no Summary memory yet: a candidate.
-	candidateChatID := uuid.New()
-	_, err := ds.dbClient.Chat.Create().
-		SetID(candidateChatID).
-		SetName("needs backfill").
-		SetOwnerID(userID).
-		SetCheckpointSummary("legacy summary text").
-		Save(ctx)
-	require.NoError(t, err)
-
-	// Chat with no checkpoint summary at all: not a candidate.
-	noSummaryChatID := uuid.New()
-	createTestChat(t, ds, noSummaryChatID, userID)
-
-	// Chat with a checkpoint summary AND an existing Summary memory: not a candidate.
-	backfilledChatID := uuid.New()
-	_, err = ds.dbClient.Chat.Create().
-		SetID(backfilledChatID).
-		SetName("already backfilled").
-		SetOwnerID(userID).
-		SetCheckpointSummary("already migrated").
-		Save(ctx)
-	require.NoError(t, err)
-	require.NoError(t, ds.UpsertChatSummaryMemory(ctx, userID, backfilledChatID, "already migrated", nil))
-
-	candidates, err := ds.ListChatsMissingSummaryMemory(ctx, 0)
-	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	require.Equal(t, candidateChatID, candidates[0].ChatID)
-	require.Equal(t, userID, candidates[0].UserID)
-	require.Equal(t, "legacy summary text", candidates[0].Summary)
 }
 
 // --- chatOwnedByUser / personalityOwnedByUser ---
@@ -1426,7 +1385,7 @@ func TestGetRelatedMemories_PropagatesQueryError(t *testing.T) {
 	userID := uuid.New()
 	createTestUser(t, ds, userID)
 
-	_, err := ds.GetRelatedMemories(ctx, userID, uuid.New(), []float32{0.1, 0.2}, uuid.Nil)
+	_, err := ds.GetRelatedMemories(ctx, userID, uuid.New(), []float32{0.1, 0.2}, uuid.Nil, false)
 	require.Error(t, err, "sqlite does not support the pgvector '<->' operator memory.go embeds via sql.ExprP")
 }
 
@@ -1438,6 +1397,6 @@ func TestGetRelatedSummaryMemories_PropagatesQueryError(t *testing.T) {
 	userID := uuid.New()
 	createTestUser(t, ds, userID)
 
-	_, err := ds.GetRelatedSummaryMemories(ctx, userID, []float32{0.1, 0.2}, 0)
+	_, err := ds.GetRelatedSummaryMemories(ctx, userID, []float32{0.1, 0.2}, 0, uuid.Nil)
 	require.Error(t, err, "sqlite does not support the pgvector '<->' operator memory.go embeds via sql.ExprP")
 }

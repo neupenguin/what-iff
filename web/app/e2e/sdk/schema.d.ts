@@ -723,6 +723,555 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discord/bots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Discord bots
+         * @description Returns the user's Discord bots. A bot's token is never returned.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bots retrieved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBot"][];
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        put?: never;
+        /**
+         * Add a Discord bot
+         * @description Validates a bot token with Discord (the bot user and its application) and stores it, encrypted, for one of the user's personalities. One bot per personality, and a bot can be connected by one account only. Needs TOKEN_ENCRYPTION_SECRET on the server.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DiscordBotCreateRequest"];
+                };
+            };
+            responses: {
+                /** @description Bot added */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBot"];
+                    };
+                };
+                400: components["responses"]["DiscordBadRequest"];
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                409: components["responses"]["DiscordConflict"];
+                500: components["responses"]["DiscordServerError"];
+                502: components["responses"]["DiscordUpstreamError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/bots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["DiscordBotID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a Discord bot
+         * @description Removes the bot and, with it, its channel bindings. The relay threads stay.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DiscordBotID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bot removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update a Discord bot
+         * @description Replaces the token (it must belong to the same bot), re-reads the bot's name and Message Content setting from Discord, or pauses and resumes the bot.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DiscordBotID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DiscordBotUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description Bot updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBot"];
+                    };
+                };
+                400: components["responses"]["DiscordBadRequest"];
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+                502: components["responses"]["DiscordUpstreamError"];
+            };
+        };
+        trace?: never;
+    };
+    "/discord/bots/{id}/sync-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["DiscordBotID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync the bot's profile from its personality
+         * @description Sets the bot's Discord username (and avatar, when the personality has a portrait) from its personality. Discord allows about two username changes an hour.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DiscordBotID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Profile synced */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            bot: components["schemas"]["DiscordBot"];
+                            avatar_synced: boolean;
+                        };
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+                502: components["responses"]["DiscordUpstreamError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/bots/{id}/guilds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["DiscordBotID"];
+            };
+            cookie?: never;
+        };
+        /** List the bot's servers */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DiscordBotID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Servers the bot is in */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordNamedRef"][];
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                502: components["responses"]["DiscordUpstreamError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/bots/{id}/guilds/{guildId}/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["DiscordBotID"];
+                guildId: string;
+            };
+            cookie?: never;
+        };
+        /** List a server's text channels */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DiscordBotID"];
+                    guildId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Text and announcement channels */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordNamedRef"][];
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                502: components["responses"]["DiscordUpstreamError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List channel bindings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bindings retrieved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBinding"][];
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        put?: never;
+        /**
+         * Connect a channel to a relay thread
+         * @description Binds a channel the bot can see to a thread. Without `chat_id` a new relay thread is created for the bot's personality, `sandboxed` (it reads only itself and writes only Chat-scoped memories), with no MCP connectors, and the tools that act beyond the conversation switched off in its `disabled_tools` (create_agent_job, run_subagent, update_scratchpad, web_search, fetch_page, generate_image, plus any a build registers). Binding an existing thread leaves its settings alone; a thread that is not sandboxed is refused unless `allow_unrestricted` is true.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DiscordBindingCreateRequest"];
+                };
+            };
+            responses: {
+                /** @description Channel connected */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBinding"];
+                    };
+                };
+                400: components["responses"]["DiscordBadRequest"];
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                409: components["responses"]["DiscordConflict"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/bindings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect a channel */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Channel disconnected */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update a channel binding
+         * @description Repointing to a thread that is not sandboxed needs `allow_unrestricted`; the acknowledgement is only recorded while the thread is not sandboxed.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DiscordBindingUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description Binding updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordBinding"];
+                    };
+                };
+                400: components["responses"]["DiscordBadRequest"];
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        trace?: never;
+    };
+    "/discord/chats/{chatId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chatId: components["parameters"]["DiscordChatID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A thread's Discord state
+         * @description The thread's bindings, which of them will post the next reply, and the recent messages that crossed between the thread and Discord.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    chatId: components["parameters"]["DiscordChatID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Discord state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DiscordChatState"];
+                    };
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discord/chats/{chatId}/pending/{bindingId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chatId: components["parameters"]["DiscordChatID"];
+                bindingId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Post the next reply to a channel
+         * @description Arms the composer toggle. The next reply in the thread is posted to the binding's channel; the request expires after 30 minutes.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    chatId: components["parameters"]["DiscordChatID"];
+                    bindingId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Armed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        post?: never;
+        /** Do not post the next reply */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    chatId: components["parameters"]["DiscordChatID"];
+                    bindingId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disarmed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["DiscordUnauthorized"];
+                404: components["responses"]["DiscordNotFound"];
+                500: components["responses"]["DiscordServerError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhook-tokens": {
         parameters: {
             query?: never;
@@ -3740,6 +4289,8 @@ export interface paths {
                     sort?: "created_desc" | "created_asc" | "updated_desc";
                     /** @description Filter by lifecycle status */
                     status?: "active" | "inactive";
+                    /** @description Filter to memories of this provenance (`external` lists what was learned in Discord relay threads) */
+                    provenance?: components["schemas"]["MemoryProvenance"];
                 };
                 header?: never;
                 path?: never;
@@ -5539,6 +6090,11 @@ export interface paths {
                         tags?: string[];
                         /** @description Whether the chat is marked as favorite */
                         is_favorite?: boolean;
+                        /**
+                         * @description Optional. `sandbox` creates the thread sandboxed; see the `context_scope` property of the Chat schema. Defaults to `account`.
+                         * @enum {string}
+                         */
+                        context_scope?: "account" | "sandbox";
                         /** @description Optional per-chat TTS autoplay override. Null/omitted means inherit personality default. */
                         tts_autoplay_override?: boolean | null;
                     };
@@ -5935,6 +6491,11 @@ export interface paths {
                         tags?: string[];
                         /** @description Optional favorite flag */
                         is_favorite?: boolean;
+                        /**
+                         * @description Optional. Only `account` is accepted on an existing thread (it leaves the sandbox, which cannot be undone); a thread is sandboxed when it is created, never later, so `sandbox` on a thread that is not one is a 400. See the `context_scope` property of the Chat schema.
+                         * @enum {string}
+                         */
+                        context_scope?: "account" | "sandbox";
                         /** @description Optional per-chat TTS autoplay override. Null means inherit personality default. */
                         tts_autoplay_override?: boolean | null;
                     };
@@ -6065,6 +6626,11 @@ export interface paths {
                         is_favorite?: boolean;
                         /** @description When true, hides the thread from default lists; set to false to restore from the archive */
                         archived?: boolean;
+                        /**
+                         * @description Optional. Only `account` is accepted on an existing thread (it leaves the sandbox, which cannot be undone); a thread is sandboxed when it is created, never later, so `sandbox` on a thread that is not one is a 400. See the `context_scope` property of the Chat schema.
+                         * @enum {string}
+                         */
+                        context_scope?: "account" | "sandbox";
                         /** @description Optional per-chat TTS autoplay override. Null means inherit personality default. */
                         tts_autoplay_override?: boolean | null;
                     };
@@ -6209,7 +6775,7 @@ export interface paths {
         };
         /**
          * Get chat context
-         * @description Returns the current scratchpad and checkpoint summary that power the chat session.
+         * @description Returns the current scratchpad and checkpoint summary that power the chat session. A sandboxed thread (`context_scope` of `sandbox`) has no scratchpad, so `active_scratchpad` is empty for it.
          */
         get: {
             parameters: {
@@ -6259,7 +6825,7 @@ export interface paths {
         head?: never;
         /**
          * Patch chat context
-         * @description Updates the active scratchpad for the chat's active personality (last-write-wins).
+         * @description Updates the active scratchpad for the chat's active personality (last-write-wins). A sandboxed thread has no scratchpad, so this is a 400 for it.
          */
         patch: {
             parameters: {
@@ -9177,11 +9743,14 @@ export interface paths {
         };
         /**
          * List gallery folders
-         * @description Lists every folder that holds at least one of the user's gallery images, with the number of images directly in it, sorted by path. The top level is implied and not listed. Parent folders that hold no image of their own are not listed; derive them from the paths. To list one folder's images, use `GET /image-gallery?folder=<path>` (an empty value is the top level; leaving `folder` out lists every image).
+         * @description Lists every folder that holds at least one of the user's gallery files of the requested kind, with the number of them directly in it, sorted by path. Images and other files share one folder tree. The top level is implied and not listed. Parent folders that hold nothing of their own are not listed; derive them from the paths. To list one folder's files, use `GET /image-gallery?folder=<path>&kind=<kind>` (an empty folder value is the top level; leaving `folder` out lists every file of that kind).
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Which files: `images` (the default, as before files were listed), `files` (every file that is not an image: documents, code, data) or `all`. */
+                    kind?: "images" | "files" | "all";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -9237,8 +9806,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Move gallery images into a folder
-         * @description Files the given images in a folder, creating the folder if it does not exist. An id may name an image or a chat-reuse copy of it; a copy moves the original. Ids that are not the caller's gallery images are skipped. Only the label changes; stored files are untouched.
+         * Move gallery files into a folder
+         * @description Files the given files (images, documents or any other upload) in a folder, creating the folder if it does not exist. An id may name a file or a chat-reuse copy of it; a copy moves the original. Ids that are not the caller's files are skipped. Only the label changes; stored files are untouched, and a personality's documents stay attached to it.
          */
         post: {
             parameters: {
@@ -9260,7 +9829,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description How many images were moved */
+                /** @description How many files were moved */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -9304,6 +9873,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/image-gallery/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete many gallery files
+         * @description Deletes the given files (images, documents or any other upload), each with the cleanup its own route does: an image as `DELETE /image-gallery/{id}` (its stored image and thumbnail), any other file as `DELETE /file-attachment/{id}` (its provider copy unless a chat-reuse copy shares it, and stored objects nothing else references). One failure does not stop the rest. Ids that are not the caller's files, or do not exist, are reported in `failed` as "not found" rather than failing the request. Duplicate ids are deleted once.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        ids: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description Which files were deleted and which failed, and why */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GalleryDeleteResult"];
+                    };
+                };
+                /** @description Not JSON, an id that is not a UUID, no ids, or more than 500 ids */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/image-gallery/folders/move": {
         parameters: {
             query?: never;
@@ -9315,7 +9947,7 @@ export interface paths {
         put?: never;
         /**
          * Rename or move a gallery folder
-         * @description Renames the folder `from` to `to`, carrying every folder beneath it along: moving `charts` to `archive/charts` turns `charts/oura` into `archive/charts/oura`. If `to` already exists the two merge. `to` may be empty, which moves the contents up to the top level.
+         * @description Renames the folder `from` to `to`, carrying every file and folder beneath it along: moving `charts` to `archive/charts` turns `charts/oura` into `archive/charts/oura`. If `to` already exists the two merge. `to` may be empty, which moves the contents up to the top level.
          */
         post: {
             parameters: {
@@ -9341,7 +9973,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description How many images changed folder */
+                /** @description How many files changed folder */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -9379,6 +10011,84 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/image-gallery/{id}/info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a gallery file's metadata
+         * @description Returns one of the user's files (any kind: image, document, code, data), in the same shape the gallery list returns. Lets a link to a file open its viewer when the file is not on a page the client has loaded. Fetch the bytes with `GET /file-attachment/{id}` (or `GET /image-gallery/{id}` for an image's thumbnail and full size).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description File attachment ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The file's metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileAttachment"];
+                    };
+                };
+                /** @description Invalid file ID */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file for this user */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Internal server error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9980,6 +10690,7 @@ export interface components {
          *       ],
          *       "is_favorite": false,
          *       "archived": false,
+         *       "context_scope": "account",
          *       "created_at": "2024-01-01T00:00:00Z",
          *       "updated_at": "2024-01-01T00:00:00Z"
          *     }
@@ -10008,6 +10719,11 @@ export interface components {
             tts_autoplay_override?: boolean | null;
             /** @description When true, the thread is in the archive and omitted from default list responses */
             archived?: boolean;
+            /**
+             * @description How much of the account the thread may read. `account` (the default) reads everything, as any thread. `sandbox` reads nothing outside itself: no memories except those created in the thread, no other conversation, no scratchpad, no account-wide files, jobs, skills or other personalities, and only the files uploaded to the thread. Memories it creates are Chat-scoped and visible only inside the thread. It cannot update the scratchpad, schedule jobs or sort the gallery, and a sub-agent it runs keeps its own personality and no skills. It is created with no MCP connectors and with web search, page fetching, image generation and sub-agents in its `disabled_tools` (the owner can enable any of these afterwards), and it is never given the owner's name or auto-selected moods. Chosen at creation: a thread can leave the sandbox (`account`) but never enter one later.
+             * @enum {string}
+             */
+            context_scope?: "account" | "sandbox";
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -10326,6 +11042,11 @@ export interface components {
             scratchpad_sha?: string;
             /** @description First 12 hex characters of the SHA-256 of the checkpoint summary that was in context. */
             summary_sha?: string;
+            /**
+             * @description The chat's context scope when this turn ran. A sandboxed turn has only memories created in the chat and no scratchpad. Always present on turns with a manifest.
+             * @enum {string}
+             */
+            context_scope?: "account" | "sandbox";
         };
         /** @description One memory retrieved for a turn. */
         ContextMemoryInput: {
@@ -10489,8 +11210,32 @@ export interface components {
         GalleryFolder: {
             /** @description Lower-case folder path, e.g. `charts/oura` */
             path: string;
-            /** @description Gallery images directly in this folder (not in folders beneath it) */
+            /** @description Gallery files of the requested kind directly in this folder (not in folders beneath it) */
             count: number;
+        };
+        /**
+         * @example {
+         *       "deleted": [
+         *         "123e4567-e89b-12d3-a456-426614174000"
+         *       ],
+         *       "failed": [
+         *         {
+         *           "id": "123e4567-e89b-12d3-a456-426614174001",
+         *           "error": "not found"
+         *         }
+         *       ]
+         *     }
+         */
+        GalleryDeleteResult: {
+            /** @description Ids that were deleted, in request order */
+            deleted: string[];
+            /** @description Ids that were not deleted, in request order */
+            failed: {
+                /** Format: uuid */
+                id: string;
+                /** @description Why, safe to show the user. One of "not found", "could not read the file", "could not delete the stored image", "could not delete the provider's copy" or "could not delete the file". */
+                error: string;
+            }[];
         };
         /**
          * @example {
@@ -10498,7 +11243,7 @@ export interface components {
          *     }
          */
         GalleryMoveResult: {
-            /** @description Number of images whose folder changed */
+            /** @description Number of files whose folder changed */
             moved: number;
         };
         /**
@@ -10543,7 +11288,17 @@ export interface components {
              * @description ID of the chat message this attachment belongs to (optional)
              */
             chat_message_id?: string;
-            /** @description Gallery folder the image is filed in, a lower-case path such as `charts/oura`. Omitted for files at the top level. It is a label only: moving an image changes this field, not where the file is stored. */
+            /**
+             * Format: uuid
+             * @description ID of the thread the attachment's message is in. Present only where the attachment is fetched singly (e.g. `GET /image-gallery/{id}/info`), not on list rows.
+             */
+            chat_id?: string;
+            /**
+             * Format: uuid
+             * @description ID of the personality this file is a document of (or an image owned by), if any
+             */
+            personality_id?: string;
+            /** @description Gallery folder the file is filed in, a lower-case path such as `charts/oura`. Omitted for files at the top level. It is a label only: moving a file changes this field, not where the file is stored. */
             folder?: string;
             /** @description Personalities associated with this attachment via direct ownership and expression image links. */
             personalities?: components["schemas"]["FileAttachmentPersonality"][];
@@ -10884,6 +11639,7 @@ export interface components {
          *       "level": "thread",
          *       "type": "Context",
          *       "starred": false,
+         *       "provenance": "user",
          *       "created_at": "2024-01-01T00:00:00Z",
          *       "updated_at": "2024-01-01T00:00:00Z"
          *     }
@@ -10922,6 +11678,9 @@ export interface components {
              * @enum {string}
              */
             status?: "active" | "inactive";
+            provenance: components["schemas"]["MemoryProvenance"];
+            /** @description For an external memory, the Discord display name it came from, when known (unverified) */
+            source_speaker?: string;
             /**
              * Format: float
              * @description Stored confidence in [0,1]. Create/patch accept coarse buckets (low/medium/high) that map to anchors 0.3/0.6/0.9; other signals may refine the float over time.
@@ -10937,6 +11696,142 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /**
+         * @description Where a memory came from. `user` (the default) is the account owner's own conversations or the memory manager. `external` was learned from people outside the account in a Discord relay thread (any thread bound to a Discord channel, sandboxed or not); it is unverified, and is shown to the model as unverified and attributed to its `source_speaker`. A merge of memories is external when any member is. A sandboxed thread writes only Chat-scoped memories, so what it learns stays in that thread. The owner can set `user` to confirm one.
+         * @enum {string}
+         */
+        MemoryProvenance: "user" | "external";
+        DiscordNamedRef: {
+            id: string;
+            name: string;
+        };
+        /** @description A user's own Discord bot, speaking as one of their personalities. The token is never returned. */
+        DiscordBot: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            personality_id: string;
+            application_id: string;
+            bot_user_id: string;
+            bot_username: string;
+            /** @description Whether the application has the privileged Message Content intent on */
+            message_content: boolean;
+            /** @enum {string} */
+            status: "active" | "invalid_token" | "disabled";
+            last_error?: string;
+            /** @description Link that adds the bot to a server with the permissions the relay needs */
+            invite_url: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        DiscordBotCreateRequest: {
+            /** Format: uuid */
+            personality_id: string;
+            /** @description The bot token from the application's Bot page (a "Bot " prefix is accepted) */
+            token: string;
+        };
+        DiscordBotUpdateRequest: {
+            /** @description Replaces the token; it must belong to the same bot */
+            token?: string;
+            /** @description Re-read the bot's name and Message Content setting from Discord */
+            refresh?: boolean;
+            /** @description Pause (false) or resume (true) the bot */
+            enabled?: boolean;
+        };
+        /** @description One Discord channel, seen by one bot, bound to a relay thread. */
+        DiscordBinding: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            bot_id: string;
+            /** Format: uuid */
+            chat_id: string;
+            guild_id: string;
+            channel_id: string;
+            guild_name: string;
+            channel_name: string;
+            /** @description Whether tagging the bot in the channel starts a turn */
+            inbound_enabled: boolean;
+            /** @description Discord user ids that may tag the bot; empty means anyone not denied */
+            allow_user_ids: string[];
+            /** @description Discord user ids that may never tag the bot; deny always wins */
+            deny_user_ids: string[];
+            /** @description The owner's acknowledgement that the bound thread is not sandboxed, so it can read the account. Without it the relay answers only sandboxed threads. */
+            allow_unrestricted: boolean;
+            /** @description Whether the bound thread is sandboxed right now (computed; absent when the thread could not be read) */
+            chat_sandboxed?: boolean;
+            /** @enum {string} */
+            status: "active" | "broken";
+            last_error?: string;
+            /** Format: date-time */
+            last_activity_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        DiscordBindingCreateRequest: {
+            /** Format: uuid */
+            bot_id: string;
+            guild_id: string;
+            guild_name?: string;
+            channel_id: string;
+            channel_name?: string;
+            /**
+             * Format: uuid
+             * @description Bind an existing thread; omit to create a new relay thread
+             */
+            chat_id?: string;
+            /** @default true */
+            inbound_enabled: boolean;
+            allow_user_ids?: string[];
+            deny_user_ids?: string[];
+            /** @description Acknowledge binding an existing thread that is not sandboxed */
+            allow_unrestricted?: boolean;
+        };
+        DiscordBindingUpdateRequest: {
+            /** Format: uuid */
+            chat_id?: string;
+            inbound_enabled?: boolean;
+            allow_user_ids?: string[];
+            deny_user_ids?: string[];
+            channel_name?: string;
+            guild_name?: string;
+            allow_unrestricted?: boolean;
+            /** @description Clear a broken status after fixing the bot's access */
+            reactivate?: boolean;
+        };
+        /** @description One message that crossed between a relay thread and its channel. */
+        DiscordMessageLink: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            binding_id: string;
+            /** @enum {string} */
+            direction: "inbound" | "outbound";
+            /** Format: uuid */
+            chat_message_id?: string;
+            discord_message_id?: string;
+            discord_channel_id: string;
+            posted_message_ids: string[];
+            author_id?: string;
+            author_name?: string;
+            /** Format: uuid */
+            reply_to_link_id?: string;
+            /** @enum {string} */
+            status: "received" | "pending" | "sent" | "failed";
+            error?: string;
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DiscordChatState: {
+            bindings: components["schemas"]["DiscordBinding"][];
+            pending_binding_ids: string[];
+            links: components["schemas"]["DiscordMessageLink"][];
         };
         MemoryCreateRequest: {
             content: string;
@@ -11002,6 +11897,7 @@ export interface components {
             status?: "active" | "inactive";
             /** @enum {string} */
             confidence?: "low" | "medium" | "high";
+            provenance?: components["schemas"]["MemoryProvenance"];
         };
         MemoryMergeEvent: {
             /** Format: uuid */
@@ -11338,8 +12234,66 @@ export interface components {
             sections: components["schemas"]["SearchSection"][];
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Invalid request, or Discord rejected the token */
+        DiscordBadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Unauthorized */
+        DiscordUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Not found (including another account's bot, binding, thread or personality) */
+        DiscordNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The personality already has a bot, the bot is already connected, or the channel is already bound for this bot */
+        DiscordConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Discord rejected the request or could not be reached */
+        DiscordUpstreamError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Internal server error */
+        DiscordServerError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        DiscordBotID: string;
+        DiscordChatID: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;

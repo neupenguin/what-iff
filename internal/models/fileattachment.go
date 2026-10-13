@@ -36,6 +36,11 @@ type FileAttachment struct {
 	// FileContent is ephemeral base64 image data used only while forwarding a tool result
 	// into a model vision request. Persisted attachment bytes live exclusively in S3.
 	FileContent string `json:"-"`
+	// ContextOnly marks a tool result that is shown to the model but is not a product of the
+	// reply: an existing file a tool fetched for viewing (find_context's fetch mode). The agent
+	// does not save it onto the reply, so it is never re-published with the reply (as a fresh
+	// gallery copy, or to Discord by the relay).
+	ContextOnly bool `json:"-"`
 	// S3Key is the canonical object key for the full-resolution file. Set at
 	// upload time so that renaming the display Name never breaks retrieval.
 	S3Key string `json:"s3_key,omitempty"`
@@ -82,9 +87,11 @@ type FileAttachmentFilters struct {
 	Folder *string `json:"folder,omitempty"`
 	// FolderPrefix matches that folder and everything beneath it ("charts" matches "charts" and
 	// "charts/oura", not "charts-old"). A normalized path; "" matches everything.
-	FolderPrefix *string    `json:"folder_prefix,omitempty"`
-	MinDate      *time.Time `json:"min_date,omitempty"`
-	MaxDate      *time.Time `json:"max_date,omitempty"`
+	FolderPrefix *string `json:"folder_prefix,omitempty"`
+	// Kind narrows to images or to every other file; empty (or GalleryKindAll) applies no narrowing.
+	Kind    GalleryKind `json:"kind,omitempty"`
+	MinDate *time.Time  `json:"min_date,omitempty"`
+	MaxDate *time.Time  `json:"max_date,omitempty"`
 	// ExcludeReferenceCopies drops lightweight reference rows (see
 	// CreateFileAttachmentReference) that share a non-empty s3_key with an older
 	// row owned by the same user, so each stored object is listed once, via its

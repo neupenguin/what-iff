@@ -1,9 +1,10 @@
 import { DOCUMENT } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, input } from '@angular/core';
 import { MarkdownModule } from 'ngx-markdown';
 
 import { FileAttachment, isImageAttachment } from '../../../../core/models/file-attachment.model';
+import { renderLatexMath } from '../../../../core/utils/latex-math.helpers';
 import { environment } from '../../../../../environments/environment';
 import { buildClipboardPayload } from '../../helpers/html-clipboard.helpers';
 import { extractImages } from '../../helpers/message-content.helpers';
@@ -19,6 +20,7 @@ import { MessageImageAttachmentsComponent } from './message-image-attachments.co
       [class.message-content__markdown--preserve-breaks]="preserveLineBreaks()"
       [data]="content()"
       (copy)="onCopy($event)"
+      (ready)="onMarkdownReady()"
     ></markdown>
 
     @if (images().length) {
@@ -30,7 +32,7 @@ import { MessageImageAttachmentsComponent } from './message-image-attachments.co
     }
 
     @if (imageAttachments().length) {
-      <app-message-image-attachments [attachments]="imageAttachments()" />
+      <app-message-image-attachments [attachments]="imageAttachments()" [size]="imageSize()" />
     }
 
     @if (nonImageAttachments().length) {
@@ -80,6 +82,12 @@ import { MessageImageAttachmentsComponent } from './message-image-attachments.co
       word-break: break-word;
     }
 
+    /* KaTeX positions glyphs itself; the wrapping rules above would split formulas mid-symbol. */
+    :host ::ng-deep .katex {
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+
     :host ::ng-deep code {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -90,15 +98,22 @@ import { MessageImageAttachmentsComponent } from './message-image-attachments.co
 })
 export class MessageContentComponent {
   private readonly document = inject(DOCUMENT);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly http = inject(HttpClient);
   private readonly apiUrl = `${environment.apiUrl}/file-attachment`;
 
   readonly content = input('');
   readonly attachments = input<readonly FileAttachment[]>([]);
   readonly preserveLineBreaks = input(false);
+  /** Variant used for image attachments; user turns pass 'full' so the picture isn't an upscaled thumbnail. */
+  readonly imageSize = input<'thumbnail' | 'full'>('thumbnail');
   readonly images = computed(() => extractImages(this.content()));
   readonly imageAttachments = computed(() => this.attachments().filter(isImageAttachment));
   readonly nonImageAttachments = computed(() => this.attachments().filter(attachment => !isImageAttachment(attachment)));
+
+  onMarkdownReady(): void {
+    void renderLatexMath(this.host.nativeElement);
+  }
 
   onCopy(event: ClipboardEvent): void {
     const selection = this.document.defaultView?.getSelection();

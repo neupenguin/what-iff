@@ -48,7 +48,7 @@ func (s fakeGalleryStore) SetFileAttachmentS3Key(context.Context, uuid.UUID, uui
 	return nil
 }
 
-func (s fakeGalleryStore) ListImageFolders(context.Context, uuid.UUID) ([]models.FolderCount, error) {
+func (s fakeGalleryStore) ListGalleryFolders(context.Context, uuid.UUID, models.GalleryKind) ([]models.FolderCount, error) {
 	return nil, nil
 }
 
@@ -56,8 +56,20 @@ func (s fakeGalleryStore) MoveFileAttachmentsToFolder(context.Context, uuid.UUID
 	return 0, nil
 }
 
-func (s fakeGalleryStore) MoveImageFolder(context.Context, uuid.UUID, string, string) (int, error) {
+func (s fakeGalleryStore) MoveGalleryFolder(context.Context, uuid.UUID, string, string) (int, error) {
 	return 0, nil
+}
+
+func (s fakeGalleryStore) FileAttachmentProviderFileShared(context.Context, uuid.UUID, string) (bool, error) {
+	return false, nil
+}
+
+func (s fakeGalleryStore) ReferencedFileAttachmentKeys(context.Context, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
+func (s fakeGalleryStore) ExistingFileAttachmentIDs(context.Context, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
 }
 
 // fakeGalleryFileStore returns fixed bytes for any key.

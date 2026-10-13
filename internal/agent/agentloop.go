@@ -24,6 +24,13 @@ func (a *Agent) handleAgentLoop(
 	var allGeneratedAttachments []*models.FileAttachment
 
 	for round := 0; round < maxToolCallRounds; round++ {
+		// Send only the tools loaded so far: a load_tools call in the previous round shows its
+		// tools in this one (see provider.ToolScoper).
+		if scoper, ok := adapter.(provider.ToolScoper); ok {
+			if hidden := chatCtx.loadedToolFilter(); hidden != nil {
+				scoper.ScopeTools(hidden)
+			}
+		}
 		logInferenceCall(ctx, a.logger, chatCtx, adapter, round)
 		result, toolUses, err := adapter.Call(ctx)
 		if err != nil {
@@ -113,9 +120,17 @@ func (a *Agent) executeToolUses(ctx context.Context, chatCtx *chatContext, round
 		modelToolCalls[i] = tc
 	}
 
+	// Files a tool only fetched for the model to look at (ContextOnly) are not saved onto the
+	// reply: they already exist, and saving them would publish a copy with the reply (to the
+	// gallery, or to Discord through the relay).
 	flatAttachments := make([]*models.FileAttachment, 0)
 	for _, perTool := range generatedAttachments {
-		flatAttachments = append(flatAttachments, perTool...)
+		for _, att := range perTool {
+			if att != nil && att.ContextOnly {
+				continue
+			}
+			flatAttachments = append(flatAttachments, att)
+		}
 	}
 	return results, modelToolCalls, flatAttachments
 }
@@ -180,12 +195,19 @@ func logInferenceCall(ctx context.Context, logger *zap.Logger, chatCtx *chatCont
 		userID = chatCtx.chat.UserID.String()
 		personalityID = chatCtx.chat.PersonalityID.String()
 	}
-	logger.Info("making inference call",
+	fields := []zap.Field{
 		zap.String("chat_message_id", chatMessageID),
 		zap.String("user_id", userID),
 		zap.String("personality_id", personalityID),
 		zap.String("model", model),
 		zap.Int("memories_count", memoriesCount),
 		zap.Int("round", round),
-	)
+	}
+	if chatCtx != nil && chatCtx.toolsLoadGated {
+		// What this round sends of the loadable built-in tools (see loadedToolFilter).
+		fields = append(fields,
+			zap.Strings("loadable_builtin_tools", sortedSetKeys(chatCtx.loadableTools)),
+			zap.Strings("loaded_builtin_tools", sortedSetKeys(chatCtx.loadedTools)))
+	}
+	logger.Info("making inference call", fields...)
 }

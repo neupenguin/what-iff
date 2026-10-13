@@ -14,7 +14,8 @@ Provider-neutral function tool catalog plus concrete tool implementations, JSON 
   - `ScratchpadTool` — update scratchpad (`scratchpad.go`, `update_scratchpad.go`); read-only scratchpad tool was removed because scratchpad is already injected into context.
   - `list` — unified resource listing (`list.go`, `list_kinds.go`; tests in `list_test.go`).
   - `create_memory`, `generate_image`, `create_agent_job` — named files for those flows.
-  - `move_files` — files gallery images in a folder or back at the top level (`move_files.go`; tests in `move_files_test.go`).
+  - `move_files` — files gallery files (images, documents, any upload) in a folder or back at the top level (`move_files.go`; tests in `move_files_test.go`).
+    A personality's documents stay attached to it; only the folder label changes.
   - `RecallTool` — unified context retrieval (`recall.go`, `recall_modes.go`, `recall_memory_id.go`, `recall_time.go`; see ADR 0x017).
     Modes: `investigate`/`search`/`fetch`/`related`/`origin`/`conversation`/`lifecycle_events` (alias `merge_history`).
     `source_type=summaries` searches per-chat checkpoint Summary memories (via `datastore.GetRelatedSummaryMemories`); `lifecycle_events` lists the memory lifecycle audit trail (`datastore.ListMemoryMergeEvents`).
@@ -30,6 +31,7 @@ Provider-neutral function tool catalog plus concrete tool implementations, JSON 
 | `FunctionToolSpec` | Name, agent-facing description, JSON schema map for provider tools. |
 | `FunctionToolDefinition` | Catalog metadata, including optional human-facing description and user-toggleable/default flags. |
 | `FunctionToolCatalog` / `AgentFunctionToolSpecs` / `UserToggleableFunctionToolSpecs` | Ordered static catalog projections used by agent/tool metadata assembly. |
+| `LoadableFunctionToolNames` | The catalog tools marked `Loadable` (sent to the model only after `load_tools`), each with a one-line summary for the developer context. |
 | `RecallTool`, `NewVectorStoreMemoryTool`, `NewScratchpadTool` | Wired from `internal/agent` when building tool lists. |
 | `OpenAIToolUnionParam` | Builds `responses.ToolUnionParam` from a spec. |
 
@@ -55,6 +57,18 @@ Provider-neutral function tool catalog plus concrete tool implementations, JSON 
   Provider-facing tool prompts remain unchanged on `FunctionToolSpec.Description`.
 - **Spec parity:** `toolconstants_test.go` asserts OpenAI function tool projection stays aligned with the shared catalog; Claude schema sanitization is tested in `internal/agent/provider`.
 - **Execution location:** Some tools are defined here only as shared schema/registration (`run_subagent`) while execution lives in `internal/agent` to reuse chat/user/provider context safely.
+- **Sandbox policy:** every catalog entry declares a `SandboxPolicy` (`sandbox_policy.go`): `SandboxNever` (the zero value, so an undeclared tool fails closed) is never offered in a sandbox, `SandboxDefaultOff` is offered but starts in a new sandbox's `disabled_tools`, and `SandboxAllowed` is offered as in any chat.
+  Every tool that is not `SandboxAllowed` is registered as a sandbox default-off tool from `init()` (`models.RegisterSandboxDefaultDisabledTool`; a build adding tools registers its own), so the Tools tab of a new sandbox simply shows them unticked.
+- **Sandboxed chats:** `sandbox.go` holds the one rule set for a chat with `Chat.IsSandboxed()`.
+  `memoryReadableBy` (a fetch by id) allows only a Chat-scoped memory or checkpoint summary of this conversation; `conversationReadable` allows only the chat itself; `fileInChatScope` allows only files uploaded to this conversation.
+  Search retrieval is scoped in SQL (`GetRelatedMemories` takes the sandbox flag, `GetRelatedSummaryMemories` the one chat), and `find_context` lifecycle events list only folds of this chat's own memories.
+  `list` refuses jobs, skills and personalities, lists conversations as just this one (so the model can reach its own id for `find_context`), and lists only this conversation's own files (`listSandboxFiles`); `update_scratchpad` and `move_files` refuse.
+  `create_memory` always writes a Chat-scoped memory in a sandboxed chat, whatever scope was asked.
+  A hidden memory, an unknown id and an ambiguous id prefix give a sandboxed chat the same `not found` error (`resolveMemory`).
+  Refusals share `sandboxedNote`, so the model gets one consistent message.
+- **Memory provenance:** `CreateMemoryToolWithOrigin` writes the origin the agent computed for the turn (external in a Discord relay thread); its optional `speaker` argument names the Discord user a memory came from and is ignored elsewhere.
+  `find_context` shows external memories through the shared formatter (`source=external(...)`) and marks a relay thread's summary chunks with `provenance`; distillation material carries the same note.
+- **`find_context` images are context-only:** an image fetched in fetch mode is returned with `FileAttachment.ContextOnly`, so the agent shows it to the model without saving it onto the reply.
 
 ## Testing
 

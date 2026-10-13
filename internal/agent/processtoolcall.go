@@ -30,7 +30,18 @@ func getAgentToolsList(disabledTools map[string]bool, includeMoodTools bool) []r
 // dispatchToolUse routes a provider-agnostic ToolUse to the appropriate tool
 // implementation. Both the OpenAI and Claude paths converge here since tool
 // inputs are normalized to json.RawMessage before reaching this function.
+//
+// A call is refused unless the model was offered that tool for this turn (or sub-agent loop): the
+// set is recorded when the tools are built (chatContext.setOfferedTools). A model can emit a tool
+// name it was never given, such as one the chat policy hides, so being offered, not merely having
+// a handler, is what authorises a call.
 func (a *Agent) dispatchToolUse(ctx context.Context, chatCtx *chatContext, use provider.ToolUse) (string, []*models.FileAttachment, error) {
+	if !chatCtx.toolOffered(use.Name) {
+		return "", nil, fmt.Errorf("tool %q is not available in this conversation", use.Name)
+	}
+	if chatCtx.builtinToolNeedsLoad(use.Name) {
+		return "", nil, fmt.Errorf("tool %q is not loaded in this chat; call %q with tools [%q] first", use.Name, tools.LoadToolsToolSpec.Name, use.Name)
+	}
 	handler, ok := a.toolHandlers(chatCtx)[use.Name]
 	if !ok {
 		if strings.HasPrefix(use.Name, "mcp__") {
@@ -50,7 +61,7 @@ func (a *Agent) toolHandlers(chatCtx *chatContext) map[string]toolHandler {
 			return out, nil, err
 		},
 		tools.CreateMemoryToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
-			out, err := a.memoryTool.CreateMemoryTool(ctx, chatCtx.chat, input)
+			out, err := a.memoryTool.CreateMemoryToolWithOrigin(ctx, chatCtx.chat, a.createMemoryOrigin(ctx, chatCtx), input)
 			return out, nil, err
 		},
 		tools.ListToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
@@ -79,11 +90,11 @@ func (a *Agent) toolHandlers(chatCtx *chatContext) map[string]toolHandler {
 			out, err := a.createAgentJobTool(ctx, chatCtx.chat, input)
 			return out, nil, err
 		},
-		tools.LoadMCPToolsToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
+		tools.LoadToolsToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
 			out, err := a.loadMCPToolsTool(ctx, chatCtx, input)
 			return out, nil, err
 		},
-		tools.UnloadMCPToolsToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
+		tools.UnloadToolsToolSpec.Name: func(ctx context.Context, input []byte) (string, []*models.FileAttachment, error) {
 			out, err := a.unloadMCPToolsTool(ctx, chatCtx, input)
 			return out, nil, err
 		},
@@ -151,7 +162,7 @@ func (a *Agent) dispatchMCPToolUse(ctx context.Context, chatCtx *chatContext, us
 		if mcpToolLoadedOutOfScope(chatCtx, servers, use.Name) {
 			return "", nil, fmt.Errorf("mcp tool %q belongs to a connector that is not in scope right now (it comes from a skill that is not active); it can't be called until that skill is active again", use.Name)
 		}
-		return "", nil, fmt.Errorf("mcp tool %q is not loaded for this chat; call %q first", use.Name, tools.LoadMCPToolsToolSpec.Name)
+		return "", nil, fmt.Errorf("mcp tool %q is not loaded for this chat; call %q first", use.Name, tools.LoadToolsToolSpec.Name)
 	}
 	out, err := a.mcpClient.CallToolByFullNameWithSessionStateDetailed(ctx, servers, use.Name, use.Input, sessionStateFromChatContext(chatCtx))
 	if err != nil {
