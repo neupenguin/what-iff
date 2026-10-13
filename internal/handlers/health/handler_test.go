@@ -151,3 +151,103 @@ func TestCheck_ContentTypeJSON(t *testing.T) {
 		t.Errorf("Expected Content-Type 'application/json', got '%s'", contentType)
 	}
 }
+
+func TestLive_NilDatabase(t *testing.T) {
+	handler := NewHandler(nil, zap.NewNop())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health/live", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Live(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var response Response
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Status != "healthy" {
+		t.Errorf("Expected status 'healthy', got '%s'", response.Status)
+	}
+	if contentType := rec.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Errorf("Expected Content-Type 'application/json', got '%s'", contentType)
+	}
+}
+
+func TestLive_FailingDatabaseNotPinged(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("Failed to create mock: %v", err)
+	}
+	defer db.Close()
+
+	// A failing ping is armed; Live must neither consume it nor report it.
+	mock.ExpectPing().WillReturnError(sql.ErrConnDone)
+
+	handler := NewHandler(db, zap.NewNop())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health/live", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Live(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err == nil {
+		t.Error("Expected the database not to be pinged, but the ping expectation was consumed")
+	}
+}
+
+func TestReady(t *testing.T) {
+	tests := []struct {
+		name       string
+		pingErr    error
+		wantCode   int
+		wantStatus string
+		wantDB     string
+	}{
+		{name: "ping succeeds", wantCode: http.StatusOK, wantStatus: "healthy", wantDB: "ok"},
+		{name: "ping fails", pingErr: sql.ErrConnDone, wantCode: http.StatusServiceUnavailable, wantStatus: "unhealthy", wantDB: "error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+			if err != nil {
+				t.Fatalf("Failed to create mock: %v", err)
+			}
+			defer db.Close()
+
+			mock.ExpectPing().WillReturnError(tt.pingErr)
+
+			handler := NewHandler(db, zap.NewNop())
+
+			req := httptest.NewRequest(http.MethodGet, "/api/health/ready", nil)
+			rec := httptest.NewRecorder()
+
+			handler.Ready(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Errorf("Expected status %d, got %d", tt.wantCode, rec.Code)
+			}
+
+			var response Response
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+			if response.Status != tt.wantStatus {
+				t.Errorf("Expected status '%s', got '%s'", tt.wantStatus, response.Status)
+			}
+			if response.Checks["database"] != tt.wantDB {
+				t.Errorf("Expected database check '%s', got '%s'", tt.wantDB, response.Checks["database"])
+			}
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("Unfulfilled expectations: %v", err)
+			}
+		})
+	}
+}

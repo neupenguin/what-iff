@@ -12,8 +12,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Health check endpoint
-         * @description Returns the health status of the API
+         * Health check endpoint (legacy)
+         * @description Pings the database and returns 503 if the ping fails; identical to /health/ready. Kept for existing callers. Load balancer health checks should use /health/live instead: a database-backed check fails on every instance at once during a database blip, so the load balancer would replace them all together.
          */
         get: {
             parameters: {
@@ -24,13 +24,109 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description API is running */
+                /** @description API and database are reachable */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": string;
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+                /** @description Database ping failed */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liveness check
+         * @description Process liveness only. Returns 200 whenever the HTTP server can answer and never touches the database or other dependencies. This is the endpoint for load balancer (ALB) target-group health checks.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Process is alive */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness check
+         * @description Pings the database (short timeout) and returns 503 if the ping fails. For dashboards and humans; not for load balancer health checks.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description API and database are reachable */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+                /** @description Database ping failed */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
                     };
                 };
             };
@@ -10171,6 +10267,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @example {
+         *       "status": "healthy",
+         *       "checks": {
+         *         "database": "ok"
+         *       }
+         *     }
+         */
+        HealthResponse: {
+            /** @enum {string} */
+            status: "healthy" | "unhealthy";
+            /** @description Per-dependency results (e.g. `database`); empty for /health/live. */
+            checks: {
+                [key: string]: "ok" | "error";
+            };
+        };
         /**
          * @example {
          *       "username": "johndoe",

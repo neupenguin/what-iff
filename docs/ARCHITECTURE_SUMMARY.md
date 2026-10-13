@@ -107,6 +107,7 @@ Run `make reflow-package-summaries` to fix a file mechanically; CI enforces it w
  ## Infra & Operations
  - Local development: Docker + `docker-compose` (root `Dockerfile`, `docker/` scripts), or the make-driven hybrid stack below.
  - Production: ships as a standard container (see the root `Dockerfile`); infrastructure-as-code for the maintainers' hosted deployment lives outside this repository and is not required to run the app.
+ - Health checks (all unauthenticated): `GET /api/health/live` is process liveness only and is what load-balancer health checks should target; `GET /api/health/ready` pings the database (503 on failure) for dashboards; the legacy `GET /api/health` behaves like `/ready`. A database-backed LB check would fail every instance at once during a DB blip and get them all replaced together.
  - CI/CD: GitHub Actions pipelines for backend and frontend (`.github/workflows/`).
  - Account-export bundles live in the configured file store under `exports/{user_id}/…` as short-lived ZIPs; their links are delivered out-of-band via the `email.Sender` seam (open-source logs the link; a hosted deployment links a private transport). Bucket lifecycle expiry for `exports/` and the email transport's identity/permissions are deployment concerns handled wherever that infrastructure is defined.
 
