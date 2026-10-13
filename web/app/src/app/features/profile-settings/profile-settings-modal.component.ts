@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { AbstractControl, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -14,6 +15,12 @@ import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeMode, ThemeService } from '../../core/services/theme.service';
 import { UserPreferencesService } from '../../core/services/user-preferences.service';
+import {
+  TIMEZONE_MAX_LENGTH,
+  detectBrowserTimezone,
+  listTimezones,
+  timezoneValidator,
+} from '../../core/utils/timezone.helpers';
 import { ModalComponent } from '../../shared/ui/modal/modal.component';
 import { UserIconComponent } from '../../shared/ui/icons/icons';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
@@ -48,6 +55,7 @@ export class ProfileSettingsModalComponent {
     email: ['', [Validators.required, Validators.email, Validators.maxLength(255)]],
     first_name: ['', [Validators.maxLength(50)]],
     last_name: ['', [Validators.maxLength(50)]],
+    timezone: ['', [Validators.maxLength(TIMEZONE_MAX_LENGTH), timezoneValidator]],
   });
   readonly passwordForm = this.fb.group({
     current_password: [''],
@@ -60,6 +68,21 @@ export class ProfileSettingsModalComponent {
   readonly models = signal<readonly Model[]>([]);
   readonly personalities = signal<readonly Personality[]>([]);
   readonly themeMode = signal<ThemeMode>('system');
+  /**
+   * IANA names offered in the Timezone select. A saved value the browser doesn't list is added on
+   * load so the select can still show it.
+   */
+  readonly timezones = signal<readonly string[]>(listTimezones());
+  /**
+   * The browser's timezone. Every account has a saved timezone (the server defaults it to
+   * America/New_York), so instead of prefilling, the field offers this zone as a one-click choice
+   * whenever it differs from the selected one. Nothing is saved until Save Changes.
+   */
+  readonly browserTimezone = detectBrowserTimezone();
+  private readonly selectedTimezone = toSignal(this.profileForm.controls.timezone.valueChanges, { initialValue: '' });
+  readonly timezoneOffer = computed(() =>
+    this.browserTimezone && this.browserTimezone !== this.selectedTimezone() ? this.browserTimezone : '',
+  );
   readonly loadingProfile = signal(false);
   readonly loadingAction = signal(false);
   readonly message = signal<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -96,6 +119,13 @@ export class ProfileSettingsModalComponent {
   }
 
   close(): void { this.modal.close(); }
+
+  /** Selects the browser's timezone in the form; it is saved with the next Save Changes. */
+  useBrowserTimezone(): void {
+    const control = this.profileForm.controls.timezone;
+    control.setValue(this.browserTimezone);
+    control.markAsDirty();
+  }
   setTab(tab: ProfileSettingsTab): void { this.modal.setTab(tab); }
 
   /** Closes the modal and opens the Import & Export screen. */
@@ -135,6 +165,7 @@ export class ProfileSettingsModalComponent {
       email: (this.profileForm.value.email ?? '').trim(),
       first_name: firstName || undefined,
       last_name: lastName || undefined,
+      timezone: (this.profileForm.value.timezone ?? '').trim() || undefined,
     };
     try {
       const user = await firstValueFrom(this.authService.updateProfile(updateData));
@@ -202,10 +233,13 @@ export class ProfileSettingsModalComponent {
       this.preferences.set(preferences);
       this.models.set(models);
       this.personalities.set(personalities);
+      const savedTimezone = user.timezone || '';
+      this.includeTimezoneOptions(savedTimezone, this.browserTimezone);
       this.profileForm.patchValue({
         email: user.email || '',
         first_name: user.first_name || '',
         last_name: user.last_name || '',
+        timezone: savedTimezone,
       });
       this.themeMode.set(this.themeService.mode());
       this.profileForm.markAsPristine();
@@ -214,6 +248,12 @@ export class ProfileSettingsModalComponent {
     } finally {
       this.loadingProfile.set(false);
     }
+  }
+
+  /** Adds zones the select must be able to show (e.g. a saved legacy name) that the runtime doesn't list. */
+  private includeTimezoneOptions(...zones: string[]): void {
+    const missing = zones.filter(zone => zone && !this.timezones().includes(zone));
+    if (missing.length > 0) this.timezones.update(list => [...list, ...missing].sort());
   }
 
   private async loadAllPersonalities(): Promise<readonly Personality[]> {
