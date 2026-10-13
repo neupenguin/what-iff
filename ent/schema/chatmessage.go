@@ -108,6 +108,10 @@ func (ChatMessage) Indexes() []ent.Index {
 		index.Fields("origin"),
 		index.Fields("origin", "read_status"),
 		index.Fields("response_id"),
+		// ent orders an index's plain fields before its edge columns, so every composite
+		// below ends with the chat FK and none can seek by chat alone. This one is what
+		// per-chat counts and listings (WHERE chat_messages = ?) use.
+		index.Edges("chat"),
 		index.Edges("chat").Fields("sent_at"),
 		index.Edges("chat").Fields("origin", "read_status"),
 		// Serves the per-chat bookmarks listing (WHERE chat=? AND bookmarked=true).

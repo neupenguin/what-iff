@@ -8,6 +8,7 @@ import { ProfileSettingsModalComponent } from './profile-settings-modal.componen
 import { ProfileSettingsModalService } from './profile-settings-modal.service';
 import { AuthService } from '../../core/services/auth.service';
 import { ExternalAuthProvider, NoopExternalAuthProvider } from '../../core/auth/external-auth.provider';
+import { LoggerService } from '../../core/services/logger.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -29,6 +30,21 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     logoutPreferred: ReturnType<typeof vi.fn>;
   };
   let user: Record<string, unknown>;
+  let logger: { error: ReturnType<typeof vi.fn> };
+  /** Swapped per test before the component is created; the provider factory reads it lazily. */
+  let externalAuth: ExternalAuthProvider;
+
+  /** An external provider with a live session that refuses attribute writes. */
+  function attributeRefusingProvider(): ExternalAuthProvider & { updateProfileAttributes: ReturnType<typeof vi.fn> } {
+    const provider = new NoopExternalAuthProvider() as unknown as ExternalAuthProvider & {
+      available: boolean;
+      updateProfileAttributes: ReturnType<typeof vi.fn>;
+    };
+    Object.defineProperty(provider, 'available', { value: true });
+    provider.fetchSession = vi.fn().mockResolvedValue({ accessToken: 'access', idToken: 'id' });
+    provider.updateProfileAttributes = vi.fn().mockRejectedValue(new Error('attribute write refused'));
+    return provider;
+  }
 
   async function openAndWaitForProfile(fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>): Promise<void> {
     const component = fixture.componentInstance;
@@ -46,6 +62,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-01T00:00:00Z',
     };
+    externalAuth = new NoopExternalAuthProvider();
+    logger = { error: vi.fn() };
     authService = {
       getUserProfile: vi.fn().mockReturnValue(of(user)),
       updateProfile: vi.fn().mockReturnValue(of(user)),
@@ -93,7 +111,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
         { provide: ModelService, useValue: modelService },
         { provide: PersonalityService, useValue: personalityService },
         { provide: Router, useValue: router },
-        { provide: ExternalAuthProvider, useClass: NoopExternalAuthProvider },
+        { provide: ExternalAuthProvider, useFactory: () => externalAuth },
+        { provide: LoggerService, useValue: logger },
       ],
     }).compileComponents();
   });
@@ -362,6 +381,54 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       await component.saveProfile();
 
       expect(component.message()).toEqual({ type: 'error', text: 'Invalid timezone' });
+    });
+  });
+
+  describe('saving the profile', () => {
+    async function openAndEditName(): Promise<ProfileSettingsModalComponent> {
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+      component.profileForm.patchValue({ first_name: ' Ada ', last_name: 'Lovelace' });
+      return component;
+    }
+
+    it('saves through the profile API and reports success', async () => {
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith({
+        email: 'testuser@example.com',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+      });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+    });
+
+    it('still saves when the identity provider rejects the name update', async () => {
+      const provider = attributeRefusingProvider();
+      externalAuth = provider;
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalled();
+      expect(provider.updateProfileAttributes).toHaveBeenCalledWith({ given_name: 'Ada', family_name: 'Lovelace' });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('shows the server error and skips the provider update when the save fails', async () => {
+      const provider = attributeRefusingProvider();
+      externalAuth = provider;
+      authService.updateProfile.mockReturnValue(throwError(() => new Error('Email already in use')));
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(component.message()).toEqual({ type: 'error', text: 'Email already in use' });
+      expect(provider.updateProfileAttributes).not.toHaveBeenCalled();
     });
   });
 });

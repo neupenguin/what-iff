@@ -589,6 +589,35 @@ func TestGetChatMessageCount_OriginFilters(t *testing.T) {
 	}
 }
 
+func TestChatHasMessages(t *testing.T) {
+	ds, cleanup := newChatMessageTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	userID := createCMTestUser(t, ds)
+	modelID := createCMTestModel(t, ds)
+	chatID := createCMTestChat(t, ds, userID, modelID)
+
+	has, err := ds.ChatHasMessages(ctx, userID, chatID, models.MessageOriginFilterUser)
+	require.NoError(t, err)
+	require.False(t, has, "an empty chat has no messages")
+
+	_, err = ds.CreateChatMessage(ctx, userID, models.ChatMessage{
+		ChatID: chatID, Message: "a1", Origin: models.MessageOriginAssistant,
+	})
+	require.NoError(t, err)
+
+	has, err = ds.ChatHasMessages(ctx, userID, chatID, models.MessageOriginFilterUser)
+	require.NoError(t, err)
+	require.False(t, has, "the origin filter applies")
+	has, err = ds.ChatHasMessages(ctx, userID, chatID, models.MessageOriginFilterAssistant)
+	require.NoError(t, err)
+	require.True(t, has)
+
+	_, err = ds.ChatHasMessages(ctx, userID, uuid.New(), models.MessageOriginFilterAll)
+	require.ErrorIs(t, err, ErrChatNotFound)
+}
+
 func TestGetChatMessageCount_InvalidFilter(t *testing.T) {
 	ds, cleanup := newChatMessageTestDatastore(t)
 	defer cleanup()
@@ -843,13 +872,45 @@ func TestListChatMessagesBefore_KeysetWalk(t *testing.T) {
 	require.Equal(t, ids[1], page2.Results[1].(*models.ChatMessage).ID)
 	require.Equal(t, ids[0], page2.Results[2].(*models.ChatMessage).ID)
 
-	// Past the oldest message: empty batch and no continuation cursor.
-	beforeSentAt2, beforeID2, err := models.DecodeMessageCursor(page2.NextCursor)
+	// The batch reached the oldest message: no continuation cursor, nothing more.
+	require.Empty(t, page2.NextCursor)
+
+	// A batch that ends exactly on the oldest message reports the same (the extra-row probe
+	// finds nothing past it).
+	exact, err := ds.ListChatMessagesBefore(ctx, userID, chatID, beforeSentAt, beforeID, 3, models.ChatMessageFilters{})
 	require.NoError(t, err)
-	page3, err := ds.ListChatMessagesBefore(ctx, userID, chatID, beforeSentAt2, beforeID2, 10, models.ChatMessageFilters{})
+	require.Len(t, exact.Results, 3)
+	require.Empty(t, exact.NextCursor)
+}
+
+func TestListChatMessages_SkipTotal(t *testing.T) {
+	ds, cleanup := newChatMessageTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	userID := createCMTestUser(t, ds)
+	modelID := createCMTestModel(t, ds)
+	chatID := createCMTestChat(t, ds, userID, modelID)
+	ids := createCMTestMessages(t, ds, userID, chatID, 3)
+
+	page, err := ds.ListChatMessages(ctx, userID, chatID, 1, 2, models.ChatMessageFilters{SkipTotal: true})
 	require.NoError(t, err)
-	require.Empty(t, page3.Results)
-	require.Empty(t, page3.NextCursor)
+	require.Zero(t, page.TotalCount, "SkipTotal leaves the total uncounted")
+	require.Len(t, page.Results, 2)
+	require.Equal(t, ids[2], page.Results[0].(*models.ChatMessage).ID)
+	require.NotEmpty(t, page.NextCursor, "older rows remain")
+
+	last, err := ds.ListChatMessages(ctx, userID, chatID, 2, 2, models.ChatMessageFilters{SkipTotal: true})
+	require.NoError(t, err)
+	require.Len(t, last.Results, 1)
+	require.Empty(t, last.NextCursor, "nothing older remains")
+
+	// Chronological pages honour SkipTotal and still return exactly pageSize rows.
+	chrono, err := ds.ListChatMessagesAfter(ctx, userID, chatID, time.Time{}, uuid.Nil, 2, models.ChatMessageFilters{SkipTotal: true})
+	require.NoError(t, err)
+	require.Zero(t, chrono.TotalCount)
+	require.Len(t, chrono.Results, 2)
+	require.Equal(t, ids[0], chrono.Results[0].(*models.ChatMessage).ID)
 }
 
 func TestClampMessagePageSize(t *testing.T) {

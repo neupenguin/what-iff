@@ -35,8 +35,28 @@ type Response struct {
 	Checks map[string]string `json:"checks"`
 }
 
-// Check handles GET /api/health requests
+// Live handles GET /api/health/live: process liveness only. It never touches the
+// database or other dependencies, so a database blip cannot fail it. Point the ALB
+// target-group health check here; failing it gets the task replaced by ECS.
+func (h *Handler) Live(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := Response{Status: "healthy", Checks: map[string]string{}}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Failed to encode health response", zap.Error(err))
+	}
+}
+
+// Check handles GET /api/health. Kept for existing callers; it behaves exactly like
+// Ready. The ALB should use /api/health/live: a database-backed check fails on every
+// task at once during a DB blip, and ECS would then replace them all together.
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
+	h.Ready(w, r)
+}
+
+// Ready handles GET /api/health/ready: verifies database connectivity and returns
+// 503 if the ping fails. For dashboards and humans, not for the ALB.
+func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	response := Response{

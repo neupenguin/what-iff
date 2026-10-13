@@ -103,9 +103,9 @@ func TestBuild_SandboxedChatRefiltersReplayedMemoriesToItsOwn(t *testing.T) {
 // a turn persisted before it was sandboxed. An ordinary chat does.
 func TestUserNameLine_NotGivenToASandboxedChat(t *testing.T) {
 	t.Parallel()
-	require.Empty(t, initialTurnContextLines("Ada", 0, true))
-	require.Equal(t, []string{"The user's name is Ada"}, initialTurnContextLines("Ada", 0, false))
-	require.Empty(t, initialTurnContextLines("Ada", 1, false), "only the first request carries it")
+	require.Empty(t, initialTurnContextLines("Ada", false, true))
+	require.Equal(t, []string{"The user's name is Ada"}, initialTurnContextLines("Ada", false, false))
+	require.Empty(t, initialTurnContextLines("Ada", true, false), "only the first request carries it")
 	require.False(t, userNameLineAllowed(true))
 	require.True(t, userNameLineAllowed(false))
 }

@@ -343,9 +343,12 @@ func (s *Server) setupRoutes() {
 	// Setup API routes
 	apiRouter := s.router.PathPrefix("/api").Subrouter()
 
-	// Health check with database connectivity verification
+	// Health checks (unauthenticated). /health/live is process liveness only and is
+	// what the ALB should use; /health/ready and the legacy /health ping the database.
 	healthHandler := health.NewHandler(s.sqlDB, s.logger)
 	apiRouter.HandleFunc("/health", healthHandler.Check).Methods("GET")
+	apiRouter.HandleFunc("/health/live", healthHandler.Live).Methods("GET")
+	apiRouter.HandleFunc("/health/ready", healthHandler.Ready).Methods("GET")
 
 	// Build provenance, stamped at compile time via -ldflags (see internal/buildinfo)
 	versionHandler := versionhandler.NewHandler(buildinfo.Get(), s.logger)

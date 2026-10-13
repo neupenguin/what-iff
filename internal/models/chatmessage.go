@@ -136,6 +136,10 @@ type ChatMessageFilters struct {
 	Query   *string        `json:"query,omitempty"`
 	MinDate *time.Time     `json:"min_date,omitempty"`
 	MaxDate *time.Time     `json:"max_date,omitempty"`
+	// SkipTotal leaves PaginatedResponse.TotalCount at zero instead of counting every matching
+	// message in the chat, a full pass over a long chat. Set it when the caller only needs the
+	// page; an empty NextCursor already says nothing older remains.
+	SkipTotal bool `json:"-"`
 }
 
 type ChatMessageResponse struct {
