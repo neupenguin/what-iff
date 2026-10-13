@@ -4,6 +4,7 @@ import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { LoggerService } from '../../core/services/logger.service';
 import { UserPreferencesService } from '../../core/services/user-preferences.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
@@ -35,6 +36,7 @@ export class ProfileComponent implements OnInit {
   private router: Router = inject(Router);
   private memoryService: MemoryService = inject(MemoryService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly logger = inject(LoggerService);
   private renderer: Renderer2 = inject(Renderer2);
 
   profileForm: FormGroup;
@@ -303,15 +305,13 @@ export class ProfileComponent implements OnInit {
         timezone: timezoneValue || undefined
       };
 
-      const isCognitoUser = await this.isExternalAuthenticated();
-
-      if (isCognitoUser) {
+      if (await this.isExternalAuthenticated()) {
+        // Best effort: the profile API below is the source of truth, and an external identity
+        // provider may refuse attribute writes for some sessions.
         try {
           await this.syncExternalProfile(firstNameValue, lastNameValue);
-        } catch (error: any) {
-          this.isLoading.set(false);
-          this.errorMessage.set(this.formatExternalProfileError(error));
-          return;
+        } catch (error) {
+          this.logger.error('Could not update the identity provider name; saving the profile anyway', error);
         }
       }
 
@@ -345,9 +345,7 @@ export class ProfileComponent implements OnInit {
         new_password: this.passwordForm.value.new_password
       };
 
-      const isCognitoUser = await this.isExternalAuthenticated();
-
-      if (isCognitoUser) {
+      if (await this.isExternalAuthenticated()) {
         try {
           await this.externalAuth.updatePassword(
             passwordData.current_password,
@@ -588,12 +586,5 @@ export class ProfileComponent implements OnInit {
 
   logout(): void {
     void this.authService.logoutPreferred();
-  }
-
-  private formatExternalProfileError(error: any): string {
-    if (typeof error?.message === 'string' && error.message.trim().length > 0) {
-      return error.message;
-    }
-    return 'Failed to update profile. Please try again.';
   }
 }
