@@ -172,14 +172,22 @@ func (h *Handler) streamAccountZip(ctx context.Context, src accountExportSource,
 		}()
 		err = storage.UploadStream(ctx, h.fileStore, key, pr, "application/zip")
 	}()
-	// If the build panics, end the stream so the upload aborts instead of waiting forever. After
-	// a normal close below this is a no-op.
-	defer pw.CloseWithError(errors.New("account export build aborted"))
+	// If the build panics before the explicit close below, end the stream so the upload aborts
+	// instead of waiting forever. Only that path closes here: once the build has returned, the
+	// upload must see its real result (EOF or the build error), never this placeholder.
+	pipeClosed := false
+	defer func() {
+		if !pipeClosed {
+			pw.CloseWithError(errors.New("account export build aborted"))
+		}
+	}()
 
 	cw := &countingWriter{w: pw}
 	counts, buildErr = h.writeAccountZip(ctx, src, cw, userID, userEmail, username)
-	// A nil buildErr ends the stream at EOF, so the upload completes; otherwise it aborts.
+	// A nil buildErr ends the stream at EOF, so the upload completes; otherwise the upload reads
+	// buildErr and aborts.
 	pw.CloseWithError(buildErr)
+	pipeClosed = true
 	if buildErr == nil {
 		built(cw.n, counts)
 	}

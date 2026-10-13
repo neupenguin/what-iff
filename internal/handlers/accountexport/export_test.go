@@ -90,6 +90,7 @@ type streamingStore struct {
 	received atomic.Int64
 	aborted  atomic.Bool
 	files    []storage.ObjectInfo
+	readErr  error // the non-EOF error the stream ended with, if any
 }
 
 func newStreamingStore(t *testing.T) *streamingStore {
@@ -115,6 +116,9 @@ func (s *streamingStore) UploadStream(_ context.Context, key string, r io.Reader
 		}
 		if err != nil {
 			s.aborted.Store(true)
+			s.mu.Lock()
+			s.readErr = err
+			s.mu.Unlock()
 			return fmt.Errorf("read stream: %w", err)
 		}
 	}
@@ -284,6 +288,8 @@ func TestStreamAccountZipBuildFailureAbortsUpload(t *testing.T) {
 	require.False(t, built)
 	require.True(t, store.aborted.Load())
 	require.Empty(t, store.objects)
+	// The upload side saw the build's own error, not the deferred "build aborted" placeholder.
+	require.ErrorIs(t, store.readErr, errFakeSource)
 }
 
 // An upload that fails midway stops the build (no writer left blocked on the pipe) and is reported

@@ -87,7 +87,7 @@ func streamToS3(ctx context.Context, api s3StreamAPI, bucket, key string, r io.R
 		return err
 	}
 	if readErr != nil {
-		return readErr
+		return fmt.Errorf("read stream for part 1: %w", readErr)
 	}
 
 	// CRC32 matches the SDK's default part checksum; once named here, Complete must list each part's.
@@ -142,7 +142,7 @@ func streamToS3(ctx context.Context, api s3StreamAPI, bucket, key string, r io.R
 			break
 		}
 		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-			return readErr
+			return fmt.Errorf("read stream for part %d: %w", partNumber+1, readErr)
 		}
 	}
 
