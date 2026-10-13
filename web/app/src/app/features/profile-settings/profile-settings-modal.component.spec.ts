@@ -2,12 +2,13 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { Router } from '@angular/router';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 import { ProfileSettingsModalComponent } from './profile-settings-modal.component';
 import { ProfileSettingsModalService } from './profile-settings-modal.service';
 import { AuthService } from '../../core/services/auth.service';
 import { ExternalAuthProvider, NoopExternalAuthProvider } from '../../core/auth/external-auth.provider';
+import { LoggerService } from '../../core/services/logger.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -22,6 +23,29 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     listPersonalities: ReturnType<typeof vi.fn>;
   };
   let router: { navigate: ReturnType<typeof vi.fn> };
+  let authService: {
+    getUserProfile: ReturnType<typeof vi.fn>;
+    updateProfile: ReturnType<typeof vi.fn>;
+    updatePassword: ReturnType<typeof vi.fn>;
+    logoutPreferred: ReturnType<typeof vi.fn>;
+  };
+  let logger: { error: ReturnType<typeof vi.fn> };
+  /** Swapped per test before the component is created; the provider factory reads it lazily. */
+  let externalAuth: ExternalAuthProvider;
+
+  /** An external provider with a live session whose attribute write fails as Cognito does for a federated session (#319). */
+  function federatedSessionProvider(): ExternalAuthProvider & { updateProfileAttributes: ReturnType<typeof vi.fn> } {
+    const provider = new NoopExternalAuthProvider() as unknown as ExternalAuthProvider & {
+      available: boolean;
+      updateProfileAttributes: ReturnType<typeof vi.fn>;
+    };
+    Object.defineProperty(provider, 'available', { value: true });
+    provider.fetchSession = vi.fn().mockResolvedValue({ accessToken: 'access', idToken: 'id' });
+    provider.updateProfileAttributes = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Access Token does not have required scopes'), { name: 'NotAuthorizedException' }),
+    );
+    return provider;
+  }
 
   async function openAndWaitForProfile(fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>): Promise<void> {
     const component = fixture.componentInstance;
@@ -39,7 +63,9 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-01T00:00:00Z',
     };
-    const authService = {
+    externalAuth = new NoopExternalAuthProvider();
+    logger = { error: vi.fn() };
+    authService = {
       getUserProfile: vi.fn().mockReturnValue(of(user)),
       updateProfile: vi.fn().mockReturnValue(of(user)),
       updatePassword: vi.fn().mockReturnValue(of({ message: 'ok' }) as any),
@@ -86,7 +112,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
         { provide: ModelService, useValue: modelService },
         { provide: PersonalityService, useValue: personalityService },
         { provide: Router, useValue: router },
-        { provide: ExternalAuthProvider, useClass: NoopExternalAuthProvider },
+        { provide: ExternalAuthProvider, useFactory: () => externalAuth },
+        { provide: LoggerService, useValue: logger },
       ],
     }).compileComponents();
   });
@@ -213,5 +240,53 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
 
     button.click();
     expect(router.navigate).toHaveBeenCalledWith(['/data']);
+  });
+
+  describe('saving the profile', () => {
+    async function openAndEditName(): Promise<ProfileSettingsModalComponent> {
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+      component.profileForm.patchValue({ first_name: ' Ada ', last_name: 'Lovelace' });
+      return component;
+    }
+
+    it('saves through the profile API and reports success', async () => {
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith({
+        email: 'testuser@example.com',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+      });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+    });
+
+    it('still saves when the identity provider rejects the name update (#319)', async () => {
+      const provider = federatedSessionProvider();
+      externalAuth = provider;
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalled();
+      expect(provider.updateProfileAttributes).toHaveBeenCalledWith({ given_name: 'Ada', family_name: 'Lovelace' });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('shows the server error instead of a session-expired message, and skips the provider update', async () => {
+      const provider = federatedSessionProvider();
+      externalAuth = provider;
+      authService.updateProfile.mockReturnValue(throwError(() => new Error('Email already in use')));
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(component.message()).toEqual({ type: 'error', text: 'Email already in use' });
+      expect(provider.updateProfileAttributes).not.toHaveBeenCalled();
+    });
   });
 });

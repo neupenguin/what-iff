@@ -9,6 +9,7 @@ import { Model } from '../../core/models/model.model';
 import { Personality } from '../../core/models/personality.model';
 import { UpdatePasswordRequest, UpdateUserRequest, UserPreferences, UserResponse } from '../../core/models/user.model';
 import { AuthService } from '../../core/services/auth.service';
+import { LoggerService } from '../../core/services/logger.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeMode, ThemeService } from '../../core/services/theme.service';
@@ -37,6 +38,7 @@ export class ProfileSettingsModalComponent {
   private readonly modelService = inject(ModelService);
   private readonly personalityService = inject(PersonalityService);
   private readonly router = inject(Router);
+  private readonly logger = inject(LoggerService);
 
   readonly tabs: Array<{ id: ProfileSettingsTab; label: string; icon: 'profile' }> = [
     { id: 'profile', label: 'Profile', icon: 'profile' },
@@ -135,13 +137,13 @@ export class ProfileSettingsModalComponent {
       last_name: lastName || undefined,
     };
     try {
-      if (await this.isExternalAuthenticated()) await this.syncExternalProfile(firstName, lastName);
       const user = await firstValueFrom(this.authService.updateProfile(updateData));
       this.currentUser.set(user);
       this.profileForm.markAsPristine();
+      await this.mirrorExternalProfile(firstName, lastName);
       this.message.set({ type: 'success', text: 'Profile updated.' });
     } catch (error) {
-      this.message.set({ type: 'error', text: this.formatProfileError(error) });
+      this.message.set({ type: 'error', text: this.getErrorMessage(error, 'Failed to update profile.') });
     } finally {
       this.loadingAction.set(false);
     }
@@ -279,19 +281,24 @@ export class ProfileSettingsModalComponent {
     }
   }
 
-  private async syncExternalProfile(firstName: string, lastName: string): Promise<void> {
+  /**
+   * Best-effort copy of the saved name to the external identity provider. The profile API is the
+   * source of truth (the provider's name claims are only read when an account is first
+   * provisioned), and some sessions cannot write provider attributes at all: a Cognito session
+   * from federated (Google) sign-in lacks the scope UpdateUserAttributes needs and fails with
+   * NotAuthorizedException (#319). So this runs after the save and never fails it.
+   */
+  private async mirrorExternalProfile(firstName: string, lastName: string): Promise<void> {
     const attributes: Record<string, string> = {};
     if (firstName) attributes['given_name'] = firstName;
     if (lastName) attributes['family_name'] = lastName;
     if (Object.keys(attributes).length === 0) return;
-    await this.externalAuth.updateProfileAttributes(attributes);
-  }
-
-  private formatProfileError(error: unknown): string {
-    const name = (error as { name?: string })?.name;
-    if (name === 'InvalidParameterException') return 'Name contains invalid characters or is too long.';
-    if (name === 'NotAuthorizedException') return 'Session expired while updating profile. Please sign in again.';
-    return this.getErrorMessage(error, 'Failed to update profile.');
+    try {
+      if (!(await this.isExternalAuthenticated())) return;
+      await this.externalAuth.updateProfileAttributes(attributes);
+    } catch (error) {
+      this.logger.error('Profile saved, but the identity provider name could not be updated', error);
+    }
   }
 
   private formatPasswordError(error: unknown): string {

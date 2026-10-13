@@ -425,6 +425,26 @@ describe('ProfileComponent', () => {
                 expect(component.successMessage()).toBeNull();
             });
 
+            it('still saves when the identity provider rejects the name update (#319)', async () => {
+                // A federated (Google) Cognito session cannot write user attributes.
+                const externalAuth = TestBed.inject(ExternalAuthProvider);
+                Object.defineProperty(externalAuth, 'available', { value: true });
+                vi.spyOn(externalAuth, 'fetchSession').mockResolvedValue({ accessToken: 'access', idToken: 'id' });
+                const updateAttributes = vi.spyOn(externalAuth, 'updateProfileAttributes').mockRejectedValue(
+                    Object.assign(new Error('Access Token does not have required scopes'), { name: 'NotAuthorizedException' }),
+                );
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                mockAuthService.updateProfile.mockReturnValue(of(mockUser));
+
+                component.profileForm.patchValue({ email: 'test@example.com', first_name: 'Ada', last_name: '', timezone: '' });
+                await component.onSubmit();
+
+                expect(updateAttributes).toHaveBeenCalledWith({ given_name: 'Ada' });
+                expect(mockAuthService.updateProfile).toHaveBeenCalled();
+                expect(component.errorMessage()).toBeNull();
+                expect(component.successMessage()).toBe('Profile updated successfully!');
+            });
+
             it('should not submit if form is invalid', () => {
                 component.profileForm.patchValue({
                     email: 'invalid-email',
