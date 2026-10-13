@@ -49,8 +49,13 @@ export function resolveDefaultTimezone(saved?: string | null): string {
   return (saved ?? '').trim() || detectBrowserTimezone() || 'UTC';
 }
 
-/** True when the runtime accepts `tz` as an IANA timezone identifier. */
+/**
+ * True when the runtime accepts `tz` as an IANA timezone identifier. A runtime without
+ * `Intl.DateTimeFormat` can't check, so it accepts the name rather than rejecting every zone; the
+ * profile API validates it on save either way.
+ */
 export function isValidTimezone(tz: string): boolean {
+  if (typeof Intl === 'undefined' || typeof Intl.DateTimeFormat !== 'function') return true;
   try {
     new Intl.DateTimeFormat(undefined, { timeZone: tz });
     return true;

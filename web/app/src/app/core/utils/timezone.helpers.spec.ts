@@ -59,4 +59,19 @@ describe('timezone helpers', () => {
     expect(timezoneValidator(new FormControl('Europe/London'))).toBeNull();
     expect(timezoneValidator(new FormControl('Nope/Nowhere'))).toEqual({ timezone: true });
   });
+
+  describe('without Intl', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('accepts names it cannot check and detects no browser zone, so the form still saves', () => {
+      vi.stubGlobal('Intl', undefined);
+
+      expect(isValidTimezone('Europe/London')).toBe(true);
+      expect(timezoneValidator(new FormControl('Europe/London'))).toBeNull();
+      expect(detectBrowserTimezone()).toBe('');
+      expect(listTimezones()).toContain('UTC');
+    });
+  });
 });
