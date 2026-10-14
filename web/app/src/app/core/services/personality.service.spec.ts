@@ -4,7 +4,8 @@ import { provideHttpClient, withXhr } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { environment } from '@environments/environment';
 import { Personality } from '../models/personality.model';
-import { PersonalityService } from './personality.service';
+import { PersonalityChange, PersonalityService } from './personality.service';
+import { makeTestPersonality } from '../models/personality.test-fixtures';
 
 describe('PersonalityService', () => {
     let service: PersonalityService;
@@ -58,6 +59,58 @@ describe('PersonalityService', () => {
         const req = httpMock.expectOne(`${environment.apiUrl}/personality?page=2&limit=25&personality_ids=personality-1,personality-2`);
         expect(req.request.method).toBe('GET');
         req.flush({ results: personalities, total_count: 1, page: 2 });
+    });
+
+    describe('changes$ (#318)', () => {
+        let changes: PersonalityChange[];
+        const created = makeTestPersonality({ id: 'p-new', name: 'Imported Card' });
+
+        beforeEach(() => {
+            changes = [];
+            service.changes$.subscribe(change => changes.push(change));
+        });
+
+        it('publishes a created change after createPersonality, without refetching a list itself', () => {
+            service.createPersonality({ name: 'Imported Card', system_prompt: 'sp' }).subscribe();
+            httpMock.expectOne(`${environment.apiUrl}/personality`).flush(created);
+
+            expect(changes).toEqual([{ kind: 'created', personality: created }]);
+            // Consumers refetch with their own page/filters; the service no longer fires a page-1 GET.
+            httpMock.expectNone(req => req.method === 'GET');
+        });
+
+        it('publishes a created change after a character-card import', () => {
+            service.importSillyTavernCard('{"spec":"chara_card_v3"}').subscribe();
+            const req = httpMock.expectOne(`${environment.apiUrl}/personality/import/sillytavern`);
+            expect(req.request.headers.get('Content-Type')).toBe('application/json');
+            req.flush({ personality: created, warnings: [], lore_files: [] });
+
+            expect(changes).toEqual([{ kind: 'created', personality: created }]);
+        });
+
+        it('publishes updated and deleted changes', () => {
+            service.updatePersonality('p-new', { name: 'Renamed' } as any).subscribe();
+            httpMock.expectOne(`${environment.apiUrl}/personality/p-new`).flush({ ...created, name: 'Renamed' });
+            service.deletePersonality('p-new').subscribe();
+            httpMock.expectOne(`${environment.apiUrl}/personality/p-new`).flush(null);
+
+            expect(changes).toEqual([
+                { kind: 'updated', personality: { ...created, name: 'Renamed' } },
+                { kind: 'deleted', id: 'p-new' },
+            ]);
+        });
+
+        it('publishes nothing when the mutation fails', () => {
+            service.createPersonality({ name: 'x', system_prompt: 'y' }).subscribe({ error: () => undefined });
+            httpMock.expectOne(`${environment.apiUrl}/personality`).flush('no', { status: 400, statusText: 'Bad Request' });
+
+            expect(changes).toEqual([]);
+        });
+
+        it('invalidate() publishes an invalidated change', () => {
+            service.invalidate();
+            expect(changes).toEqual([{ kind: 'invalidated' }]);
+        });
     });
 
     it('lists personality expressions', () => {
