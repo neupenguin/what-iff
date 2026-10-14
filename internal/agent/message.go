@@ -25,6 +25,7 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/modeltypes"
+	"github.com/theimaginaryfoundation/what-iff/internal/providerkeys"
 	"github.com/theimaginaryfoundation/what-iff/internal/pushnotify"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
@@ -203,6 +204,11 @@ type AgentConfig struct {
 	// Nil defaults to context.Background().
 	LifecycleContext context.Context
 
+	// KeyResolver answers which provider credential each request carries. It
+	// is the only place that question is decided; provider clients are built
+	// without a credential and receive one at the transport.
+	KeyResolver providerkeys.Resolver
+
 	// HTTPClient, when non-nil, replaces the default HTTP client in every
 	// provider SDK client built by NewAgent. Mock mode passes
 	// provider.DenyNetworkHTTPClient() so no provider call can leave the
@@ -231,40 +237,37 @@ type AgentConfig struct {
 	// zero value sets no limits.
 	LLMCallTimeouts provider.CallTimeouts
 
-	// ZAIKey enables z.ai GLM models (Anthropic-compatible endpoint) when set.
-	ZAIKey string
 	// ZAIBaseURL overrides z.ai's Anthropic-compatible base URL. Empty uses the
 	// provider default (see server config).
 	ZAIBaseURL string
-	// GeminiKey enables Google Gemini models (OpenAI-compatible Chat Completions)
-	// when set.
-	GeminiKey string
 	// GeminiBaseURL overrides Google's OpenAI-compatible base URL. Empty uses
 	// provider.DefaultGeminiBaseURL.
 	GeminiBaseURL string
-	// MistralKey enables Mistral models (OpenAI-compatible Chat Completions); optional.
-	MistralKey string
 	// MistralBaseURL overrides Mistral's OpenAI-compatible base URL; optional.
 	MistralBaseURL string
-	// DeepSeekKey enables DeepSeek models (OpenAI-compatible Chat Completions); optional.
-	DeepSeekKey string
 	// DeepSeekBaseURL overrides DeepSeek's OpenAI-compatible base URL; optional.
 	DeepSeekBaseURL string
-	// QwenKey enables Qwen models via DashScope (OpenAI-compatible); optional.
-	QwenKey string
 	// QwenBaseURL overrides Qwen's OpenAI-compatible base URL; optional.
 	QwenBaseURL string
-	// XiaomiKey enables Xiaomi MiMo models (OpenAI-compatible Chat Completions); optional.
-	XiaomiKey string
 	// XiaomiBaseURL overrides Xiaomi MiMo's OpenAI-compatible base URL; optional.
 	XiaomiBaseURL string
 }
 
-// NewAgent creates a new agent wired to OpenAI (required) and optionally Claude.
-// Pass anthropicKey="" to start without Claude support.
-// cfg carries immutable agent configuration; zero value is safe for development.
-func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Telemetry, apiKey string, fileStore storage.FileStore, anthropicKey string, cfg AgentConfig) *Agent {
-	oaiOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+// NewAgent creates a new agent wired to every provider this deployment can
+// reach. Which those are is answered by cfg.KeyResolver, not by keys passed
+// here: a client is built without a credential and given one per request.
+//
+// cfg carries immutable agent configuration; the zero value is safe, and
+// resolves to a deployment with no credentials at all.
+func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Telemetry, fileStore storage.FileStore, cfg AgentConfig) *Agent {
+	if cfg.KeyResolver == nil {
+		// Nothing configured: every provider reports unconfigured rather than
+		// leaving a nil waiting for the first request.
+		cfg.KeyResolver = providerkeys.NewDeploymentResolver(nil)
+	}
+	// Clients are built without a credential; cfg.HTTPClient supplies one per
+	// request. A client built outside this constructor would bypass that.
+	oaiOpts := []option.RequestOption{}
 	if cfg.HTTPClient != nil {
 		oaiOpts = append(oaiOpts, option.WithHTTPClient(cfg.HTTPClient))
 	}
@@ -316,50 +319,54 @@ func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Teleme
 	// OpenAIProvider (set in the struct literal above).
 	a.recallTool = tools.NewRecallTool(ds, &oaiClient, newRecallDistiller(a), a.fileStore, logger)
 
-	if anthropicKey != "" {
-		a.ClaudeProvider = provider.NewClaudeProvider(anthropicKey, tel, cfg.HTTPClient)
+	// Every provider client is built the same way: constructed when this
+	// deployment can reach the provider at all, and given a credential per
+	// request by the shared HTTP client rather than at construction. Whether a
+	// particular caller can use it is a question for the request.
+	if cfg.KeyResolver.Configured(models.ModelProviderAnthropic) {
+		a.ClaudeProvider = provider.NewClaudeProvider("", tel, cfg.HTTPClient)
 	} else {
-		logger.Info("ANTHROPIC_API_KEY not set; Claude models will be unavailable")
+		logger.Info("no Anthropic credential configured; Claude models will be unavailable")
 	}
 
-	if cfg.ZAIKey != "" {
+	if cfg.KeyResolver.Configured(models.ModelProviderZAI) {
 		zaiBaseURL := cfg.ZAIBaseURL
 		if zaiBaseURL == "" {
 			zaiBaseURL = provider.DefaultZAIBaseURL
 		}
-		a.ZAIProvider = provider.NewClaudeProviderWithBaseURL(cfg.ZAIKey, zaiBaseURL, tel, cfg.HTTPClient)
+		a.ZAIProvider = provider.NewClaudeProviderWithBaseURL("", zaiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("ZAI_API_KEY not set; z.ai GLM models will be unavailable")
+		logger.Info("no z.ai credential configured; GLM models will be unavailable")
 	}
 
-	if cfg.GeminiKey != "" {
-		a.GeminiProvider = provider.NewGeminiProvider(cfg.GeminiKey, cfg.GeminiBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderGoogle) {
+		a.GeminiProvider = provider.NewGeminiProvider("", cfg.GeminiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("GEMINI_API_KEY not set; Gemini models will be unavailable")
+		logger.Info("no Gemini credential configured; Gemini models will be unavailable")
 	}
 
-	if cfg.MistralKey != "" {
-		a.MistralProvider = provider.NewMistralProvider(cfg.MistralKey, cfg.MistralBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderMistral) {
+		a.MistralProvider = provider.NewMistralProvider("", cfg.MistralBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("MISTRAL_API_KEY not set; Mistral models will be unavailable")
+		logger.Info("no Mistral credential configured; Mistral models will be unavailable")
 	}
 
-	if cfg.DeepSeekKey != "" {
-		a.DeepSeekProvider = provider.NewDeepSeekProvider(cfg.DeepSeekKey, cfg.DeepSeekBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderDeepSeek) {
+		a.DeepSeekProvider = provider.NewDeepSeekProvider("", cfg.DeepSeekBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("DEEPSEEK_API_KEY not set; DeepSeek models will be unavailable")
+		logger.Info("no DeepSeek credential configured; DeepSeek models will be unavailable")
 	}
 
-	if cfg.QwenKey != "" {
-		a.QwenProvider = provider.NewQwenProvider(cfg.QwenKey, cfg.QwenBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderQwen) {
+		a.QwenProvider = provider.NewQwenProvider("", cfg.QwenBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("QWEN_API_KEY not set; Qwen models will be unavailable")
+		logger.Info("no Qwen credential configured; Qwen models will be unavailable")
 	}
 
-	if cfg.XiaomiKey != "" {
-		a.XiaomiProvider = provider.NewXiaomiProvider(cfg.XiaomiKey, cfg.XiaomiBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderXiaomi) {
+		a.XiaomiProvider = provider.NewXiaomiProvider("", cfg.XiaomiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("XIAOMI_API_KEY not set; Xiaomi MiMo models will be unavailable")
+		logger.Info("no Xiaomi MiMo credential configured; MiMo models will be unavailable")
 	}
 
 	if a.localLLM {

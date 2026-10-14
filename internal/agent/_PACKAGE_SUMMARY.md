@@ -6,7 +6,8 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 
 ## Responsibilities
 
-- **`Agent`** (`NewAgent`): central service constructed with datastore, telemetry, OpenAI key, optional Anthropic key, and S3 file store.
+- **`Agent`** (`NewAgent`): central service constructed with datastore, telemetry, S3 file store and an `AgentConfig`.
+  It takes no provider keys: provider clients are built without a credential and `AgentConfig.HTTPClient` supplies one per request, while `AgentConfig.KeyResolver` (`internal/providerkeys`) decides at startup which provider clients are built.
 - **Chat turns:** `HandleUserMessage` and related paths build `provider.ModelContext` via `messageContextBuilder` / `buildModelContextForChatMessage`, attach tools, run the model (`openAIResponseParamsForChat` → `ModelContext.BuildOpenAIResponseParams`), and execute tool rounds (`agentloop`).
 - **Context:** History, carry-over after checkpoints, token budgeting, memories (including **rehydrated** `ChatMessage.additional_context` from prior user turns plus this turn’s prefetch), attachments, personality files, MCP tools, timezone-aware user lines (`[sys:Mon 2006-01-02 15:04:05 -07:00]` via `formatUserMessageWithTime` / `agentMessageTimestampLayout` — weekday + local wall time + offset, not ISO-8601).
   **`messageContextBuilder`** attaches image bytes to the final user segment; **`loadImageBytesForVision`** fills **`RawBytes`** from the object store for every vision-capable provider (see `internal/agent/provider` package summary).

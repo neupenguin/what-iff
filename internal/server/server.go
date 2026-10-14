@@ -49,6 +49,7 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/plugins"
+	"github.com/theimaginaryfoundation/what-iff/internal/providerkeys"
 	"github.com/theimaginaryfoundation/what-iff/internal/pushnotify"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
@@ -183,10 +184,22 @@ func (s *Server) setupRoutes() {
 	//
 	// Either way the shared client records one http.client.request.duration sample per attempt
 	// (see telemetry.HTTPTransport), labelled by vendor from the request host.
-	var providerHTTPClient *http.Client
+	var baseHTTPClient *http.Client
 	if s.config.LLMBackend != "vendor" {
-		providerHTTPClient = provider.DenyNetworkHTTPClient()
+		baseHTTPClient = provider.DenyNetworkHTTPClient()
 	}
+
+	// Which credential a request carries is answered once, here, by a resolver
+	// every provider client shares. The SDK client value is copied into several
+	// independent holders, so there is no field to reassign later; the answer is
+	// applied at the transport they all still share. It sits directly on the
+	// base transport, so the timeouts and instrumentation below wrap the
+	// credentialed request exactly as they wrap any other.
+	keyResolver := providerkeys.NewDeploymentResolver(s.config.configuredProviderKeys())
+	providerHTTPClient := provider.CredentialHTTPClient(
+		credentialRules(s.config.providerEndpoints(), keyResolver),
+		baseHTTPClient,
+	)
 	// Every provider call is bounded per HTTP attempt (issue #193). The timeout transport sits
 	// inside the instrumentation so a timed-out attempt is recorded with error.type=timeout.
 	callTimeouts := s.llmCallTimeouts()
@@ -196,6 +209,7 @@ func (s *Server) setupRoutes() {
 	agentCfg := agent.AgentConfig{
 		LifecycleContext: s.lifecycleCtx,
 		HTTPClient:       providerHTTPClient,
+		KeyResolver:      keyResolver,
 		LLMBackend:       s.config.LLMBackend,
 		MockLLMMode:      s.config.MockLLMMode,
 		MockLLMFixedResponses: append([]string(nil),
@@ -204,17 +218,11 @@ func (s *Server) setupRoutes() {
 		LocalLLMBaseURL:    s.config.LocalLLMBaseURL,
 		LocalLLMModel:      s.config.LocalLLMModel,
 		LLMCallTimeouts:    callTimeouts,
-		ZAIKey:             s.config.ZAIKey,
 		ZAIBaseURL:         s.config.ZAIBaseURL,
-		GeminiKey:          s.config.GeminiKey,
 		GeminiBaseURL:      s.config.GeminiBaseURL,
-		MistralKey:         s.config.MistralKey,
 		MistralBaseURL:     s.config.MistralBaseURL,
-		DeepSeekKey:        s.config.DeepSeekKey,
 		DeepSeekBaseURL:    s.config.DeepSeekBaseURL,
-		QwenKey:            s.config.QwenKey,
 		QwenBaseURL:        s.config.QwenBaseURL,
-		XiaomiKey:          s.config.XiaomiKey,
 		XiaomiBaseURL:      s.config.XiaomiBaseURL,
 	}
 	if s.config.LLMBackend == "vendor" {
@@ -263,7 +271,7 @@ func (s *Server) setupRoutes() {
 	memoryEmbeddingBackfillCfg := agent.MemoryEmbeddingBackfillConfig{
 		LockKey: s.config.MemoryEmbeddingBackfillLockKey,
 	}
-	agent := agent.NewAgent(dataStore, s.logger, s.telemetry, s.config.OpenAIKey, fileStore, s.config.AnthropicKey, agentCfg)
+	agent := agent.NewAgent(dataStore, s.logger, s.telemetry, fileStore, agentCfg)
 	s.chatAgent = agent
 	agent.StartMemoryEmbeddingBackfill(s.lifecycleCtx, memoryEmbeddingBackfillCfg)
 	if s.config.EnableAgentJobsScheduler {
