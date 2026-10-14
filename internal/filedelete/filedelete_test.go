@@ -24,7 +24,6 @@ type memStore struct {
 	owners    map[uuid.UUID]uuid.UUID
 	getErr    map[uuid.UUID]error
 	deleteErr map[uuid.UUID]error
-	sharedErr error
 }
 
 func newMemStore() *memStore {
@@ -80,20 +79,6 @@ func (m *memStore) DeleteFileAttachment(_ context.Context, userID, id uuid.UUID)
 	return nil
 }
 
-func (m *memStore) FileAttachmentProviderFileShared(_ context.Context, id uuid.UUID, fileID string) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sharedErr != nil {
-		return false, m.sharedErr
-	}
-	for rid, r := range m.rows {
-		if rid != id && r.FileID != nil && *r.FileID == fileID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (m *memStore) ReferencedFileAttachmentKeys(_ context.Context, keys []string) (map[string]bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -147,34 +132,15 @@ func (f *memFiles) deletedKeys() []string {
 	return out
 }
 
-type memProvider struct {
-	mu      sync.Mutex
-	deleted []string
-	err     error
-}
-
-func (p *memProvider) DeleteProviderFileAttachment(_ context.Context, fileID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.err != nil {
-		return p.err
-	}
-	p.deleted = append(p.deleted, fileID)
-	return nil
-}
-
-func strPtr(s string) *string { return &s }
-
 func TestDeleteByKind(t *testing.T) {
 	user := uuid.New()
 	tests := []struct {
-		name          string
-		att           models.FileAttachment
-		setup         func(*memStore, *memFiles, *memProvider, models.FileAttachment)
-		wantStage     Stage
-		wantRowGone   bool
-		wantKeys      func(models.FileAttachment) []string
-		wantProviders []string
+		name        string
+		att         models.FileAttachment
+		setup       func(*memStore, *memFiles, models.FileAttachment)
+		wantStage   Stage
+		wantRowGone bool
+		wantKeys    func(models.FileAttachment) []string
 	}{
 		{
 			name:        "image: full object, thumbnail, then row",
@@ -195,7 +161,7 @@ func TestDeleteByKind(t *testing.T) {
 		{
 			name: "image whose full object cannot be deleted keeps its row",
 			att:  models.FileAttachment{FileType: "image/png", S3Key: "users/u/stuck.png"},
-			setup: func(_ *memStore, f *memFiles, _ *memProvider, _ models.FileAttachment) {
+			setup: func(_ *memStore, f *memFiles, _ models.FileAttachment) {
 				f.failOn = map[string]bool{"users/u/stuck.png": true}
 			},
 			wantStage: StageStorage,
@@ -203,39 +169,30 @@ func TestDeleteByKind(t *testing.T) {
 		{
 			name: "image thumbnail failure does not stop the delete",
 			att:  models.FileAttachment{FileType: "image/png", S3Key: "users/u/t.png"},
-			setup: func(_ *memStore, f *memFiles, _ *memProvider, a models.FileAttachment) {
+			setup: func(_ *memStore, f *memFiles, a models.FileAttachment) {
 				f.failOn = map[string]bool{storage.FileKeyForImageThumbnail(user, a.ID): true}
 			},
 			wantRowGone: true,
 			wantKeys:    func(models.FileAttachment) []string { return []string{"users/u/t.png"} },
 		},
 		{
-			name:          "file: provider copy, row, then its unreferenced object",
-			att:           models.FileAttachment{FileType: "application/pdf", S3Key: "users/u/doc.pdf", FileID: strPtr("file-1")},
-			wantRowGone:   true,
-			wantKeys:      func(models.FileAttachment) []string { return []string{"users/u/doc.pdf"} },
-			wantProviders: []string{"file-1"},
+			name:        "file: the row, then its unreferenced object",
+			att:         models.FileAttachment{FileType: "application/pdf", S3Key: "users/u/doc.pdf"},
+			wantRowGone: true,
+			wantKeys:    func(models.FileAttachment) []string { return []string{"users/u/doc.pdf"} },
 		},
 		{
-			name: "file sharing its provider copy and object with a reference copy leaves both",
-			att:  models.FileAttachment{FileType: "text/markdown", S3Key: "users/u/n.md", FileID: strPtr("file-2")},
-			setup: func(s *memStore, _ *memFiles, _ *memProvider, _ models.FileAttachment) {
-				s.add(user, models.FileAttachment{FileType: "text/markdown", S3Key: "users/u/n.md", FileID: strPtr("file-2")})
+			name: "file sharing its object with a reference copy leaves the object",
+			att:  models.FileAttachment{FileType: "text/markdown", S3Key: "users/u/n.md"},
+			setup: func(s *memStore, _ *memFiles, _ models.FileAttachment) {
+				s.add(user, models.FileAttachment{FileType: "text/markdown", S3Key: "users/u/n.md"})
 			},
 			wantRowGone: true,
 		},
 		{
-			name: "file whose provider copy cannot be deleted keeps its row",
-			att:  models.FileAttachment{FileType: "application/pdf", FileID: strPtr("file-3")},
-			setup: func(_ *memStore, _ *memFiles, p *memProvider, _ models.FileAttachment) {
-				p.err = errors.New("provider down")
-			},
-			wantStage: StageProvider,
-		},
-		{
 			name: "a failed row delete is a record failure",
 			att:  models.FileAttachment{FileType: "text/plain"},
-			setup: func(s *memStore, _ *memFiles, _ *memProvider, a models.FileAttachment) {
+			setup: func(s *memStore, _ *memFiles, a models.FileAttachment) {
 				s.deleteErr[a.ID] = errors.New("db down")
 			},
 			wantStage: StageRecord,
@@ -243,7 +200,7 @@ func TestDeleteByKind(t *testing.T) {
 		{
 			name: "a failed lookup is a lookup failure",
 			att:  models.FileAttachment{FileType: "image/png"},
-			setup: func(s *memStore, _ *memFiles, _ *memProvider, a models.FileAttachment) {
+			setup: func(s *memStore, _ *memFiles, a models.FileAttachment) {
 				s.getErr[a.ID] = errors.New("db down")
 			},
 			wantStage: StageLookup,
@@ -251,12 +208,12 @@ func TestDeleteByKind(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store, files, provider := newMemStore(), &memFiles{}, &memProvider{}
+			store, files := newMemStore(), &memFiles{}
 			att := store.add(user, tt.att)
 			if tt.setup != nil {
-				tt.setup(store, files, provider, att)
+				tt.setup(store, files, att)
 			}
-			err := New(store, files, provider, zap.NewNop()).Delete(context.Background(), user, att.ID)
+			err := New(store, files, zap.NewNop()).Delete(context.Background(), user, att.ID)
 
 			if tt.wantStage != "" {
 				require.Error(t, err)
@@ -272,7 +229,6 @@ func TestDeleteByKind(t *testing.T) {
 				sort.Strings(want)
 			}
 			assert.Equal(t, want, files.deletedKeys())
-			assert.Equal(t, tt.wantProviders, provider.deleted)
 		})
 	}
 }
@@ -282,7 +238,7 @@ func TestDeleteImageRefusesOtherFilesAndStrangers(t *testing.T) {
 	store := newMemStore()
 	doc := store.add(user, models.FileAttachment{FileType: "application/pdf"})
 	theirs := store.add(uuid.New(), models.FileAttachment{FileType: "image/png"})
-	svc := New(store, &memFiles{}, &memProvider{}, nil)
+	svc := New(store, &memFiles{}, nil)
 
 	assert.ErrorIs(t, svc.DeleteImage(context.Background(), user, doc.ID), ErrNotImage)
 	assert.ErrorIs(t, svc.DeleteImage(context.Background(), user, theirs.ID), ErrNotFound)
@@ -291,28 +247,31 @@ func TestDeleteImageRefusesOtherFilesAndStrangers(t *testing.T) {
 	assert.True(t, store.has(theirs.ID))
 }
 
-func TestDeleteFileWithoutAProviderClientKeepsTheRow(t *testing.T) {
+// A row left over from the OpenAI Files era carries a file_id; nothing is deleted remotely for
+// it any more, so it goes like any other file.
+func TestDeleteFileIgnoresALegacyProviderFileID(t *testing.T) {
 	user := uuid.New()
 	store := newMemStore()
-	att := store.add(user, models.FileAttachment{FileType: "application/pdf", FileID: strPtr("file-9")})
+	legacy := "file-9"
+	att := store.add(user, models.FileAttachment{FileType: "application/pdf", FileID: &legacy})
 
-	err := New(store, nil, nil, nil).DeleteFile(context.Background(), user, att.ID)
+	err := New(store, nil, nil).DeleteFile(context.Background(), user, att.ID)
 
-	assert.Equal(t, StageProvider, StageOf(err))
-	assert.True(t, store.has(att.ID))
+	require.NoError(t, err)
+	assert.False(t, store.has(att.ID))
 }
 
 func TestDeleteManyReportsEachIDAndKeepsGoing(t *testing.T) {
 	user := uuid.New()
-	store, files, provider := newMemStore(), &memFiles{}, &memProvider{}
+	store, files := newMemStore(), &memFiles{}
 	img := store.add(user, models.FileAttachment{FileType: "image/png", S3Key: "users/u/a.png"})
-	doc := store.add(user, models.FileAttachment{FileType: "application/pdf", S3Key: "users/u/b.pdf", FileID: strPtr("file-b")})
+	doc := store.add(user, models.FileAttachment{FileType: "application/pdf", S3Key: "users/u/b.pdf"})
 	broken := store.add(user, models.FileAttachment{FileType: "image/png", S3Key: "users/u/broken.png"})
 	files.failOn = map[string]bool{"users/u/broken.png": true}
 	theirs := store.add(uuid.New(), models.FileAttachment{FileType: "image/png", S3Key: "users/x/c.png"})
 	missing := uuid.New()
 
-	res := New(store, files, provider, zap.NewNop()).DeleteMany(context.Background(), user,
+	res := New(store, files, zap.NewNop()).DeleteMany(context.Background(), user,
 		[]uuid.UUID{img.ID, theirs.ID, doc.ID, img.ID, broken.ID, missing})
 
 	assert.Equal(t, []uuid.UUID{img.ID, doc.ID}, res.Deleted)
@@ -323,7 +282,7 @@ func TestDeleteManyReportsEachIDAndKeepsGoing(t *testing.T) {
 	}, res.Failed)
 	assert.True(t, store.has(theirs.ID), "another user's file is never touched")
 	assert.True(t, store.has(broken.ID))
-	assert.Equal(t, []string{"file-b"}, provider.deleted)
+	assert.Contains(t, files.deletedKeys(), "users/u/b.pdf", "the document's object goes with its row")
 }
 
 func TestDeleteManyRunsToCompletionAfterTheCallerHangsUp(t *testing.T) {
@@ -336,7 +295,7 @@ func TestDeleteManyRunsToCompletionAfterTheCallerHangsUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	res := New(store, nil, nil, nil).DeleteMany(ctx, user, ids)
+	res := New(store, nil, nil).DeleteMany(ctx, user, ids)
 
 	assert.Len(t, res.Deleted, 20)
 	assert.Empty(t, res.Failed)
@@ -352,7 +311,6 @@ func TestPublicMessage(t *testing.T) {
 		{ErrNotImage, "not an image"},
 		{&StepError{Stage: StageLookup, Err: errors.New("x")}, "could not read the file"},
 		{&StepError{Stage: StageStorage, Err: errors.New("x")}, "could not delete the stored image"},
-		{&StepError{Stage: StageProvider, Err: errors.New("x")}, "could not delete the provider's copy"},
 		{&StepError{Stage: StageRecord, Err: errors.New("x")}, "could not delete the file"},
 		{errors.New("anything else"), "could not delete the file"},
 	}

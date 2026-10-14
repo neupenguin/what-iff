@@ -60,10 +60,6 @@ func (s fakeGalleryStore) MoveGalleryFolder(context.Context, uuid.UUID, string, 
 	return 0, nil
 }
 
-func (s fakeGalleryStore) FileAttachmentProviderFileShared(context.Context, uuid.UUID, string) (bool, error) {
-	return false, nil
-}
-
 func (s fakeGalleryStore) ReferencedFileAttachmentKeys(context.Context, []string) (map[string]bool, error) {
 	return map[string]bool{}, nil
 }

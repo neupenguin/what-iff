@@ -578,14 +578,6 @@ func (a *Agent) DataStore() *datastore.Datastore { return a.ds }
 // Logger returns the agent logger for extension seams.
 func (a *Agent) Logger() *zap.Logger { return a.logger }
 
-// DeleteProviderFileAttachment deletes a provider-managed file by provider file ID.
-func (a *Agent) DeleteProviderFileAttachment(ctx context.Context, fileID string) error {
-	if a == nil || a.OpenAIProvider == nil {
-		return fmt.Errorf("openai provider is not configured")
-	}
-	return a.OpenAIProvider.DeleteFileAttachment(ctx, fileID)
-}
-
 // messageContextBuilder returns a context builder wired to this agent's datastore,
 // telemetry, and test-only history override (when set).
 func (a *Agent) messageContextBuilder() (*messageContextBuilder, error) {
@@ -636,7 +628,7 @@ func (a *Agent) buildModelContextForChatMessage(ctx context.Context, userID uuid
 		ExpressionsEnabled:         chatCtx.expressionsEnabled,
 		IncludeAttachmentContext:   chatCtx.chat.ToolsEnabled,
 		AdditionalDeveloperContext: additionalDevContext,
-		LoadHistoryImageBytes:      models.UsesAnthropicMessagesAPI(chatCtx.modelProvider, chatCtx.model),
+		LoadHistoryImageBytes:      chatCtx.modelVisionSupport,
 	})
 }
 
@@ -644,10 +636,10 @@ func mcpLifecycleDeveloperContext() string {
 	return "Tool lifecycle: MCP tools and the loadable built-in tools are NOT auto-loaded, and their definitions are only sent once loaded. For MCP tools, first call list(kind=\"mcp_servers\") to inspect connectors and discoverable tool names, then call load_tools with mcp_server_id + tools to activate only the tools you need. Loaded tools remain active across future turns in this chat until you call unload_tools; when the conversation is checkpointed, tools it did not use since the last checkpoint are unloaded, so load them again if you need them. Use unload_tools with tools [\"all\"] or [\"*\"] (optionally with mcp_server_id) to clear loaded tools."
 }
 
-// loadImageBytesForClaude downloads raw image bytes for each image attachment on the
-// current user message so that Claude can receive them as vision blocks. Missing bytes are logged as warnings; the
-// attachment is still included in the user turn but Claude will fall back to text-only.
-func (a *Agent) loadImageBytesForClaude(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage) map[uuid.UUID][]byte {
+// loadImageBytesForVision downloads raw image bytes for each image attachment on the current
+// user message so any vision-capable provider can receive them inline. Missing bytes are logged as
+// warnings; an image that cannot be resolved is left out of the user turn rather than sent empty.
+func (a *Agent) loadImageBytesForVision(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage) map[uuid.UUID][]byte {
 	return loadImageBytesForAttachments(ctx, a.logger, a.fileStore, userID, chatMessage.ChatID, chatMessage.Attachments)
 }
 
@@ -986,12 +978,10 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	}
 	doneBuildContext := a.timeTurnStage(ctx, turnStageBuildContext)
 	var imageBytes map[uuid.UUID][]byte
-	// Anthropic and Chat Completions wire formats take inline image bytes; OpenAI
-	// Responses references uploaded file IDs and only needs bytes as a fallback.
-	if chatCtx.modelVisionSupport && (models.UsesAnthropicMessagesAPI(chatCtx.modelProvider, chatCtx.model) ||
-		models.UsesOpenAIChatCompletionsAPI(chatCtx.modelProvider, chatCtx.model) ||
-		hasImageAttachmentsWithoutFileID(chatMessage.Attachments)) {
-		imageBytes = a.loadImageBytesForClaude(ctx, chatJob.UserID, chatMessage)
+	// Every provider takes images inline (base64 bytes read from the object store); no provider
+	// holds a copy of the file for us to reference.
+	if chatCtx.modelVisionSupport {
+		imageBytes = a.loadImageBytesForVision(ctx, chatJob.UserID, chatMessage)
 	}
 	modelContext, err := a.buildModelContextForChatMessage(ctx, chatJob.UserID, chatMessage, chatCtx, imageBytes)
 	doneBuildContext()
@@ -1294,18 +1284,6 @@ func mergeRitualSets(base []*models.Ritual, extra []*models.Ritual) []*models.Ri
 	return out
 }
 
-func hasImageAttachmentsWithoutFileID(attachments []*models.FileAttachment) bool {
-	for _, att := range attachments {
-		if att == nil || !strings.HasPrefix(att.FileType, models.ImageMIMEPrefix) {
-			continue
-		}
-		if att.FileID == nil || strings.TrimSpace(*att.FileID) == "" {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *Agent) loadMoodRituals(ctx context.Context, userID uuid.UUID, activeMood *models.Mood) []*models.Ritual {
 	if activeMood == nil || len(activeMood.RitualIDs) == 0 {
 		return nil
@@ -1425,7 +1403,7 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 
 	// Build the full message list from DB history + context injections.
 	// User images use base64 blocks when `UserMessageImage.RawBytes` is populated
-	// (see `loadImageBytesForClaude`); otherwise the user turn falls back to text-only.
+	// (see `loadImageBytesForVision`); otherwise the user turn falls back to text-only.
 	claudeParams := visionRenderContext(chatCtx, modelContext).BuildClaudeParams(chatCtx.model)
 
 	// GLM/z.ai models always think and ignore a thinking budget; left alone, reasoning

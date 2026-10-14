@@ -3,9 +3,6 @@ package provider
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -17,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/theimaginaryfoundation/what-iff/ent"
 	"github.com/theimaginaryfoundation/what-iff/internal/datastore"
-	"github.com/theimaginaryfoundation/what-iff/internal/utils"
 	"go.uber.org/zap"
 )
 
@@ -35,61 +31,6 @@ func newFileAttachmentTestDatastore(t *testing.T) (*datastore.Datastore, sqlmock
 	return ds, mock, func() {
 		_ = client.Close()
 	}
-}
-
-// --- UploadFileAttachment ---
-
-func TestUploadFileAttachment_Success(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"file-123","object":"file","bytes":10,"created_at":1,"filename":"a.txt","purpose":"user_data","status":"processed"}`))
-	}))
-	defer srv.Close()
-
-	a := newTestOpenAIProvider(srv.URL)
-	id, err := a.UploadFileAttachment(context.Background(), uuid.New(), nil, strings.NewReader("hello"), "a.txt", utils.FileTypeInfo{ContentType: "text/plain"})
-	require.NoError(t, err)
-	require.Equal(t, "file-123", id)
-}
-
-func TestUploadFileAttachment_ErrorIsReturned(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	defer srv.Close()
-
-	a := newTestOpenAIProvider(srv.URL)
-	_, err := a.UploadFileAttachment(context.Background(), uuid.New(), nil, strings.NewReader("hello"), "a.txt", utils.FileTypeInfo{ContentType: "text/plain"})
-	require.Error(t, err)
-}
-
-// --- DeleteFileAttachment ---
-
-func TestDeleteFileAttachment_Success(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"file-123","object":"file","deleted":true}`))
-	}))
-	defer srv.Close()
-
-	a := newTestOpenAIProvider(srv.URL)
-	err := a.DeleteFileAttachment(context.Background(), "file-123")
-	require.NoError(t, err)
-}
-
-func TestDeleteFileAttachment_ErrorIsReturned(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	defer srv.Close()
-
-	a := newTestOpenAIProvider(srv.URL)
-	err := a.DeleteFileAttachment(context.Background(), "file-123")
-	require.Error(t, err)
 }
 
 // --- SaveMessageAttachments ---
@@ -122,10 +63,6 @@ func TestSaveMessageAttachments_ImageGenerationCallDispatchesToSaveImageAttachme
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// --- processAnnotations ---
-
-// --- saveInterpreterAttachment ---
-
 // --- saveImageAttachment ---
 
 func TestSaveImageAttachment_CreateFileAttachmentErrorLogsAndReturns(t *testing.T) {
@@ -145,5 +82,3 @@ func TestSaveImageAttachment_CreateFileAttachmentErrorLogsAndReturns(t *testing.
 	})
 	require.NoError(t, mock.ExpectationsWereMet())
 }
-
-// --- saveInterpreterAttachments ---

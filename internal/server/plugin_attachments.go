@@ -24,7 +24,6 @@ import (
 // the user attached in the app.
 type agentAttachmentIngester struct {
 	ds       attachmentDatastore
-	provider attachmentProvider
 	files    storage.FileStore
 	pipeline *filechunker.FileChunkPipeline
 	logger   *zap.Logger
@@ -37,16 +36,10 @@ type attachmentDatastore interface {
 	handlerutils.AttachmentRecords
 }
 
-// attachmentProvider is the file provider (OpenAI) the upload goes through and rolls back from.
-type attachmentProvider interface {
-	handlerutils.FileAttachmentUploader
-	handlerutils.FileAttachmentDeleter
-}
-
-// newAgentAttachmentIngester wires the ingester to the agent's provider, object store and chunk
-// pipeline. A missing agent, provider or datastore leaves the matching field nil, which
-// IngestAttachment reports as errAttachmentNotConfigured; the nil checks are on the concrete
-// pointers so a nil *OpenAIProvider never becomes a non-nil interface.
+// newAgentAttachmentIngester wires the ingester to the agent's object store and chunk pipeline.
+// A missing agent or datastore leaves the matching field nil, which IngestAttachment reports as
+// errAttachmentNotConfigured; the nil check is on the concrete pointer so a nil *Datastore never
+// becomes a non-nil interface.
 func newAgentAttachmentIngester(a *agent.Agent, ds *datastore.Datastore) agentAttachmentIngester {
 	i := agentAttachmentIngester{}
 	if a == nil {
@@ -54,9 +47,6 @@ func newAgentAttachmentIngester(a *agent.Agent, ds *datastore.Datastore) agentAt
 	}
 	if ds != nil {
 		i.ds = ds
-	}
-	if a.OpenAIProvider != nil {
-		i.provider = a.OpenAIProvider
 	}
 	i.files = a.FileStore()
 	i.pipeline = a.ChunkPipeline()
@@ -67,7 +57,7 @@ func newAgentAttachmentIngester(a *agent.Agent, ds *datastore.Datastore) agentAt
 var (
 	errAttachmentMissingTarget = errors.New("plugin attachment: user id, chat id and file name are required")
 	errAttachmentEmpty         = errors.New("plugin attachment: file is empty")
-	errAttachmentNotConfigured = errors.New("plugin attachment: no file provider or datastore is configured")
+	errAttachmentNotConfigured = errors.New("plugin attachment: no datastore is configured")
 )
 
 func (i agentAttachmentIngester) IngestAttachment(ctx context.Context, up plugins.AttachmentUpload) (*models.FileAttachment, error) {
@@ -82,7 +72,7 @@ func (i agentAttachmentIngester) IngestAttachment(ctx context.Context, up plugin
 	if len(up.Data) > handlerutils.MaxUploadBytes {
 		return nil, fmt.Errorf("%w: file is %d bytes (max %d)", plugins.ErrAttachmentTooLarge, len(up.Data), handlerutils.MaxUploadBytes)
 	}
-	if i.provider == nil || i.ds == nil {
+	if i.ds == nil {
 		return nil, errAttachmentNotConfigured
 	}
 	// Ownership: the chat must belong to the user, as the upload route's chat lookup requires.
@@ -95,19 +85,17 @@ func (i agentAttachmentIngester) IngestAttachment(ctx context.Context, up plugin
 	}
 
 	ctx = middleware.ContextWithUser(ctx, up.UserID, "")
-	attrs := map[string]string{"chat_id": up.ChatID.String()}
 	logger := i.logger
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	attachment, tempFilePath, err := handlerutils.ProcessUpload(ctx, i.provider, up.UserID, attrs, bytes.NewReader(up.Data), up.Name)
+	attachment, tempFilePath, err := handlerutils.ProcessUpload(ctx, up.UserID, bytes.NewReader(up.Data), up.Name)
 	if err != nil {
 		return nil, pluginAttachmentError(err)
 	}
 	created, err := handlerutils.StoreChatAttachment(ctx, logger, handlerutils.AttachmentStorage{
 		Records:  i.ds,
 		Files:    i.files,
-		Provider: i.provider,
 		Pipeline: i.pipeline,
 	}, up.UserID, up.ChatID, attachment, tempFilePath)
 	if err != nil {

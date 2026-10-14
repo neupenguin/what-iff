@@ -100,9 +100,8 @@ func (h *Handler) ListFileAttachments(w http.ResponseWriter, r *http.Request) {
 	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, fileAttachmentsPage)
 }
 
-// DeleteFileAttachment deletes any of the caller's attachments: its provider copy (unless a
-// reference copy shares it), the row, then the stored objects nothing else references
-// (filedelete.Service.DeleteFile).
+// DeleteFileAttachment deletes any of the caller's attachments: the row, then the stored objects
+// nothing else references (filedelete.Service.DeleteFile).
 func (h *Handler) DeleteFileAttachment(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -118,7 +117,7 @@ func (h *Handler) DeleteFileAttachment(w http.ResponseWriter, r *http.Request) {
 		handlerutils.RespondWithError(w, h.logger, http.StatusBadRequest, handlerutils.CodeNotSet, "Invalid attachment ID", err)
 		return
 	}
-	err = filedelete.New(h.ds, h.agent.FileStore(), h.agent, h.logger).DeleteFile(r.Context(), userID, id)
+	err = filedelete.New(h.ds, h.agent.FileStore(), h.logger).DeleteFile(r.Context(), userID, id)
 	switch {
 	case err == nil:
 		handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, nil)

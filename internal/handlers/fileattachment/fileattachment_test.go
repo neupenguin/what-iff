@@ -23,15 +23,7 @@ type stubStore struct {
 	listFn           func(context.Context, uuid.UUID, int, int, models.FileAttachmentFilters) (*models.PaginatedResponse, error)
 	getFn            func(context.Context, uuid.UUID, uuid.UUID) (*models.FileAttachment, error)
 	deleteFn         func(context.Context, uuid.UUID, uuid.UUID) error
-	fileIDSharedFn   func(context.Context, uuid.UUID, string) (bool, error)
 	referencedKeysFn func(context.Context, []string) (map[string]bool, error)
-}
-
-func (s stubStore) FileAttachmentProviderFileShared(ctx context.Context, id uuid.UUID, fileID string) (bool, error) {
-	if s.fileIDSharedFn != nil {
-		return s.fileIDSharedFn(ctx, id, fileID)
-	}
-	return false, nil
 }
 
 func (s stubStore) ReferencedFileAttachmentKeys(ctx context.Context, keys []string) (map[string]bool, error) {
@@ -58,17 +50,10 @@ func (s stubStore) ExistingFileAttachmentIDs(context.Context, []uuid.UUID) (map[
 }
 
 type stubAgent struct {
-	store         storage.FileStore
-	deleteErr     error
-	deletedFileID string
+	store storage.FileStore
 }
 
 func (a *stubAgent) FileStore() storage.FileStore { return a.store }
-
-func (a *stubAgent) DeleteProviderFileAttachment(_ context.Context, fileID string) error {
-	a.deletedFileID = fileID
-	return a.deleteErr
-}
 
 type stubFileStore struct {
 	contentByKey map[string][]byte
@@ -161,17 +146,23 @@ func TestDeleteFileAttachment_InvalidID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestDeleteFileAttachment_ProviderDeleteError(t *testing.T) {
+// A row left over from the OpenAI Files era still carries a file_id. Nothing is deleted remotely
+// for it any more, so it deletes like any other row.
+func TestDeleteFileAttachment_LegacyProviderFileIDIsIgnored(t *testing.T) {
 	fileID := "provider-file-id"
+	deleted := false
 	h := &Handler{
 		logger: zap.NewNop(),
 		ds: stubStore{
 			getFn: func(context.Context, uuid.UUID, uuid.UUID) (*models.FileAttachment, error) {
 				return &models.FileAttachment{ID: uuid.New(), FileID: &fileID}, nil
 			},
-			deleteFn: func(context.Context, uuid.UUID, uuid.UUID) error { return nil },
+			deleteFn: func(context.Context, uuid.UUID, uuid.UUID) error {
+				deleted = true
+				return nil
+			},
 		},
-		agent: &stubAgent{deleteErr: errors.New("delete failed")},
+		agent: &stubAgent{},
 	}
 	id := uuid.New()
 	req, _ := requestWithUser(t, http.MethodDelete, "/file-attachment/"+id.String())
@@ -179,10 +170,11 @@ func TestDeleteFileAttachment_ProviderDeleteError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.DeleteFileAttachment(rec, req)
-	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, deleted)
 }
 
-func TestDeleteFileAttachment_SuccessWithoutProviderFileID(t *testing.T) {
+func TestDeleteFileAttachment_Success(t *testing.T) {
 	deleted := false
 	h := &Handler{
 		logger: zap.NewNop(),

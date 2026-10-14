@@ -17,7 +17,7 @@ func TestAppendOpenAIHistoryTurn_AssistantImagesUseUserRoleForVision(t *testing.
 		Role:    RoleAssistant,
 		Content: "I made an image",
 		UserImages: []UserMessageImage{
-			{FileID: "file-img", MediaType: "image/png"},
+			{MediaType: "image/png", RawBytes: []byte{1}},
 		},
 	}
 	appendOpenAIHistoryTurn(&out, seg)
@@ -38,7 +38,7 @@ func TestModelContext_StripUserMessageImages(t *testing.T) {
 	t.Parallel()
 
 	var ctx ModelContext
-	ctx.AppendUserMessage(RoleUser, "hello", []UserMessageImage{{FileID: "f1"}}, false)
+	ctx.AppendUserMessage(RoleUser, "hello", []UserMessageImage{{MediaType: "image/png", RawBytes: []byte{2}}}, false)
 	ctx.AppendUserMessage(RoleDeveloper, "", []UserMessageImage{{RawBytes: []byte{1}}}, false)
 
 	ctx.StripUserMessageImages()
@@ -100,7 +100,7 @@ func TestModelContext_Clone(t *testing.T) {
 	original := &ModelContext{}
 	original.Append(SegmentKindSystemPrompt, RoleDeveloper, "sys", true)
 	original.AppendUserMessage(RoleUser, "hi", []UserMessageImage{
-		{FileID: "f1", MediaType: "image/png", RawBytes: []byte{0x01}},
+		{MediaType: "image/png", RawBytes: []byte{0x01}},
 	}, false)
 
 	clone := original.Clone()
@@ -115,8 +115,8 @@ func TestModelContext_Clone(t *testing.T) {
 	require.Len(t, clone.Segments, 3)
 
 	// Mutating cloned UserImages must not affect original.
-	clone.Segments[1].UserImages[0].FileID = "mutated"
-	require.Equal(t, "f1", original.Segments[1].UserImages[0].FileID, "original UserImages must be independent")
+	clone.Segments[1].UserImages[0].MediaType = "mutated"
+	require.Equal(t, "image/png", original.Segments[1].UserImages[0].MediaType, "original UserImages must be independent")
 
 	// Clone of nil is nil.
 	var nilCtx *ModelContext
@@ -387,7 +387,7 @@ func TestRenderClaudeContext_UserMessageWithHydratedImages(t *testing.T) {
 	t.Parallel()
 	ctx := &ModelContext{}
 	ctx.AppendUserMessage(RoleUser, "what is this", []UserMessageImage{
-		{FileID: "f1", MediaType: "image/png", RawBytes: []byte{0x89, 0x50}},
+		{MediaType: "image/png", RawBytes: []byte{0x89, 0x50}},
 	}, false)
 
 	_, messages := renderClaudeContext(ctx)
@@ -402,7 +402,7 @@ func TestRenderClaudeContext_UserMessageImagesWithoutRawBytes_TextOnly(t *testin
 	t.Parallel()
 	ctx := &ModelContext{}
 	ctx.AppendUserMessage(RoleUser, "caption this", []UserMessageImage{
-		{FileID: "openai-file-id", MediaType: "image/png"},
+		{MediaType: "image/png"},
 	}, false)
 
 	_, messages := renderClaudeContext(ctx)

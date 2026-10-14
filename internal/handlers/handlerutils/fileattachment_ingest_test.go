@@ -96,26 +96,24 @@ type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) { return len(p), nil }
 
-func TestProcessUploadBuffersAndUploadsAFileWithoutHTTP(t *testing.T) {
-	uploader := &capturingFileAttachmentUploader{}
+func TestProcessUploadBuffersAFileWithoutHTTP(t *testing.T) {
 	userID := uuid.New()
 
-	attachment, tempPath, err := ProcessUpload(context.Background(), uploader, userID, nil, strings.NewReader("hello"), "notes.txt")
+	attachment, tempPath, err := ProcessUpload(context.Background(), userID, strings.NewReader("hello"), "notes.txt")
 	require.NoError(t, err)
 	defer os.Remove(tempPath)
 
 	require.Equal(t, userID, attachment.UserID)
 	require.Equal(t, "notes.txt", attachment.Name)
 	require.Equal(t, "text/plain", attachment.FileType)
-	require.NotNil(t, attachment.FileID)
-	require.Equal(t, []byte("hello"), uploader.data)
+	require.Nil(t, attachment.FileID, "nothing is uploaded to a provider")
 	onDisk, err := os.ReadFile(tempPath)
 	require.NoError(t, err)
 	require.Equal(t, []byte("hello"), onDisk, "the caller gets the buffered file to store and chunk")
 }
 
 func TestProcessUploadNormalizesImagesToPNG(t *testing.T) {
-	attachment, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, bytes.NewReader(pngBytes(t)), "pic.png")
+	attachment, tempPath, err := ProcessUpload(context.Background(), uuid.New(), bytes.NewReader(pngBytes(t)), "pic.png")
 	require.NoError(t, err)
 	defer os.Remove(tempPath)
 	require.True(t, strings.HasPrefix(attachment.FileType, models.ImageMIMEPrefix))
@@ -124,7 +122,7 @@ func TestProcessUploadNormalizesImagesToPNG(t *testing.T) {
 func TestProcessUploadRejectsAnUnsupportedTypeAndCountsIt(t *testing.T) {
 	tm := telemetrytest.UseGlobal(t)
 
-	_, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, strings.NewReader("MZ"), "binary.exe")
+	_, tempPath, err := ProcessUpload(context.Background(), uuid.New(), strings.NewReader("MZ"), "binary.exe")
 
 	require.Empty(t, tempPath)
 	require.ErrorIs(t, err, ErrUnsupportedFileType)
@@ -138,7 +136,7 @@ func TestProcessUploadRejectsAnUnsupportedTypeAndCountsIt(t *testing.T) {
 func TestProcessUploadRejectsAFileOverTheUploadLimit(t *testing.T) {
 	tm := telemetrytest.UseGlobal(t)
 
-	_, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, zeroReader{}, "big.txt")
+	_, tempPath, err := ProcessUpload(context.Background(), uuid.New(), zeroReader{}, "big.txt")
 
 	require.Empty(t, tempPath)
 	require.ErrorIs(t, err, ErrFileTooLarge)
@@ -148,17 +146,9 @@ func TestProcessUploadRejectsAFileOverTheUploadLimit(t *testing.T) {
 	require.Equal(t, int64(1), uploadCount(tm, t, "text", telemetry.FileUploadFailure))
 }
 
-func TestProcessUploadReportsAProviderFailureAsAServerError(t *testing.T) {
-	_, tempPath, err := ProcessUpload(context.Background(), failingFileAttachmentUploader{}, uuid.New(), nil, strings.NewReader("hi"), "notes.txt")
-	require.Empty(t, tempPath)
-	var ue *UploadError
-	require.ErrorAs(t, err, &ue)
-	require.Equal(t, http.StatusInternalServerError, ue.Status)
-}
-
 func prepared(t *testing.T, name string, data []byte) (models.FileAttachment, string) {
 	t.Helper()
-	attachment, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, bytes.NewReader(data), name)
+	attachment, tempPath, err := ProcessUpload(context.Background(), uuid.New(), bytes.NewReader(data), name)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.Remove(tempPath) })
 	return attachment, tempPath
@@ -194,17 +184,15 @@ func TestStoreChatAttachmentFilesAnImageInTheGalleryWithAThumbnail(t *testing.T)
 
 func TestStoreChatAttachmentRollsBackWhenTheObjectStoreFails(t *testing.T) {
 	records, files := &fakeRecords{}, &recordingFileStore{err: errors.New("s3 down")}
-	deleter := &recordingFileAttachmentDeleter{}
 	attachment, tempPath := prepared(t, "notes.txt", []byte("hi"))
 
-	_, err := StoreChatAttachment(context.Background(), zap.NewNop(), AttachmentStorage{Records: records, Files: files, Provider: deleter}, uuid.New(), uuid.New(), attachment, tempPath)
+	_, err := StoreChatAttachment(context.Background(), zap.NewNop(), AttachmentStorage{Records: records, Files: files}, uuid.New(), uuid.New(), attachment, tempPath)
 
 	var ue *UploadError
 	require.ErrorAs(t, err, &ue)
 	require.Equal(t, http.StatusInternalServerError, ue.Status)
 	require.Equal(t, "Error saving file — please retry", ue.Message)
 	require.Len(t, records.deleted, 1, "the record is removed")
-	require.Equal(t, []string{*attachment.FileID}, deleter.deleted, "so is the provider's copy")
 	_, statErr := os.Stat(tempPath)
 	require.True(t, os.IsNotExist(statErr))
 }
@@ -212,15 +200,15 @@ func TestStoreChatAttachmentRollsBackWhenTheObjectStoreFails(t *testing.T) {
 func TestStoreChatAttachmentCleansUpWhenTheRecordCannotBeSaved(t *testing.T) {
 	tm := telemetrytest.UseGlobal(t)
 	records := &fakeRecords{createErr: errors.New("db down")}
-	deleter := &recordingFileAttachmentDeleter{}
 	attachment, tempPath := prepared(t, "notes.txt", []byte("hi"))
 
-	_, err := StoreChatAttachment(context.Background(), zap.NewNop(), AttachmentStorage{Records: records, Provider: deleter}, uuid.New(), uuid.New(), attachment, tempPath)
+	_, err := StoreChatAttachment(context.Background(), zap.NewNop(), AttachmentStorage{Records: records}, uuid.New(), uuid.New(), attachment, tempPath)
 
 	var ue *UploadError
 	require.ErrorAs(t, err, &ue)
 	require.Equal(t, "Error creating file attachment", ue.Message)
-	require.Equal(t, []string{*attachment.FileID}, deleter.deleted)
+	_, statErr := os.Stat(tempPath)
+	require.True(t, os.IsNotExist(statErr), "the temp file is removed")
 	require.Equal(t, int64(1), uploadCount(tm, t, "text", telemetry.FileUploadFailure))
 }
 

@@ -49,10 +49,6 @@ func (f *fakeDeleteStore) DeleteFileAttachment(_ context.Context, _ uuid.UUID, i
 	return nil
 }
 
-func (f *fakeDeleteStore) FileAttachmentProviderFileShared(context.Context, uuid.UUID, string) (bool, error) {
-	return false, nil
-}
-
 func (f *fakeDeleteStore) ReferencedFileAttachmentKeys(context.Context, []string) (map[string]bool, error) {
 	return map[string]bool{}, nil
 }

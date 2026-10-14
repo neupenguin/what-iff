@@ -4,36 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"path"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/theimaginaryfoundation/what-iff/internal/handlers/handlerutils"
 	"github.com/theimaginaryfoundation/what-iff/internal/imageutil"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
-	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
-	"github.com/theimaginaryfoundation/what-iff/internal/utils"
 	"go.uber.org/zap"
 )
-
-// handlerutils.UploadFileAttachment takes a narrow FileAttachmentUploader
-// interface rather than importing this package, because handlerutils → agent
-// would close an import cycle through middleware. Nothing declares that this
-// type satisfies it, so a signature change here would surface as three
-// unrelated-looking errors at the handler call sites instead of one here.
-//
-// This assertion is the missing link. The dependency direction is still
-// provider → handlerutils, which is the safe way round: handlerutils imports
-// models, storage, utils and agent/filechunker, none of which reach provider.
-var _ handlerutils.FileAttachmentUploader = (*OpenAIProvider)(nil)
-
-// The same holds for the best-effort cleanup of an upload whose attachment record is not kept.
-var _ handlerutils.FileAttachmentDeleter = (*OpenAIProvider)(nil)
 
 // Regex to match sentences containing sandbox:/mnt/data/* links
 // This matches markdown links like [text](sandbox:/mnt/data/file.ext) within sentences
@@ -41,57 +21,6 @@ var sandboxLinkRegex = regexp.MustCompile(`\[[^\]]*\]\(sandbox:/mnt/data/[^)]+\)
 
 // Split text into sentences by looking for sentence-ending punctuation followed by whitespace or end of string
 var sentenceRegex = regexp.MustCompile(`([.!?]+)\s+`)
-
-// startFileCall starts GenAIOperationDuration metrics for one OpenAI Files/Containers API call
-// (upload, delete or container file download), which has no model.
-func (a *OpenAIProvider) startFileCall(ctx context.Context) *genAICall {
-	return startGenAICall(ctx, a.tel, telemetry.DependencyOpenAI, genAIModelNone, genAIOpFile)
-}
-
-func (a *OpenAIProvider) UploadFileAttachment(ctx context.Context, userID uuid.UUID, attrs map[string]string, file io.Reader, fileName string, fileTypeInfo utils.FileTypeInfo) (string, error) {
-	inputFile := openai.File(file, normalizeUploadFileNameExtension(fileName), fileTypeInfo.ContentType)
-
-	call := a.startFileCall(ctx)
-	storedFile, err := a.oaiClient.Files.New(ctx, openai.FileNewParams{
-		File:    inputFile,
-		Purpose: openai.FilePurposeUserData,
-	})
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to upload file attachment", zap.Error(err))
-		return "", err
-	}
-
-	return storedFile.ID, nil
-}
-
-// normalizeUploadFileNameExtension lowercases a filename's extension so files land in the
-// OpenAI Files API with an extension its Responses API accepts. OpenAI validates image
-// extensions case-sensitively (an uploaded "photo.JPG" is later rejected as an unsupported
-// format even though ".jpg" is fine). The base name is left untouched.
-func normalizeUploadFileNameExtension(fileName string) string {
-	ext := path.Ext(fileName)
-	if ext == "" {
-		return fileName
-	}
-	lower := strings.ToLower(ext)
-	if lower == ext {
-		return fileName
-	}
-	return fileName[:len(fileName)-len(ext)] + lower
-}
-
-func (a *OpenAIProvider) DeleteFileAttachment(ctx context.Context, fileID string) error {
-	call := a.startFileCall(ctx)
-	_, err := a.oaiClient.Files.Delete(ctx, fileID)
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to delete file attachment from OpenAI", zap.Error(err))
-		return err
-	}
-
-	return nil
-}
 
 func (a *OpenAIProvider) SaveMessageAttachments(ctx context.Context, userID, chatMessageID uuid.UUID, resp *responses.Response) error {
 	for _, output := range resp.Output {
@@ -110,7 +39,6 @@ func (a *OpenAIProvider) saveImageAttachment(ctx context.Context, userID, chatMe
 	imageName := fmt.Sprintf("image_%s.png", image.ID)
 	created, err := a.ds.CreateFileAttachment(ctx, userID, models.FileAttachment{
 		UserID:        userID,
-		FileID:        &image.ID,
 		Name:          imageName,
 		FileType:      "image/png",
 		ChatMessageID: &chatMessageID,

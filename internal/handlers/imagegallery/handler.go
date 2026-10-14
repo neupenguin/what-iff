@@ -26,14 +26,9 @@ func NewHandler(ds Store, logger *zap.Logger, fileStore storage.FileStore, agent
 	return &Handler{ds: ds, logger: logger, fileStore: fileStore, agent: a}
 }
 
-// deleter deletes gallery files with the cleanup each kind needs. Without an agent, a file that
-// has a provider copy cannot be deleted (rather than leaving the copy behind).
+// deleter deletes gallery files with the cleanup each kind needs.
 func (h *Handler) deleter() *filedelete.Service {
-	var provider filedelete.ProviderFiles
-	if h.agent != nil {
-		provider = h.agent
-	}
-	return filedelete.New(h.ds, h.fileStore, provider, h.logger)
+	return filedelete.New(h.ds, h.fileStore, h.logger)
 }
 
 // RegisterRoutes wires the gallery endpoints onto the authenticated subrouter.

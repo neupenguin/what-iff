@@ -128,13 +128,6 @@ func TestDataStoreAndLogger_ReturnConfiguredFields(t *testing.T) {
 	require.Same(t, logger, a.Logger())
 }
 
-func TestDeleteProviderFileAttachment_NoProviderConfigured(t *testing.T) {
-	t.Parallel()
-	a := &Agent{logger: zap.NewNop()}
-	err := a.DeleteProviderFileAttachment(context.Background(), "file_123")
-	require.ErrorContains(t, err, "openai provider is not configured")
-}
-
 // --- agent metrics helpers ---
 
 func TestRecordTurnStage_NoopWithNilTelemetry(t *testing.T) {
@@ -201,34 +194,6 @@ func TestMergeRitualSets_DedupesAndSkipsNils(t *testing.T) {
 	require.Len(t, got, 2)
 	ids := []uuid.UUID{got[0].ID, got[1].ID}
 	require.ElementsMatch(t, []uuid.UUID{shared, onlyExtra}, ids)
-}
-
-// --- hasImageAttachmentsWithoutFileID ---
-
-func TestHasImageAttachmentsWithoutFileID(t *testing.T) {
-	t.Parallel()
-
-	fid := "file-1"
-	blank := ""
-	cases := []struct {
-		name string
-		atts []*models.FileAttachment
-		want bool
-	}{
-		{"empty", nil, false},
-		{"nil entry skipped", []*models.FileAttachment{nil}, false},
-		{"non-image ignored", []*models.FileAttachment{{FileType: "application/pdf"}}, false},
-		{"image with file id", []*models.FileAttachment{{FileType: "image/png", FileID: &fid}}, false},
-		{"image without file id", []*models.FileAttachment{{FileType: "image/png"}}, true},
-		{"image with blank file id", []*models.FileAttachment{{FileType: "image/png", FileID: &blank}}, true},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tc.want, hasImageAttachmentsWithoutFileID(tc.atts))
-		})
-	}
 }
 
 // --- isFirstCheckpoint / maxTurnsBeforeCheckpoint ---

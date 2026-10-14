@@ -87,18 +87,16 @@ func TestBuildCheckpointSummaryParams_ExplicitMode(t *testing.T) {
 }
 
 // TestBuildCheckpointSummaryParams_StripsOpenAIUnsafeImages reproduces the checkpoint
-// summary crash: a Claude-chat turn carried an image whose OpenAI file_id has an uppercase
-// ".JPG" extension (rejected case-sensitively) plus a media type OpenAI does not support,
-// which returned a 400 from the summarizer. The built params must never surface a file_id
-// image or an unsupported media type.
+// summary crash: a Claude-chat turn carried an image with a media type OpenAI does not
+// support, which returned a 400 from the summarizer. The built params must never surface an
+// unsupported media type, and a kept image always renders as a data URL.
 func TestBuildCheckpointSummaryParams_StripsOpenAIUnsafeImages(t *testing.T) {
 	t.Parallel()
 
 	mc := &provider.ModelContext{}
-	// Supported type carrying both a file_id (the ".JPG" landmine) and raw bytes: kept, but
-	// must render as a data URL, never as the file_id reference.
+	// Supported type with raw bytes: kept, rendered as a data URL.
 	mc.AppendHistoryTurn(provider.RoleUser, "look at this", []provider.UserMessageImage{
-		{FileID: "file-photo-JPG", MediaType: "image/jpeg", RawBytes: []byte{1, 2, 3}},
+		{MediaType: "image/jpeg", RawBytes: []byte{1, 2, 3}},
 	}, false)
 	// Unsupported type from another vendor's turn: must be dropped, its text kept.
 	mc.AppendHistoryTurn(provider.RoleUser, "and this heic", []provider.UserMessageImage{
@@ -118,8 +116,7 @@ func TestBuildCheckpointSummaryParams_StripsOpenAIUnsafeImages(t *testing.T) {
 				continue
 			}
 			sawImage = true
-			require.False(t, part.OfInputImage.FileID.Valid(),
-				"summarizer image must not use a file_id (OpenAI validates its stored filename case-sensitively)")
+			require.False(t, part.OfInputImage.FileID.Valid(), "summarizer image must be inline, not a file reference")
 			require.True(t, part.OfInputImage.ImageURL.Valid(), "kept image should render as a data URL")
 			require.True(t, strings.HasPrefix(part.OfInputImage.ImageURL.Value, "data:image/jpeg;base64,"),
 				"data URL should carry a normalized, supported media type")
