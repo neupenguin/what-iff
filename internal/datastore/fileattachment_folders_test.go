@@ -191,6 +191,34 @@ func TestMoveFileAttachmentsToFolder(t *testing.T) {
 	assert.Zero(t, moved)
 }
 
+// Legacy rows (made before files lived in S3) and files that never do (code-interpreter documents)
+// have a NULL s3_key. Moving them used to fail the whole request: the key read could not scan NULL.
+func TestMoveFileAttachmentsToFolderToleratesFilesWithoutAnS3Key(t *testing.T) {
+	f := newFolderFixture(t)
+	ctx := context.Background()
+	mk := func(name, fileType string) uuid.UUID {
+		att, err := f.ds.CreateFileAttachment(ctx, f.user, models.FileAttachment{Name: name, FileType: fileType})
+		require.NoError(t, err)
+		f.ids[name] = att.ID
+		return att.ID
+	}
+	legacy := mk("legacy.png", "image/png")
+	doc := mk("analysis.csv", "text/csv")
+
+	moved, err := f.ds.MoveFileAttachmentsToFolder(ctx, f.user, []uuid.UUID{legacy, doc, f.ids["root.png"]}, "stash")
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, moved, "keyless rows are moved by id alongside keyed ones")
+	assert.Equal(t, "stash", f.folderOf(t, "legacy.png"))
+	assert.Equal(t, "stash", f.folderOf(t, "analysis.csv"))
+	assert.Equal(t, "stash", f.folderOf(t, "root.png"))
+
+	moved, err = f.ds.MoveFileAttachmentsToFolder(ctx, f.user, []uuid.UUID{legacy}, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, moved, "a request made only of keyless rows works too")
+	assert.Equal(t, "", f.folderOf(t, "legacy.png"))
+}
+
 func TestMoveGalleryFolderRenamesItAndEverythingBeneath(t *testing.T) {
 	f := newFolderFixture(t)
 	f.add(t, "report.pdf", "application/pdf", "charts/oura")
