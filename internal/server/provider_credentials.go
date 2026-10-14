@@ -63,11 +63,10 @@ func (c *Config) configuredProviderKeys() map[appmodels.ModelProvider]string {
 func credentialRules(endpoints []providerEndpoint, resolver providerkeys.Resolver) []provider.CredentialRule {
 	rules := make([]provider.CredentialRule, 0, len(endpoints))
 	for _, e := range endpoints {
-		p := e.provider
 		rules = append(rules, provider.CredentialRule{
 			BaseURL: e.baseURL,
 			Style:   e.style,
-			Resolve: func(ctx context.Context) string { return resolver.Key(ctx, p) },
+			Resolve: func(ctx context.Context) string { return resolver.Key(ctx, e.provider) },
 		})
 	}
 	return rules

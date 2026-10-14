@@ -48,6 +48,16 @@ func TestDeploymentResolver_IgnoresTheCaller(t *testing.T) {
 	require.Equal(t, "sk-openai", r.Key(ctx, models.ModelProviderOpenAI))
 }
 
+// A nil map is valid input: NewAgent passes nil when nothing is configured.
+// len and range are both defined on a nil map, so this is a resolver with no
+// credentials, not a panic.
+func TestDeploymentResolver_NilMeansNothingConfigured(t *testing.T) {
+	t.Parallel()
+	r := NewDeploymentResolver(nil)
+	require.Empty(t, r.Key(context.Background(), models.ModelProviderOpenAI))
+	require.False(t, r.Configured(models.ModelProviderOpenAI))
+}
+
 // Callers hold the interface, so the concrete type must satisfy it.
 func TestDeploymentResolverSatisfiesResolver(t *testing.T) {
 	t.Parallel()

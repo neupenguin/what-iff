@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -107,7 +108,8 @@ func TestCredentialHTTPClient_DoesNotMutateTheCallersRequest(t *testing.T) {
 // Dropping it would open egress the backend forbids.
 func TestCredentialHTTPClient_PreservesTheBaseTransport(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	var reached atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached.Store(true) }))
 	defer srv.Close()
 
 	denied := DenyNetworkHTTPClient()
@@ -118,5 +120,6 @@ func TestCredentialHTTPClient_PreservesTheBaseTransport(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
 	_, err = c.Do(req)
-	require.Error(t, err, "the deny-network transport must still refuse egress")
+	require.ErrorIs(t, err, ErrNetworkDenied, "the refusal must come from the deny-network transport")
+	require.False(t, reached.Load(), "a request reached a server the deny-network transport should have blocked")
 }
