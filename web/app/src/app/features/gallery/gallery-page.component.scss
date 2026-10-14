@@ -65,8 +65,12 @@
     display: none;
   }
 
+  // The app-layout floating hamburger sits over the top-left corner (absolute at
+  // left .625rem, width 2.25rem); indent the title so it reads beside the button
+  // on the same row instead of underneath it (same offset the chat title bar uses).
   .gallery-page__title {
     justify-self: start;
+    padding-left: 2.25rem;
     text-align: left;
   }
 
