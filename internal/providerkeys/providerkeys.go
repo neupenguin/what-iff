@@ -65,3 +65,11 @@ func (r DeploymentResolver) Key(_ context.Context, provider models.ModelProvider
 func (r DeploymentResolver) Configured(provider models.ModelProvider) bool {
 	return r.keys[provider] != ""
 }
+
+// New chooses the resolver the server uses, given the deployment's configured
+// keys and the keys accounts store themselves. Keys come from the deployment's
+// configuration until accounts can add their own in the app. A build that
+// always supplies keys itself replaces New in an init().
+var New = func(deployment DeploymentResolver, _ Resolver) Resolver {
+	return deployment
+}

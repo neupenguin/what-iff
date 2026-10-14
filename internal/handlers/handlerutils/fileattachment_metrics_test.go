@@ -47,7 +47,7 @@ func TestUploadFileAttachmentMetricsCountSuccessOnce(t *testing.T) {
 	require.Equal(t, float64(len(payload)), tm.HistogramSum(t, telemetry.FileSize.Name, upload))
 	require.Zero(t, tm.CounterValue(t, telemetry.FileUploads.Name), "success is counted later, not by UploadFileAttachment")
 
-	TriggerAsyncFileChunking(zap.NewNop(), nil, uuid.New(), "", attachment.Name)
+	TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), nil, uuid.New(), "", attachment.Name)
 	require.Equal(t, int64(1), uploadCount(tm, t, "text", telemetry.FileUploadSuccess))
 	require.Equal(t, int64(1), tm.CounterValue(t, telemetry.FileUploads.Name))
 }

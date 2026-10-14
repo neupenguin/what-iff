@@ -74,6 +74,7 @@ func (h *Handler) CreateFileAttachment(w http.ResponseWriter, r *http.Request) {
 
 	handlerutils.TriggerAsyncFileChunking(
 		h.logger,
+		userID,
 		h.agent.ChunkPipeline(),
 		createdAttachment.ID,
 		tempFilePath,

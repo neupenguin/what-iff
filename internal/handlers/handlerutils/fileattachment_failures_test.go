@@ -130,7 +130,7 @@ func requireRemoved(t *testing.T, path string) {
 func TestTriggerAsyncFileChunkingDropsAnUploadTooBigToChunk(t *testing.T) {
 	path := tempUpload(t, maxAsyncProcessingBytes+1)
 
-	TriggerAsyncFileChunking(zap.NewNop(), nil, uuid.New(), path, "big.txt")
+	TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), nil, uuid.New(), path, "big.txt")
 
 	requireRemoved(t, path)
 }
@@ -140,7 +140,7 @@ func TestTriggerAsyncFileChunkingKeepsGoingWhenTheTempFileCannotBeStatted(t *tes
 	missing := t.TempDir() + string(os.PathSeparator) + "gone"
 
 	require.NotPanics(t, func() {
-		TriggerAsyncFileChunking(zap.NewNop(), nil, uuid.New(), missing, "binary.exe")
+		TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), nil, uuid.New(), missing, "binary.exe")
 	})
 }
 
@@ -154,7 +154,7 @@ func TestTriggerAsyncFileChunkingRemovesFilesItWillNotChunk(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := tempUpload(t, 4)
 
-			TriggerAsyncFileChunking(zap.NewNop(), nil, uuid.New(), path, fileName)
+			TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), nil, uuid.New(), path, fileName)
 
 			requireRemoved(t, path)
 		})
@@ -165,7 +165,7 @@ func TestTriggerAsyncFileChunkingChunksATextFileInTheBackgroundAndCleansUp(t *te
 	path := tempUpload(t, 4)
 	pipeline := filechunker.NewMockFileChunkPipeline(nil, zap.NewNop())
 
-	TriggerAsyncFileChunking(zap.NewNop(), pipeline, uuid.New(), path, "notes.txt")
+	TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), pipeline, uuid.New(), path, "notes.txt")
 
 	requireRemoved(t, path)
 }
@@ -174,7 +174,7 @@ func TestTriggerAsyncFileChunkingRecoversFromAPipelineFailure(t *testing.T) {
 	path := tempUpload(t, 4)
 
 	// A nil pipeline panics inside the goroutine; the recover keeps it from taking the server down.
-	TriggerAsyncFileChunking(zap.NewNop(), nil, uuid.New(), path, "notes.txt")
+	TriggerAsyncFileChunking(zap.NewNop(), uuid.New(), nil, uuid.New(), path, "notes.txt")
 
 	requireRemoved(t, path)
 }

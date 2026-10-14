@@ -15,7 +15,7 @@ import (
 )
 
 func TestImportMemoriesUnavailableWhenOpenAIKeyMissing(t *testing.T) {
-	handler := NewHandler(nil, zap.NewNop(), " ", nil)
+	handler := NewHandler(nil, zap.NewNop(), false, nil)
 	req := requestWithUser(t, "not multipart", "multipart/form-data; boundary=test")
 	rec := httptest.NewRecorder()
 
@@ -26,7 +26,7 @@ func TestImportMemoriesUnavailableWhenOpenAIKeyMissing(t *testing.T) {
 }
 
 func TestImportMemoriesRejectsOversizedMultipartAtHTTPBody(t *testing.T) {
-	handler := NewHandler(nil, zap.NewNop(), "test-key", nil)
+	handler := NewHandler(nil, zap.NewNop(), true, nil)
 	body := io.MultiReader(
 		strings.NewReader("--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"import.zip\"\r\nContent-Type: application/zip\r\n\r\n"),
 		io.LimitReader(repeatingByteReader('a'), maxMemoryImportBytes+1),
