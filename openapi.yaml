@@ -8703,7 +8703,7 @@ components:
           # The server trims surrounding whitespace, then requires 8 to 512
           # characters with no whitespace; this pattern says the same.
           pattern: '^\s*\S{8,512}\s*$'
-          description: The provider API key, 8 to 512 characters without spaces. Surrounding whitespace is trimmed.
+          description: The provider API key, 8 to 512 characters. Leading and trailing whitespace is trimmed; whitespace inside the key is rejected.
     WebhookToken:
       type: object
       properties:

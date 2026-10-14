@@ -8,11 +8,12 @@ Answers which model-provider credential a request uses, in one place.
 
 - **`Resolver`:** `Key(ctx, provider)` returns the credential for a request, or `""` when there is none.
   `Configured(provider)` answers the startup question of whether a client for that provider is worth building.
+  `AccountsSupplyKeys()` reports whether keys come from accounts; it is part of the interface so a wrapping resolver has to answer it.
 - **`DeploymentResolver`:** answers from the keys the deployment was configured with, the same for every caller; blank values count as unconfigured.
 - **`New`:** chooses the resolver the server uses, given the deployment resolver and the account resolver (`internal/accountkeys`).
   It returns the deployment resolver until accounts can add keys in the app.
   A build that always supplies keys itself sets it in an `init()`.
-  The server mounts the account key routes only when `New` picks the account resolver.
+  The server mounts the account key routes only when the chosen resolver's `AccountsSupplyKeys()` is true.
 
 ## Dependencies
 

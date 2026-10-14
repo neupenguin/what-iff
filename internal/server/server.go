@@ -477,10 +477,10 @@ func (s *Server) dependencyHosts() []telemetry.HTTPTransportOption {
 }
 
 // mountAccountKeyRoutes serves the routes an account manages its own keys
-// through, but only when requests take their keys from accounts. A deployment
+// through, but only when the resolver takes keys from accounts. A deployment
 // that supplies its own keys has nothing for an account to manage.
 func mountAccountKeyRoutes(router *mux.Router, resolver providerkeys.Resolver, keys *accountkeys.Keys) bool {
-	if chosen, ok := resolver.(*accountkeys.Keys); !ok || chosen != keys {
+	if !resolver.AccountsSupplyKeys() {
 		return false
 	}
 	keys.RegisterRoutes(router)

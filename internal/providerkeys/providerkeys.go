@@ -34,6 +34,12 @@ type Resolver interface {
 	// it cannot be, and the honest answer is yes — the per-request Key result
 	// decides whether the call can actually be made.
 	Configured(provider models.ModelProvider) bool
+
+	// AccountsSupplyKeys reports whether keys come from accounts, which then
+	// manage them through the key routes. It is part of the interface, not
+	// inferred from the concrete type, so a resolver wrapping another has to
+	// answer it.
+	AccountsSupplyKeys() bool
 }
 
 // DeploymentResolver answers the same for every caller, from the credentials
@@ -65,6 +71,9 @@ func (r DeploymentResolver) Key(_ context.Context, provider models.ModelProvider
 func (r DeploymentResolver) Configured(provider models.ModelProvider) bool {
 	return r.keys[provider] != ""
 }
+
+// AccountsSupplyKeys is false: the deployment supplies every key.
+func (DeploymentResolver) AccountsSupplyKeys() bool { return false }
 
 // New chooses the resolver the server uses, given the deployment's configured
 // keys and the keys accounts store themselves. Keys come from the deployment's

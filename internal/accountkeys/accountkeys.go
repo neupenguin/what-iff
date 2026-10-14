@@ -176,6 +176,9 @@ func (k *Keys) Key(ctx context.Context, provider models.ModelProvider) string {
 // request, so every provider client is worth building.
 func (k *Keys) Configured(models.ModelProvider) bool { return true }
 
+// AccountsSupplyKeys is true: each account brings its own keys.
+func (k *Keys) AccountsSupplyKeys() bool { return true }
+
 // --- Routes. A key is write-only: no response, error or log line contains it.
 
 // RegisterRoutes mounts the key routes on an authenticated router.

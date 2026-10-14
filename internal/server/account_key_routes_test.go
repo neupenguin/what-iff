@@ -30,10 +30,19 @@ func TestMountAccountKeyRoutes_FollowsTheChosenResolver(t *testing.T) {
 	router = mux.NewRouter()
 	require.True(t, mountAccountKeyRoutes(router, keys, keys))
 	require.True(t, servesKeyRoutes(router))
+}
 
-	router = mux.NewRouter()
-	require.False(t, mountAccountKeyRoutes(router, accountkeys.New(nil, nil, zap.NewNop()), keys), "another account store is not the one being served")
-	require.False(t, servesKeyRoutes(router))
+// wrapped stands in for a resolver that decorates another, for metrics say.
+type wrapped struct{ providerkeys.Resolver }
+
+// The gate asks the resolver rather than checking its type, so a resolver
+// that wraps the account resolver still mounts the routes.
+func TestMountAccountKeyRoutes_SeesThroughAWrapper(t *testing.T) {
+	keys := accountkeys.New(nil, nil, zap.NewNop())
+
+	router := mux.NewRouter()
+	require.True(t, mountAccountKeyRoutes(router, wrapped{keys}, keys))
+	require.True(t, servesKeyRoutes(router))
 }
 
 // With the default New, the server takes the deployment's keys and serves no

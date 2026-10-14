@@ -30,14 +30,14 @@ import (
 type prefixSealer struct{ err error }
 
 func (s prefixSealer) EncryptToken(p string) (string, error) {
-	return "sealed:" + strings.ToUpper(p), s.err
+	return "sealed:" + p, s.err
 }
 
 func (s prefixSealer) DecryptToken(c string) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
-	return strings.ToLower(strings.TrimPrefix(c, "sealed:")), nil
+	return strings.TrimPrefix(c, "sealed:"), nil
 }
 
 type fixture struct {
@@ -94,7 +94,7 @@ func TestSet_StoresSealedAndAnswersWithTheKey(t *testing.T) {
 
 	var stored string
 	require.NoError(t, f.db.QueryRow(`SELECT key FROM account_provider_keys`).Scan(&stored))
-	require.Equal(t, "sealed:SK-TEST-ABCD1234", stored, "stored trimmed and sealed")
+	require.Equal(t, "sealed:sk-test-abcd1234", stored, "stored trimmed and sealed")
 	require.Equal(t, "sk-test-abcd1234", f.keys.Key(asUser(f.alice), models.ModelProviderOpenAI))
 }
 
@@ -251,6 +251,7 @@ func TestConfigured_EveryProvider(t *testing.T) {
 	for _, p := range models.ModelProviders {
 		require.True(t, f.keys.Configured(p), p)
 	}
+	require.True(t, f.keys.AccountsSupplyKeys())
 }
 
 // --- Routes

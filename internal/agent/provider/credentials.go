@@ -38,7 +38,8 @@ type CredentialRule struct {
 	BaseURL string
 	Style   CredentialStyle
 	// Resolve returns the credential to use for this request, or "" when the
-	// caller has none.
+	// caller has none. It is the only source of credentials for the rule's
+	// host: whatever the request already carried is dropped.
 	Resolve func(context.Context) string
 }
 

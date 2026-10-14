@@ -41,5 +41,6 @@ func TestTriggerAsyncFileChunkingEmbedsAsTheUploader(t *testing.T) {
 	TriggerAsyncFileChunking(zap.NewNop(), owner, pipeline, uuid.New(), path, "notes.txt")
 
 	requireRemoved(t, path)
+	require.NotNil(t, seen.Load(), "no embedding request carried an account")
 	require.Equal(t, owner, seen.Load(), "the embedding request carries the uploader")
 }

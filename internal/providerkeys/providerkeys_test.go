@@ -68,6 +68,7 @@ type fixedResolver string
 
 func (f fixedResolver) Key(context.Context, models.ModelProvider) string { return string(f) }
 func (fixedResolver) Configured(models.ModelProvider) bool               { return true }
+func (fixedResolver) AccountsSupplyKeys() bool                           { return true }
 
 // Until accounts can add keys in the app, the server keeps using the
 // deployment's.
@@ -78,4 +79,5 @@ func TestNew_DefaultsToTheDeploymentsKeys(t *testing.T) {
 	r := New(deployment, fixedResolver("sk-account"))
 	require.Equal(t, "sk-deployment", r.Key(context.Background(), models.ModelProviderOpenAI))
 	require.False(t, r.Configured(models.ModelProviderAnthropic))
+	require.False(t, r.AccountsSupplyKeys())
 }

@@ -11405,7 +11405,7 @@ export interface components {
             updated_at: string;
         };
         SetProviderKeyRequest: {
-            /** @description The provider API key, 8 to 512 characters without spaces. Surrounding whitespace is trimmed. */
+            /** @description The provider API key, 8 to 512 characters. Leading and trailing whitespace is trimmed; whitespace inside the key is rejected. */
             key: string;
         };
         WebhookToken: {

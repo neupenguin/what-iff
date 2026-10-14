@@ -10,12 +10,12 @@ The model-provider API keys accounts store themselves: storage, the routes that 
   `List` returns only provider, last-four hint and update time; `Delete` removes one.
 - **Resolver:** `Key(ctx, provider)` implements `providerkeys.Resolver` with the key of the account on the context (`middleware.GetUserIDFromContext`).
   A context naming no account, or a key that cannot be read, gets no key.
-  `Configured` is always true, because which accounts have keys is only known per request.
+  `Configured` is always true, because which accounts have keys is only known per request, and `AccountsSupplyKeys` is true.
 - **Routes:** `GET /provider-keys`, `PUT /provider-keys/{provider}` (`{"key": "..."}`) and `DELETE /provider-keys/{provider}`, on the authenticated router.
 
 ## Dependencies
 
-- **Inbound:** `internal/server` only: it builds `Keys`, hands it to `providerkeys.New`, and mounts the routes only when `New` chose it (`mountAccountKeyRoutes`).
+- **Inbound:** `internal/server` only: it builds `Keys`, hands it to `providerkeys.New`, and mounts the routes only when the chosen resolver says accounts supply keys (`mountAccountKeyRoutes`).
 - **Outbound:** `ent` (the `AccountProviderKey` schema, table `account_provider_keys`), `internal/middleware`, `internal/handlers/handlerutils`, `internal/models`.
 
 ## Non-obvious decisions
