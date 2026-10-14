@@ -58,6 +58,7 @@
 ## Testing
 
 - `model_defaults_test.go` — default model configuration.
+- `provider_key_test.go` — `ModelProviders` matches the `ModelProvider` enum in `openapi.yaml`, and `Known`.
 - `error_test.go` — status-to-code mapping, class fallbacks, and generic-code uniqueness.
 - `mcpserver_test.go` — MCP server model validation or serialization.
 

@@ -488,13 +488,15 @@ func mountAccountKeyRoutes(router *mux.Router, resolver providerkeys.Resolver, k
 }
 
 // pluginEmbedder builds the embedding function handed to plugins through
-// plugins.Deps, or returns nil when no key is configured so a plugin can tell
-// the feature is unavailable rather than failing per request.
+// plugins.Deps, or returns nil when OpenAI is not configured so a plugin can
+// tell the feature is unavailable rather than failing per request.
 //
-// httpClient is the deny-network transport under a non-vendor LLM_BACKEND.
-// Constructing the client here rather than passing the key through the seam is
-// what keeps that policy enforceable: a plugin receives the ability to embed,
-// not the credential to reach the provider however it likes (ADR 0x018).
+// The client is built without a key: httpClient's credential transport adds the
+// right one to each request, so a plugin embeds with the key of the account on
+// its context. httpClient is also the deny-network transport under a non-vendor
+// LLM_BACKEND. Constructing the client here rather than passing a key through
+// the seam is what keeps that policy enforceable: a plugin receives the ability
+// to embed, not a credential to reach the provider however it likes (ADR 0x018).
 func pluginEmbedder(openAIConfigured bool, httpClient *http.Client) func(context.Context, string) ([]float32, error) {
 	if !openAIConfigured {
 		return nil

@@ -255,6 +255,12 @@ func TestConfigured_EveryProvider(t *testing.T) {
 
 // --- Routes
 
+// keyBody is a PUT body carrying key.
+func keyBody(key string) string {
+	b, _ := json.Marshal(map[string]string{"key": key})
+	return string(b)
+}
+
 func serve(t *testing.T, f fixture, userID *uuid.UUID, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	router := mux.NewRouter()
@@ -271,7 +277,7 @@ func serve(t *testing.T, f fixture, userID *uuid.UUID, method, path, body string
 func TestRoutes_SetListDelete(t *testing.T) {
 	f := newFixture(t, prefixSealer{})
 
-	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", `{"key":"sk-test-abcd1234"}`)
+	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", keyBody("sk-test-abcd1234"))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotContains(t, rec.Body.String(), "sk-test", "the key is never sent back")
 
@@ -292,7 +298,7 @@ func TestRoutes_SetListDelete(t *testing.T) {
 func TestRoutes_RejectBadInput(t *testing.T) {
 	f := newFixture(t, prefixSealer{})
 
-	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/acme", `{"key":"sk-test-abcd1234"}`)
+	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/acme", keyBody("sk-test-abcd1234"))
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	rec = serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", `{"key":"short"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -304,7 +310,7 @@ func TestRoutes_RequireAnAccount(t *testing.T) {
 	f := newFixture(t, prefixSealer{})
 	for _, r := range []struct{ method, path, body string }{
 		{http.MethodGet, "/provider-keys", ""},
-		{http.MethodPut, "/provider-keys/openai", `{"key":"sk-test-abcd1234"}`},
+		{http.MethodPut, "/provider-keys/openai", keyBody("sk-test-abcd1234")},
 		{http.MethodDelete, "/provider-keys/openai", ""},
 	} {
 		rec := serve(t, f, nil, r.method, r.path, r.body)

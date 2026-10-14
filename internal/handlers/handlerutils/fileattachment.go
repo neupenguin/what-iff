@@ -408,7 +408,8 @@ func TriggerAsyncFileChunking(
 		if err := pipeline.ProcessAndStore(apicontext.WithUserID(context.Background(), userID), attachmentID, fileContent, fileName, fileTypeInfo.ContentType); err != nil {
 			logger.Error("async file chunking failed",
 				zap.Error(err),
-				zap.String("file_attachment_id", attachmentID.String()))
+				zap.String("file_attachment_id", attachmentID.String()),
+				zap.String("user_id", userID.String()))
 		}
 	}()
 }

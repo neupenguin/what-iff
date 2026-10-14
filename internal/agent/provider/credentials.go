@@ -107,6 +107,11 @@ func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, erro
 // CredentialHTTPClient wraps base so every outgoing provider request carries
 // the right credential for the provider it is bound for.
 //
+// On a provider's host the resolver's answer always wins: any Authorization
+// or x-api-key already on the request, whether set by the SDK from the
+// environment or by the caller, is dropped, and an empty answer sends no
+// credential at all. Requests to other hosts are left untouched.
+//
 // base may be nil. When base has its own transport it is preserved — under a
 // non-vendor backend that is the deny-network transport, and dropping it would
 // open egress the backend forbids.
