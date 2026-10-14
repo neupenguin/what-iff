@@ -1,0 +1,129 @@
+package provider
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// Default endpoints for the two providers whose base URL is not configurable,
+// mirroring the SDK defaults rather than restating them elsewhere.
+const (
+	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
+	DefaultAnthropicBaseURL = "https://api.anthropic.com"
+)
+
+// CredentialStyle is how a provider expects its key on the wire.
+type CredentialStyle int
+
+const (
+	// BearerAuthorization is the OpenAI wire format: Authorization: Bearer <key>.
+	// Shared by every OpenAI-compatible provider, which is exactly why a rule
+	// is scoped to a host — they all send a different key in the same header.
+	BearerAuthorization CredentialStyle = iota
+	// AnthropicAPIKey is x-api-key: <key>, used by Anthropic and by anything
+	// speaking its Messages API.
+	AnthropicAPIKey
+)
+
+// CredentialRule attaches one provider's credential to requests bound for it.
+//
+// The host is derived from the same base URL used to build that provider's
+// client, never pinned as a constant. A constant would keep matching after an
+// operator points a provider at a proxy or a regional endpoint, and the rule
+// would silently stop applying.
+type CredentialRule struct {
+	// BaseURL is the provider's configured endpoint; only its host is used.
+	BaseURL string
+	Style   CredentialStyle
+	// Resolve returns the credential to use for this request, or "" when the
+	// caller has none.
+	Resolve func(context.Context) string
+}
+
+// credentialTransport sets the Authorization (or x-api-key) header on outgoing
+// requests, choosing which credential by the request's host.
+//
+// It exists because the provider SDKs take a key when the client is built, and
+// the client value is then copied into several independent holders. There is
+// no single field to reassign later, so the credential is applied where they
+// all still meet: the HTTP transport they share.
+type credentialTransport struct {
+	base  http.RoundTripper
+	rules map[string]CredentialRule // keyed by lowercase host; built once, never mutated
+}
+
+// hostOf extracts the host from a base URL, tolerating a bare host and an
+// empty string.
+func hostOf(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "//") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if req.URL == nil {
+		return base.RoundTrip(req)
+	}
+	rule, ok := t.rules[strings.ToLower(req.URL.Hostname())]
+	if !ok || rule.Resolve == nil {
+		return base.RoundTrip(req)
+	}
+	key := rule.Resolve(req.Context())
+	if key == "" {
+		// Leave whatever the SDK set. The provider's own 401 is a better
+		// failure than a malformed empty credential.
+		return base.RoundTrip(req)
+	}
+	// RoundTrip must not modify the caller's request (net/http contract).
+	req = req.Clone(req.Context())
+	switch rule.Style {
+	case AnthropicAPIKey:
+		req.Header.Set("x-api-key", key)
+	default:
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	return base.RoundTrip(req)
+}
+
+// CredentialHTTPClient wraps base so every outgoing provider request carries
+// the right credential for the provider it is bound for.
+//
+// base may be nil. When base has its own transport it is preserved — under a
+// non-vendor backend that is the deny-network transport, and dropping it would
+// open egress the backend forbids.
+//
+// Two providers sharing a host would be a configuration error rather than
+// something to merge, so the later rule wins.
+func CredentialHTTPClient(rules []CredentialRule, base *http.Client) *http.Client {
+	byHost := make(map[string]CredentialRule, len(rules))
+	for _, r := range rules {
+		if h := hostOf(r.BaseURL); h != "" {
+			byHost[h] = r
+		}
+	}
+	out := &http.Client{}
+	if base != nil {
+		*out = *base
+	}
+	var baseRT http.RoundTripper
+	if base != nil {
+		baseRT = base.Transport
+	}
+	out.Transport = &credentialTransport{base: baseRT, rules: byHost}
+	return out
+}
