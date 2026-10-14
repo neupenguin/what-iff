@@ -34,8 +34,8 @@ HTTP **middleware** for the API: authentication, optional subscription gates, CO
   This is why **`RequireRole`, `RequireActiveSubscription`, and `RequirePremiumPlan` all take a `*zap.Logger` as their first parameter**: the helper logs every error response, and a middleware rejection should be as visible as a handler one.
   Omitting it is a compile error rather than a silent loss of logging, so a new call site cannot get this wrong — but the parameter is easy to be surprised by, which is why all three are named here rather than described in general terms.
 - **This package could not use `handlerutils` until the cycle was broken.**
-  `handlerutils` imported `internal/agent` for one file-upload call, and `agent` imports this package — so `middleware → handlerutils` closed a ring.
-  `handlerutils` now declares a narrow `FileAttachmentUploader` interface instead, which is what makes the shared helpers reachable from here at all.
+  `handlerutils` imported `internal/agent` for one file-upload call (to OpenAI's Files API), and `agent` imports this package — so `middleware → handlerutils` closed a ring.
+  That upload no longer exists, so `handlerutils` needs nothing from the agent layer and the shared helpers are reachable from here.
 - **Cognito / API Gateway:** `tryExtractCognitoClaims` documents prerequisites (HTTP API v2, JWT authorizer, `ProxyWithContext`).
 - **Billing context:** `auth.go` carries plan/subscription fields into request and async contexts for quota and accounting; agent tool availability no longer gates on a specific product/price ID.
 

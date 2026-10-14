@@ -17,8 +17,8 @@ HTTP API for **file attachments** metadata and download flows at `/api/file-atta
 
 - Chat-scoped uploads may also exist under `handlers/chat` — avoid duplicating business rules; datastore is canonical.
 - **Delete is reference counted.**
-  `CreateFileAttachmentReference` copies share the source's `s3_key` and provider `FileID`.
-  `DELETE /file-attachment/{id}` deletes the provider file only when no other row carries the `FileID`, then the row, then releases the stored object and thumbnail via `storage.ReleaseAttachmentObjects` (skipped while another row references the key).
+  `CreateFileAttachmentReference` copies share the source's `s3_key`.
+  `DELETE /file-attachment/{id}` deletes the row, then releases the stored object and thumbnail via `storage.ReleaseAttachmentObjects` (skipped while another row references the key).
   The object step is best effort and never fails the request; an object it cannot remove is left orphaned.
   The steps live in `filedelete.Service.DeleteFile`, which the gallery's bulk delete shares; the handler only maps its errors (not found or unreadable is 404, anything else 500).
 - **Download fallback uses the chat id.**
@@ -27,7 +27,7 @@ HTTP API for **file attachments** metadata and download flows at `/api/file-atta
 ## Testing
 
 - *(See chat handler tests for upload quotas; add here if standalone behaviors grow.)*
-- `cleanup_test.go` — delete removes an unreferenced object and thumbnail, keeps one a reference copy shares (and its provider file), survives an object-store failure; legacy chat document download without `s3_key`.
+- `cleanup_test.go` — delete removes an unreferenced object and thumbnail, keeps one a reference copy shares, survives an object-store failure; legacy chat document download without `s3_key`.
 
 ## Related documentation
 

@@ -8,16 +8,14 @@
 
 - **`fileattachment.go`:** Utilities for reading uploads and binding to models (see tests for expected behavior).
   It also owns the upload metrics for every upload path (chat, personality, image gallery), through `telemetry.Global()`.
-  `UploadFileAttachment` is the multipart wrapper over `ProcessUpload`, which holds the steps that need no HTTP: type check, buffering to a temp file (at most `MaxUploadBytes`, 30 MB; exported so callers that already hold the bytes can check up front), image normalization, and the provider upload.
+  `UploadFileAttachment` is the multipart wrapper over `ProcessUpload`, which holds the steps that need no HTTP: type check, buffering to a temp file (at most `MaxUploadBytes`, 30 MB; exported so callers that already hold the bytes can check up front), and image normalization; the temp file is the bytes the caller then stores.
   `ProcessUpload` returns an `*UploadError` (the status and message a client sees; it wraps `ErrUnsupportedFileType` or `ErrFileTooLarge` where they apply), and `RespondWithUploadError` writes one.
   `StoreChatAttachment` is the storage half for a chat upload: the record, the object-store key (images under the gallery path with a thumbnail, other files under the chat), and chunking.
   The chat upload handler and the plugin attachment seam (`internal/server/plugin_attachments.go`) both call it.
   `ProcessUpload` records the spooled size (`whatiff.file.size`, operation `upload`) and the image `normalize` stage time.
   `whatiff.file.uploads` counts each upload once: failures in `ProcessUpload`, the multipart parse in `UploadFileAttachment`, or `UploadToS3`, success in `TriggerAsyncFileChunking`, which every path calls exactly once after the attachment is stored.
   Callers must not count uploads themselves.
-  A caller whose attachment record fails to save calls `AbandonFileAttachmentUpload`, which counts the failure, removes the temp file, and best-effort deletes the provider-side file.
-  Rolling back a saved record (e.g. after an S3 failure) calls `DeleteProviderFile`, so the provider copy is not orphaned either.
-  Both detach from the request context's cancellation and only log a failed delete.
+  A caller whose attachment record fails to save calls `AbandonFileAttachmentUpload`, which counts the failure and removes the temp file.
 - **`httpresponse.go`:** The response helpers every handler writes through — `RespondWithJSON`, `RespondWithHTML`, `RespondWithNoContent`, and `RespondWithError`.
   The last takes a code as its fourth argument: either a specific code from the models taxonomy, or `CodeNotSet` where none has been assigned yet, in which case the helper fills in the generic code for the status.
   A blank or whitespace-only code is treated as `CodeNotSet`.
@@ -32,10 +30,9 @@
 
 - Keep helpers **free of business rules** that belong in datastore or agent — pass dependencies explicitly.
 - **This package must stay leaf-level.**
-  It used to import `internal/agent` for one upload call, which formed `handlerutils → agent → middleware → handlerutils` and made the response helpers unreachable from `internal/middleware`.
-  `UploadFileAttachment` now accepts a narrow `FileAttachmentUploader` interface instead; callers pass `agent.OpenAIProvider`.
+  It used to import `internal/agent` for the provider upload call, which formed `handlerutils → agent → middleware → handlerutils` and made the response helpers unreachable from `internal/middleware`.
+  That upload (to OpenAI's Files API) is gone, so uploads need nothing from the agent layer at all.
   Re-introducing an `internal/agent` import here would close that ring again.
-  The structural match is pinned by `var _ handlerutils.FileAttachmentUploader = (*OpenAIProvider)(nil)` in `internal/agent/provider/fileattachment.go` — it must live on that side, since asserting it here would need the very import the interface exists to avoid.
   `FileAttachmentDeleter` (the provider delete used by that cleanup) follows the same pattern and is pinned the same way.
 - **`RespondWithJSON` sets `X-Content-Type-Options: nosniff`.**
   `http.Error` sets it automatically; hand-written JSON responses do not, so call sites converted away from `http.Error` would otherwise silently lose it.

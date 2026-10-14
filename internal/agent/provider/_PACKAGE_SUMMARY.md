@@ -38,9 +38,8 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
   Whenever an outbound **assistant** turn carries the placeholder (`geminiMessagesCarryToolCallPlaceholder`), the adapter wraps the text-delta handler in `geminiToolCallEchoFilter` and strips the final `Text` via `stripGeminiToolCallEcho`; both remove only **leading** echoes of the placeholder.
   User-authored text never arms the filter and is never rewritten.
 - **User-attached images (chat):** `ModelContextSegment.UserImages` + `AppendUserMessage`.
-  OpenAI Responses gets `input_image` with the OpenAI **`file_id`** from upload.
-  **Claude** uses **`UserMessageImage.RawBytes`** when set (see **`loadImageBytesForClaude`**); otherwise **`renderClaudeContext`** falls back to **text-only** for that turn.
-  **`HydrateUserMessageImages`** can prefetch bytes from storage for reuse.
+  Every renderer sends **`UserMessageImage.RawBytes`** inline: OpenAI Responses as an `input_image` data URL, Claude as a base64 block, the Chat Completions vendors as a data URL (the chat path fills the bytes via **`loadImageBytesForVision`**).
+  An image without bytes is left out; **`renderClaudeContext`** keeps that turn text-only.
 - **Xiaomi MiMo (Chat Completions):** `XiaomiAdapter` always reasons, streams it as the non-standard `reasoning_content`, and honors **neither** `budget_tokens` nor `reasoning_effort` — only `thinking: {"type":"disabled"}`.
   The adapter raises `MaxCompletionTokens` to `ReasoningMaxOutputTokens`, and when a call finishes with `finish_reason: "length"` and no reply text it is discarded and re-issued once with thinking disabled (which then stays off for the rest of the turn).
   `GenerateResponse.StopReason` carries `finish_reason`.
@@ -98,9 +97,9 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 
 ## Non-obvious decisions
 
-- **Claude vs OpenAI for user images:** OpenAI uses **`file_id`** from upload.
-  Claude needs **`RawBytes`** on each `UserMessageImage`; the chat path fills them via **`loadImageBytesForClaude`** before **`buildModelContextForChatMessage`**.
-  Without bytes, `renderClaudeContext` keeps the user message text-only for that attachment.
+- **User images are always inline.**
+  No provider keeps a copy of an uploaded file (uploads are no longer mirrored to OpenAI's Files API), so each `UserMessageImage` needs **`RawBytes`**; the chat path fills them via **`loadImageBytesForVision`** before **`buildModelContextForChatMessage`**.
+  Without bytes the image is dropped, and `renderClaudeContext` keeps the user message text-only for that attachment.
 - **Claude rendering:** Developer/system vs user ordering is covered in tests (`RenderClaudeContext_DeveloperBeforeUser`).
 - **Consecutive same-role Claude turns are normal.**
   Segments render independently and nothing merges adjacent messages that share a role, so a request routinely carries several `user` messages in a row (history turn, `[CONTEXT]` memory turn, developer context, then the current user message).

@@ -9982,7 +9982,7 @@ export interface paths {
         put?: never;
         /**
          * Delete many gallery files
-         * @description Deletes the given files (images, documents or any other upload), each with the cleanup its own route does: an image as `DELETE /image-gallery/{id}` (its stored image and thumbnail), any other file as `DELETE /file-attachment/{id}` (its provider copy unless a chat-reuse copy shares it, and stored objects nothing else references). One failure does not stop the rest. Ids that are not the caller's files, or do not exist, are reported in `failed` as "not found" rather than failing the request. Duplicate ids are deleted once.
+         * @description Deletes the given files (images, documents or any other upload), each with the cleanup its own route does: an image as `DELETE /image-gallery/{id}` (its stored image and thumbnail), any other file as `DELETE /file-attachment/{id}` (its stored objects, unless a chat-reuse copy still references them). One failure does not stop the rest. Ids that are not the caller's files, or do not exist, are reported in `failed` as "not found" rather than failing the request. Duplicate ids are deleted once.
          */
         post: {
             parameters: {
@@ -11389,7 +11389,7 @@ export interface components {
              * @description ID of the user who owns this file attachment
              */
             user_id: string;
-            /** @description External file ID from the file storage system (e.g., OpenAI file ID) */
+            /** @description Legacy: the OpenAI Files API id of a file uploaded before uploads stopped being mirrored there. Never set for new files and not used for anything; the file's bytes live in the object store. */
             file_id?: string;
             /** @description Original filename of the uploaded file */
             name: string;

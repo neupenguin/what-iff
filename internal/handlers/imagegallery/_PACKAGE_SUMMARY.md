@@ -9,7 +9,7 @@ The web app's gallery doubles as a read-only file view; other files' bytes come 
 
 - **`Handler` (`handler.go`, `gallery.go`, `import.go`, `manage.go`):** list (`GET /image-gallery`, filtered by `kind`, name, personality, `global_only` and `folder`), content (`GET /{id}?size=thumbnail|full`, images only), file info (`GET /{id}/info`, any kind, for opening a linked file), import, rename, delete, and reference (`POST /{id}/reference`, a chat-reuse copy that shares the stored object).
 - **`kind`** on the list and on `/folders` is `images` (the default, so older clients see only images), `files` (everything that is not `image/*`) or `all`; anything else is a 400.
-  Import, thumbnails and `DELETE /{id}` stay image-only; a single other file is deleted through `DELETE /file-attachment/{id}`, which also removes the provider file.
+  Import, thumbnails and `DELETE /{id}` stay image-only; a single other file is deleted through `DELETE /file-attachment/{id}`.
 - **Bulk delete (`delete.go`):** `POST /delete` with `{"ids": [...]}` (1 to 500) deletes any mix of the caller's files, each with its own route's cleanup (`filedelete.Service.DeleteMany`).
   It answers 200 with `{"deleted": [ids], "failed": [{"id", "error"}]}`; an id that is not the caller's file fails as `not found` instead of failing the batch.
   `DELETE /{id}` runs `filedelete.Service.DeleteImage` and only maps its errors to statuses.

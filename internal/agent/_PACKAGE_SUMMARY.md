@@ -9,7 +9,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 - **`Agent`** (`NewAgent`): central service constructed with datastore, telemetry, OpenAI key, optional Anthropic key, and S3 file store.
 - **Chat turns:** `HandleUserMessage` and related paths build `provider.ModelContext` via `messageContextBuilder` / `buildModelContextForChatMessage`, attach tools, run the model (`openAIResponseParamsForChat` → `ModelContext.BuildOpenAIResponseParams`), and execute tool rounds (`agentloop`).
 - **Context:** History, carry-over after checkpoints, token budgeting, memories (including **rehydrated** `ChatMessage.additional_context` from prior user turns plus this turn’s prefetch), attachments, personality files, MCP tools, timezone-aware user lines (`[sys:Mon 2006-01-02 15:04:05 -07:00]` via `formatUserMessageWithTime` / `agentMessageTimestampLayout` — weekday + local wall time + offset, not ISO-8601).
-  **`messageContextBuilder`** attaches image **`file_id`**s to the final user segment for OpenAI; **`loadImageBytesForClaude`** fills **`RawBytes`** for Claude multimodal turns when bytes are available (see `internal/agent/provider` package summary).
+  **`messageContextBuilder`** attaches image bytes to the final user segment; **`loadImageBytesForVision`** fills **`RawBytes`** from the object store for every vision-capable provider (see `internal/agent/provider` package summary).
 - **Tools:** Build a shared per-turn tool policy (`tools.go`), derive provider tool lists from the `internal/agent/tools` catalog, dispatch tool calls through a registered handler map, and support delegated subagent calls (`list_models`, `list_personalities`, `run_subagent`).
 - **Mode tools/context:** agent-facing tools `list_modes` + `change_mode` map to internal mood records (`active_mood_id` / `is_auto_mood`), with active-mood resolution/reconciliation and mood prompt text as **`SegmentKindMood`** appended inside **`messageContextBuilder.build`** after merged additional context and before expression continuity and the final user turn (same segment order for OpenAI and Claude).
 - **Remote MCP parity:** Chat/ritual MCP server selection is shared across providers; OpenAI uses Responses MCP tools and Claude uses Anthropic Beta MCP client mood when MCP servers are present.
@@ -75,7 +75,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 |--------|--------|
 | `Agent` | Main struct; datastore, clients, file store, logger, telemetry, shared **`tokenCounter`** (segment token estimates). Optional **`testHooks`** (`agent_hooks.go`) is for unit tests only; production paths assert hooks are unset. |
 | `HandleUserMessage` | Primary path from HTTP into a full model turn + persistence. |
-| `messageContextBuilder` | Builds `ModelContext` segments (history, memories, user message, **`userMessageImagesFromAttachments`** for OpenAI `file_id` vision, etc.). |
+| `messageContextBuilder` | Builds `ModelContext` segments (history, memories, user message, **`userMessageImagesFromAttachments`** for inline vision bytes, etc.). |
 | `buildModelContextForChatMessage` | Shared path for chat turns so user-segment handling stays consistent. |
 | `openAIResponseParamsForChat` | Tools + personality file enrichment + `BuildOpenAIResponseParams`. |
 | `HandleAgentLoop` / `ExecuteToolUseWithRecovery` | Multi-round tool execution with panic recovery (`agentloop.go`). |
@@ -150,8 +150,8 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   On failure or unknown key, **no** portrait is selected (no default first slot).
   **`generation_expression_reasoning`** is persisted when set; continuity echoes it.
   Minimal standalone prompt when context is nil.
-- **Claude + user images:** Chat turns call **`loadImageBytesForClaude`** before building `ModelContext` so **`UserMessageImage.RawBytes`** can be set; **`renderClaudeContext`** then emits image blocks.
-  OpenAI still uses **`file_id`** for vision.
+- **User images:** Chat turns call **`loadImageBytesForVision`** before building `ModelContext` so **`UserMessageImage.RawBytes`** can be set (current turn and, for vision models, history); every renderer then sends the bytes inline.
+  Uploads are no longer mirrored to OpenAI's Files API, so there is no `file_id` path.
   Details in `provider/_PACKAGE_SUMMARY.md`.
 - **Claude checkpoint context isolation:** `runCheckpointClaude` (`message.go`) runs scratchpad → memory on a **clone** of inference context because `updateScratchpadClaude` / `extractMemoriesWithScratchpadDeltaClaude` **mutate** the context they receive (scratchpad-update / memory-extraction prompt turns).
   **`checkpointArchivalContext`** appends the just-completed assistant reply before cloning (inference `ModelContext` predates that turn; OpenAI gets it via `PreviousResponseID`).
