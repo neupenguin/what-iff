@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const moodAutoSelectModel = "gpt-4.1-mini"
+const moodAutoSelectModel = models.UtilityModelName
 
 type moodAutoSelectResult struct {
 	MoodID string `json:"mood_id"`

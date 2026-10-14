@@ -5,6 +5,19 @@ import "strings"
 const (
 	// DefaultModelName specifies which model from AvailableModels to use as the default
 	DefaultModelName = "gpt-5.1"
+
+	// UtilityModelName is the model for short background work that is not the
+	// assistant talking: naming a chat, picking an expression, selecting a mood,
+	// answering a memory query, parsing a job schedule, and the first-chat
+	// greeting.
+	//
+	// Keeping them on one constant makes retiring a model a single edit, and
+	// keeps the greeting on the same provider as the rest of the default
+	// experience rather than on one the install may have no key for.
+	//
+	// Assistant-facing generation does not use this. Personality generation, the
+	// summarizer and image work each pick their own model for quality reasons.
+	UtilityModelName = "gpt-5.6-luna"
 )
 
 // ModelProvider identifies which API backend a model is routed through.
@@ -69,6 +82,14 @@ var AvailableModels = []ModelConfig{
 		Provider:      ModelProviderOpenAI,
 	},
 	{
+		Name:          "gpt-5.6-luna",
+		DisplayName:   "GPT-5.6 Luna",
+		Description:   "Fast, low-cost model from the GPT-5.6 family. Suited to short, high-volume work where latency matters more than depth.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderOpenAI,
+	},
+	{
 		Name:          "gpt-4o",
 		DisplayName:   "GPT-4o",
 		Description:   "OpenAI's flagship multimodal model with vision capabilities. Matches GPT-4 Turbo performance in text/coding with superior non-English and vision tasks.",
@@ -104,14 +125,6 @@ var AvailableModels = []ModelConfig{
 		Name:          "gpt-4o-mini",
 		DisplayName:   "GPT-4o Mini",
 		Description:   "Smaller, faster, and more affordable version of GPT-4o. Excellent for high-volume tasks requiring good performance.",
-		ToolSupport:   true,
-		VisionSupport: true,
-		Provider:      ModelProviderOpenAI,
-	},
-	{
-		Name:          "gpt-5.1-nano",
-		DisplayName:   "GPT-5.1 Nano",
-		Description:   "Ultra-fast, lightweight GPT-5.1 variant for high-throughput applications. Best price-performance ratio.",
 		ToolSupport:   true,
 		VisionSupport: true,
 		Provider:      ModelProviderOpenAI,
