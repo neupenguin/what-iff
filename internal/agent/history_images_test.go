@@ -19,20 +19,38 @@ func (s historyImageStore) DownloadFile(context.Context, string) ([]byte, error)
 }
 func (s historyImageStore) DeleteFile(context.Context, string) error { return nil }
 
-func TestHistoryImagesForMessage_LoadsBytesWhenFileIDMissing(t *testing.T) {
-	t.Parallel()
-
-	fileID := ""
-	attID := uuid.New()
-	msg := &models.ChatMessage{
+func historyImageMessage() *models.ChatMessage {
+	return &models.ChatMessage{
 		Attachments: []*models.FileAttachment{
-			{ID: attID, Name: "a.png", FileType: "image/png", FileID: &fileID},
+			{ID: uuid.New(), Name: "a.png", FileType: "image/png"},
 		},
 	}
+}
+
+func TestHistoryImagesForMessage_LoadsBytesFromTheStore(t *testing.T) {
+	t.Parallel()
+
 	var store storage.FileStore = historyImageStore{content: []byte("hello")}
-	imgs := historyImagesForMessage(t.Context(), nil, store, uuid.New(), uuid.New(), msg, false)
+	imgs := historyImagesForMessage(t.Context(), nil, store, uuid.New(), uuid.New(), historyImageMessage(), true)
 	require.Len(t, imgs, 1)
-	require.NotEmpty(t, imgs[0].RawBytes)
+	require.Equal(t, []byte("hello"), imgs[0].RawBytes)
+}
+
+// Nothing but the bytes can be sent, so with loading off a history image is left out (and the
+// store is not touched).
+func TestHistoryImagesForMessage_NoImagesWhenBytesNotLoaded(t *testing.T) {
+	t.Parallel()
+
+	var store storage.FileStore = historyImageStore{content: []byte("hello")}
+	require.Empty(t, historyImagesForMessage(t.Context(), nil, store, uuid.New(), uuid.New(), historyImageMessage(), false))
+}
+
+// An image whose object is missing from the store is skipped rather than sent empty.
+func TestHistoryImagesForMessage_SkipsImagesMissingFromTheStore(t *testing.T) {
+	t.Parallel()
+
+	var store storage.FileStore = historyImageStore{}
+	require.Empty(t, historyImagesForMessage(t.Context(), nil, store, uuid.New(), uuid.New(), historyImageMessage(), true))
 }
 
 func TestAppendHistoryTurn_WithImages(t *testing.T) {
@@ -40,7 +58,7 @@ func TestAppendHistoryTurn_WithImages(t *testing.T) {
 
 	var ctx provider.ModelContext
 	ctx.AppendHistoryTurn(provider.RoleUser, "look at this", []provider.UserMessageImage{
-		{FileID: "file-123", MediaType: "image/png"},
+		{MediaType: "image/png", RawBytes: []byte{1}},
 	}, true)
 	require.Len(t, ctx.Segments, 1)
 	require.Len(t, ctx.Segments[0].UserImages, 1)

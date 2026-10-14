@@ -82,33 +82,6 @@ func TestListFileAttachmentObjectRefs_Scopes(t *testing.T) {
 	require.Len(t, all, 3)
 }
 
-func TestFileAttachmentProviderFileShared(t *testing.T) {
-	ds, cleanup := newFileAttachmentTestDatastore(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	userID := createFATestUser(t, ds)
-	fileID := "file-abc"
-	orig := createFAObjectRow(t, ds, userID, models.FileAttachment{Name: "a.png", FileType: "image/png", FileID: &fileID, S3Key: "users/u/images/a.png"})
-
-	shared, err := ds.FileAttachmentProviderFileShared(ctx, orig.ID, fileID)
-	require.NoError(t, err)
-	require.False(t, shared)
-
-	ref, err := ds.CreateFileAttachmentReference(ctx, userID, orig.ID)
-	require.NoError(t, err)
-	shared, err = ds.FileAttachmentProviderFileShared(ctx, orig.ID, fileID)
-	require.NoError(t, err)
-	require.True(t, shared, "the reference copy carries the same provider file")
-	shared, err = ds.FileAttachmentProviderFileShared(ctx, ref.ID, fileID)
-	require.NoError(t, err)
-	require.True(t, shared)
-
-	shared, err = ds.FileAttachmentProviderFileShared(ctx, orig.ID, "")
-	require.NoError(t, err)
-	require.False(t, shared)
-}
-
 // TestChatCascade_ReleasesUnreferencedObjects runs the delete-chat sequence against a real
 // datastore and the local file store: read the chat's rows, remove them (the test schema has no
 // FK cascade, so the cascade is done by hand), then release. The object a reference copy in

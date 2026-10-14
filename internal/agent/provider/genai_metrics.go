@@ -19,11 +19,7 @@ const (
 	genAIOpChat          = "chat"
 	genAIOpGenerateImage = "generate_image"
 	genAIOpEditImage     = "edit_image"
-	genAIOpFile          = "file"
 )
-
-// genAIModelNone labels calls that have no model (the Files API).
-const genAIModelNone = "none"
 
 // Retry reasons for GenAIRetries.
 const (

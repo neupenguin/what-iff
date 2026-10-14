@@ -82,8 +82,6 @@ func PublicMessage(err error) string {
 		return "could not read the file"
 	case StageStorage:
 		return "could not delete the stored image"
-	case StageProvider:
-		return "could not delete the provider's copy"
 	default:
 		return "could not delete the file"
 	}

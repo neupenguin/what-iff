@@ -4,37 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"net/http"
-	"path"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/theimaginaryfoundation/what-iff/internal/handlers/handlerutils"
 	"github.com/theimaginaryfoundation/what-iff/internal/imageutil"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
-	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
-	"github.com/theimaginaryfoundation/what-iff/internal/utils"
 	"go.uber.org/zap"
 )
-
-// handlerutils.UploadFileAttachment takes a narrow FileAttachmentUploader
-// interface rather than importing this package, because handlerutils → agent
-// would close an import cycle through middleware. Nothing declares that this
-// type satisfies it, so a signature change here would surface as three
-// unrelated-looking errors at the handler call sites instead of one here.
-//
-// This assertion is the missing link. The dependency direction is still
-// provider → handlerutils, which is the safe way round: handlerutils imports
-// models, storage, utils and agent/filechunker, none of which reach provider.
-var _ handlerutils.FileAttachmentUploader = (*OpenAIProvider)(nil)
-
-// The same holds for the best-effort cleanup of an upload whose attachment record is not kept.
-var _ handlerutils.FileAttachmentDeleter = (*OpenAIProvider)(nil)
 
 // Regex to match sentences containing sandbox:/mnt/data/* links
 // This matches markdown links like [text](sandbox:/mnt/data/file.ext) within sentences
@@ -43,64 +22,11 @@ var sandboxLinkRegex = regexp.MustCompile(`\[[^\]]*\]\(sandbox:/mnt/data/[^)]+\)
 // Split text into sentences by looking for sentence-ending punctuation followed by whitespace or end of string
 var sentenceRegex = regexp.MustCompile(`([.!?]+)\s+`)
 
-// startFileCall starts GenAIOperationDuration metrics for one OpenAI Files/Containers API call
-// (upload, delete or container file download), which has no model.
-func (a *OpenAIProvider) startFileCall(ctx context.Context) *genAICall {
-	return startGenAICall(ctx, a.tel, telemetry.DependencyOpenAI, genAIModelNone, genAIOpFile)
-}
-
-func (a *OpenAIProvider) UploadFileAttachment(ctx context.Context, userID uuid.UUID, attrs map[string]string, file io.Reader, fileName string, fileTypeInfo utils.FileTypeInfo) (string, error) {
-	inputFile := openai.File(file, normalizeUploadFileNameExtension(fileName), fileTypeInfo.ContentType)
-
-	call := a.startFileCall(ctx)
-	storedFile, err := a.oaiClient.Files.New(ctx, openai.FileNewParams{
-		File:    inputFile,
-		Purpose: openai.FilePurposeUserData,
-	})
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to upload file attachment", zap.Error(err))
-		return "", err
-	}
-
-	return storedFile.ID, nil
-}
-
-// normalizeUploadFileNameExtension lowercases a filename's extension so files land in the
-// OpenAI Files API with an extension its Responses API accepts. OpenAI validates image
-// extensions case-sensitively (an uploaded "photo.JPG" is later rejected as an unsupported
-// format even though ".jpg" is fine). The base name is left untouched.
-func normalizeUploadFileNameExtension(fileName string) string {
-	ext := path.Ext(fileName)
-	if ext == "" {
-		return fileName
-	}
-	lower := strings.ToLower(ext)
-	if lower == ext {
-		return fileName
-	}
-	return fileName[:len(fileName)-len(ext)] + lower
-}
-
-func (a *OpenAIProvider) DeleteFileAttachment(ctx context.Context, fileID string) error {
-	call := a.startFileCall(ctx)
-	_, err := a.oaiClient.Files.Delete(ctx, fileID)
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to delete file attachment from OpenAI", zap.Error(err))
-		return err
-	}
-
-	return nil
-}
-
 func (a *OpenAIProvider) SaveMessageAttachments(ctx context.Context, userID, chatMessageID uuid.UUID, resp *responses.Response) error {
 	for _, output := range resp.Output {
 		switch output.Type {
 		case "image_generation_call":
 			a.saveImageAttachment(ctx, userID, chatMessageID, output.AsImageGenerationCall())
-		case "message", "code_interpreter_call":
-			a.saveInterpreterAttachments(ctx, userID, chatMessageID, output.Content)
 		}
 	}
 
@@ -113,7 +39,6 @@ func (a *OpenAIProvider) saveImageAttachment(ctx context.Context, userID, chatMe
 	imageName := fmt.Sprintf("image_%s.png", image.ID)
 	created, err := a.ds.CreateFileAttachment(ctx, userID, models.FileAttachment{
 		UserID:        userID,
-		FileID:        &image.ID,
 		Name:          imageName,
 		FileType:      "image/png",
 		ChatMessageID: &chatMessageID,
@@ -164,105 +89,6 @@ func (a *OpenAIProvider) saveImageAttachment(ctx context.Context, userID, chatMe
 			a.zapLog().Warn("failed to upload thumbnail to S3",
 				zap.String("attachment_id", created.ID.String()),
 				zap.Error(err))
-		}
-	}
-}
-
-func (a *OpenAIProvider) saveInterpreterAttachments(ctx context.Context, userID, chatMessageID uuid.UUID, content []responses.ResponseOutputMessageContentUnion) {
-	for _, contentEntry := range content {
-		a.processAnnotations(ctx, userID, chatMessageID, contentEntry.Annotations)
-	}
-}
-
-func (a *OpenAIProvider) processAnnotations(ctx context.Context, userID, chatMessageID uuid.UUID, annotations []responses.ResponseOutputTextAnnotationUnion) {
-	for _, annotation := range annotations {
-		switch annotation.Type {
-		case "container_file_citation":
-			a.saveInterpreterAttachment(ctx, userID, chatMessageID, annotation.AsContainerFileCitation())
-		}
-	}
-
-}
-
-func (a *OpenAIProvider) saveInterpreterAttachment(ctx context.Context, userID, chatMessageID uuid.UUID, annotation responses.ResponseOutputTextAnnotationContainerFileCitation) {
-	call := a.startFileCall(ctx)
-	resp, err := a.oaiClient.Containers.Files.Content.Get(ctx, annotation.ContainerID, annotation.FileID)
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to get container file", zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		a.zapLog().Error("failed to get container file", zap.String("status", resp.Status))
-		return
-	}
-
-	fileTypeInfo, err := utils.GetFileType(annotation.Filename)
-	if err != nil {
-		a.zapLog().Error("failed to get file type", zap.Error(err))
-		return
-	}
-
-	// Read the file bytes directly (no base64 encoding needed).
-	rawBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		a.zapLog().Error("failed to read container file", zap.Error(err))
-		return
-	}
-
-	created, err := a.ds.CreateFileAttachment(ctx, userID, models.FileAttachment{
-		UserID:        userID,
-		FileID:        &annotation.FileID,
-		Name:          annotation.Filename,
-		FileType:      fileTypeInfo.ContentType,
-		ChatMessageID: &chatMessageID,
-	})
-	if err != nil {
-		a.zapLog().Error("failed to create file attachment", zap.Error(err))
-		return
-	}
-
-	// Non-image attachments from the interpreter are only accessible via OpenAI's
-	// Files API (file_id). They are not stored in S3 or the DB file_content column.
-	// If fileStore is nil, this is expected for test environments; non-images don't
-	// require it. Images, however, require S3 to be served by the gallery.
-	if strings.HasPrefix(fileTypeInfo.ContentType, models.ImageMIMEPrefix) {
-		if a.fileStore == nil {
-			a.zapLog().Error("fileStore is nil; interpreter image cannot be persisted to S3 and will be lost",
-				zap.String("attachment_id", created.ID.String()))
-			return
-		}
-
-		imgKey := storage.FileKeyForImage(userID, created.ID, annotation.Filename)
-		if err := a.fileStore.UploadFile(ctx, imgKey, rawBytes, fileTypeInfo.ContentType); err != nil {
-			a.zapLog().Error("failed to upload interpreter image to S3; image will not be available in the gallery",
-				zap.String("attachment_id", created.ID.String()),
-				zap.String("s3_key", imgKey),
-				zap.Error(err))
-			return
-		}
-
-		if err := a.ds.SetFileAttachmentS3Key(ctx, userID, created.ID, imgKey); err != nil {
-			a.zapLog().Warn("failed to persist s3_key for interpreter attachment",
-				zap.String("attachment_id", created.ID.String()),
-				zap.Error(err))
-		}
-
-		// Thumbnail is best-effort.
-		thumb, thumbErr := imageutil.GenerateThumbnail(rawBytes, imageutil.DefaultThumbnailMaxPx)
-		if thumbErr != nil {
-			a.zapLog().Warn("failed to generate thumbnail for interpreter image",
-				zap.String("attachment_id", created.ID.String()),
-				zap.Error(thumbErr))
-		} else {
-			thumbKey := storage.FileKeyForImageThumbnail(userID, created.ID)
-			if err := a.fileStore.UploadFile(ctx, thumbKey, thumb, "image/jpeg"); err != nil {
-				a.zapLog().Warn("failed to upload interpreter thumbnail to S3",
-					zap.String("attachment_id", created.ID.String()),
-					zap.Error(err))
-			}
 		}
 	}
 }

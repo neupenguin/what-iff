@@ -25,7 +25,7 @@ func (h *Handler) CreateFileAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileAttachment, tempFilePath, err := handlerutils.UploadFileAttachment(w, r, h.logger, h.agent.OpenAIProvider, userID, map[string]string{"chat_id": chatID.String()})
+	fileAttachment, tempFilePath, err := handlerutils.UploadFileAttachment(w, r, h.logger, userID)
 	if err != nil {
 		return
 	}
@@ -33,7 +33,6 @@ func (h *Handler) CreateFileAttachment(w http.ResponseWriter, r *http.Request) {
 	createdAttachment, err := handlerutils.StoreChatAttachment(r.Context(), h.logger, handlerutils.AttachmentStorage{
 		Records:  h.ds,
 		Files:    h.agent.FileStore(),
-		Provider: h.agent.OpenAIProvider,
 		Pipeline: h.agent.ChunkPipeline(),
 	}, userID, chatID, fileAttachment, tempFilePath)
 	if err != nil {

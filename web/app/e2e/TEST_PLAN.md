@@ -88,14 +88,11 @@ path — see item 1's "change personality").
       disappears from `/personality` — `personality-detail.spec.ts`
 - [x] "Make default" on a non-default personality — `personality-detail.spec.ts`
 - [x] Toggle "Auto-pin new User memories" — `personality-detail.spec.ts`
-- [ ] Attachment upload/delete — **not testable hermetically**:
+- [ ] Attachment upload/delete — was **not testable hermetically** while
       `CreateFileAttachment` (internal/handlers/personality/fileattachment.go)
-      always proxies the file to the OpenAI Files API
-      (internal/agent/provider/fileattachment.go) with no mock/local bypass,
-      unlike chat completions. Under `LLM_BACKEND=mock`/`local` every upload
-      500s on the provider network-egress guard. Same category as item 11
-      below — needs the same real-vendor-key-gated, opt-in suite, not a spec
-      in this file.
+      proxied every file to the OpenAI Files API. Uploads no longer touch a
+      provider (the object store is the only copy), so this is now only a
+      matter of writing the spec — it needs no vendor key.
 - [x] Expression slots — the "Add expression" custom-key flow: the key rules,
       the duplicate-key rejection, the disabled submit, and a valid key landing
       a slot and opening the image picker for it —
@@ -211,15 +208,13 @@ sort (`All` / `Generated` / `Imported` counts, `Created`);
       rather than its contents, which is all a hermetic run can reach — see
       the import item below.
 - [ ] Import an image, verify it appears and the `Imported` count increments —
-      **not testable hermetically**, same category as the personality
+      was **not testable hermetically**, same category as the personality
       attachment item above: `ImportImage`
-      (internal/handlers/imagegallery/import.go) goes through
-      `handlerutils.UploadFileAttachment`, which proxies every upload to the
-      vendor Files API with no mock/local bypass, so imports fail on the
-      provider egress guard under `LLM_BACKEND=mock`/`local`. Needs the same
-      real-vendor-key-gated, opt-in suite.
+      (internal/handlers/imagegallery/import.go) went through an upload that
+      proxied to the vendor Files API. That upload is gone, so this needs no
+      vendor key any more; it is only a matter of writing the spec.
 - [ ] Filter by a specific personality vs. global-only — still open; needs an
-      image in the library, so it is blocked behind the same constraint
+      image in the library, so it needs the import spec above first
 
 ## Planned — Lower priority / blocked on a decision
 

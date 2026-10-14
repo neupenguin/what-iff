@@ -49,9 +49,8 @@ HTTP API for **chats** and **chat messages** — the primary surface for sending
 
 - Route order: specific paths registered before `/{id}` patterns (see `handler.go` comments in server if any).
 - **`messageAgent`** defaults to real agent but can be swapped in tests via unexported setter pattern if present.
-- **File storage routing in `CreateFileAttachment`:** The `FileID` stored on a `FileAttachment` record is an **OpenAI Files API** identifier — OpenAI resolves it from its own storage when running the model.
-  Our S3 bucket is never read by the OpenAI vision path.
-  Therefore image uploads go exclusively to `storage.FileKeyForImage` (used by Claude and the gallery); non-image files go to `storage.FileKeyForChat` (used by the pgvector chunk pipeline).
+- **File storage routing in `CreateFileAttachment`:** The object store is the only copy of an uploaded file (nothing is uploaded to OpenAI's Files API any more), and every provider's vision input is built from it at inference time.
+  Image uploads go to `storage.FileKeyForImage` (used by the gallery and read back into model context); non-image files go to `storage.FileKeyForChat` (used by the pgvector chunk pipeline).
   No dual-write to both paths is needed for images.
 - **Deleting a chat releases its attachment objects.**
   The ent cascade removes the attachment rows on the chat's messages without touching the object store, so `DeleteChat` reads them first (`ListChatFileAttachmentObjectRefs`) and calls `storage.ReleaseAttachmentObjects` after the delete.

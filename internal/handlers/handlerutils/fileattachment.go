@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/filechunker"
@@ -50,71 +49,10 @@ const (
 	maxAsyncProcessingBytes = 16 << 20 // keep goroutine memory bounded
 )
 
-// FileAttachmentUploader is the single capability this package needs from the
-// agent layer. It is declared here, rather than taking an *agent.Agent, because
-// importing internal/agent would close an import cycle:
-//
-//	handlerutils → agent → middleware → handlerutils
-//
-// That cycle is what previously stopped internal/middleware from using the
-// shared response helpers at all. Keeping this package leaf-level is what lets
-// anything in the HTTP layer reach RespondWithError.
-//
-// *provider.OpenAIProvider satisfies this structurally; callers pass
-// agent.OpenAIProvider. That relationship is pinned by a compile-time assertion
-// next to the implementation — `var _ handlerutils.FileAttachmentUploader` in
-// internal/agent/provider/fileattachment.go — so provider-side drift fails there
-// rather than as three unrelated errors at the handler call sites. The assertion
-// has to live on that side; declaring it here would need the import this
-// interface exists to avoid.
-type FileAttachmentUploader interface {
-	UploadFileAttachment(
-		ctx context.Context,
-		userID uuid.UUID,
-		attrs map[string]string,
-		file io.Reader,
-		fileName string,
-		fileTypeInfo utils.FileTypeInfo,
-	) (string, error)
-}
-
-// FileAttachmentDeleter deletes a file from the provider's Files API by the FileID that
-// FileAttachmentUploader returned. Like FileAttachmentUploader it is declared here to keep this
-// package leaf-level; *provider.OpenAIProvider satisfies it, pinned by an assertion next to the
-// implementation in internal/agent/provider/fileattachment.go.
-type FileAttachmentDeleter interface {
-	DeleteFileAttachment(ctx context.Context, fileID string) error
-}
-
-// providerFileCleanupTimeout bounds the best-effort provider delete in DeleteProviderFile.
-const providerFileCleanupTimeout = 30 * time.Second
-
-// DeleteProviderFile best-effort deletes the provider-side copy of an upload whose attachment
-// record will not be kept (it failed to save, or was rolled back), so the file is not left
-// orphaned in the provider's storage. It detaches from ctx's cancellation, since the failure that
-// triggers it is often the request context ending. Failures are logged, never returned; a nil
-// logger logs nothing, so cleanup can't fail on it.
-func DeleteProviderFile(ctx context.Context, logger *zap.Logger, d FileAttachmentDeleter, fileID *string) {
-	if d == nil || fileID == nil || *fileID == "" {
-		return
-	}
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerFileCleanupTimeout)
-	defer cancel()
-	if err := d.DeleteFileAttachment(ctx, *fileID); err != nil {
-		logger.Warn("failed to delete orphaned provider file",
-			zap.Error(err),
-			zap.String("file_id", *fileID))
-	}
-}
-
 // AbandonFileAttachmentUpload cleans up after UploadFileAttachment succeeded but the attachment
-// record could not be saved: it deletes the provider-side file (best effort) and the temp file,
-// and counts the upload as failed on FileUploads, since TriggerAsyncFileChunking will not run.
-func AbandonFileAttachmentUpload(ctx context.Context, logger *zap.Logger, d FileAttachmentDeleter, attachment models.FileAttachment, tempFilePath string) {
-	DeleteProviderFile(ctx, logger, d, attachment.FileID)
+// record could not be saved: it removes the temp file and counts the upload as failed on
+// FileUploads, since TriggerAsyncFileChunking will not run.
+func AbandonFileAttachmentUpload(ctx context.Context, attachment models.FileAttachment, tempFilePath string) {
 	if tempFilePath != "" {
 		_ = os.Remove(tempFilePath)
 	}
@@ -167,8 +105,8 @@ func RespondWithUploadError(w http.ResponseWriter, logger *zap.Logger, err error
 // Upload metrics: any failure here counts as a failed upload on FileUploads; success is counted
 // later by TriggerAsyncFileChunking, which every upload path calls once the attachment is stored,
 // so each upload is counted exactly once. A caller that fails to store the attachment calls
-// AbandonFileAttachmentUpload instead, which counts the failure and deletes the provider file.
-func UploadFileAttachment(w http.ResponseWriter, r *http.Request, logger *zap.Logger, a FileAttachmentUploader, userID uuid.UUID, attrs map[string]string) (models.FileAttachment, string, error) {
+// AbandonFileAttachmentUpload instead, which counts the failure and removes the temp file.
+func UploadFileAttachment(w http.ResponseWriter, r *http.Request, logger *zap.Logger, userID uuid.UUID) (models.FileAttachment, string, error) {
 	// Validate file size
 	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadBytes)
 	if err := r.ParseMultipartForm(MaxUploadBytes); err != nil {
@@ -186,7 +124,7 @@ func UploadFileAttachment(w http.ResponseWriter, r *http.Request, logger *zap.Lo
 	}
 	defer file.Close()
 
-	attachment, tempFilePath, err := ProcessUpload(r.Context(), a, userID, attrs, file, header.Filename)
+	attachment, tempFilePath, err := ProcessUpload(r.Context(), userID, file, header.Filename)
 	if err != nil {
 		RespondWithUploadError(w, logger, err)
 		return models.FileAttachment{}, "", err
@@ -195,13 +133,14 @@ func UploadFileAttachment(w http.ResponseWriter, r *http.Request, logger *zap.Lo
 }
 
 // ProcessUpload is the part of an upload that does not depend on HTTP: it validates the file type,
-// buffers src to a temp file (at most 30MB), normalizes image uploads, and uploads from disk to the
-// provider. It returns the attachment model plus the temp file path for the caller to store and
-// chunk, or an *UploadError (which has already been counted as a failed upload).
+// buffers src to a temp file (at most 30MB) and normalizes image uploads. It returns the attachment
+// model plus the temp file path for the caller to store in the object store and chunk, or an
+// *UploadError (which has already been counted as a failed upload). The temp file is the only
+// copy of the bytes until the caller stores it.
 //
 // A caller that gets a path back owns it: pass it to TriggerAsyncFileChunking (which removes it),
 // or to AbandonFileAttachmentUpload if the attachment cannot be stored.
-func ProcessUpload(ctx context.Context, a FileAttachmentUploader, userID uuid.UUID, attrs map[string]string, src io.Reader, fileName string) (_ models.FileAttachment, _ string, err error) {
+func ProcessUpload(ctx context.Context, userID uuid.UUID, src io.Reader, fileName string) (_ models.FileAttachment, _ string, err error) {
 	metrics := telemetry.Global()
 	var uploadContentType string // set once the extension is recognised
 	defer func() {
@@ -284,22 +223,8 @@ func ProcessUpload(ctx context.Context, a FileAttachmentUploader, userID uuid.UU
 		}
 	}
 
-	uploadReader, err := os.Open(tempFilePath)
-	if err != nil {
-		_ = os.Remove(tempFilePath)
-		return models.FileAttachment{}, "", uploadErr(http.StatusInternalServerError, "Error opening temp file", err)
-	}
-	defer uploadReader.Close()
-
-	fileId, err := a.UploadFileAttachment(ctx, userID, attrs, uploadReader, fileName, fileTypeInfo)
-	if err != nil {
-		_ = os.Remove(tempFilePath)
-		return models.FileAttachment{}, "", uploadErr(http.StatusInternalServerError, "Error uploading file", err)
-	}
-
 	return models.FileAttachment{
 		UserID:   userID,
-		FileID:   &fileId,
 		Name:     fileName,
 		FileType: fileTypeInfo.ContentType,
 	}, tempFilePath, nil
@@ -317,19 +242,16 @@ type AttachmentRecords interface {
 type AttachmentStorage struct {
 	Records  AttachmentRecords
 	Files    storage.FileStore
-	Provider FileAttachmentDeleter
 	Pipeline *filechunker.FileChunkPipeline
 }
 
 // StoreChatAttachment saves an upload that ProcessUpload prepared to a chat: it creates the record,
 // archives the file to the object store, and starts chunking. It takes ownership of tempFilePath.
 //
-// Storage routing: OpenAI vision does NOT read from our S3 bucket. The FileID that ProcessUpload
-// got from the provider is an OpenAI Files API identifier; OpenAI resolves it internally from its
-// own storage when the model runs. Our S3 paths are only used by Claude (raw bytes download) and
-// the image gallery. Given that, images and non-images are routed differently:
-//   - Images go to the canonical images/ path (FileKeyForImage + thumbnail). Claude downloads from
-//     here; the gallery serves from here.
+// The object store is the only home of the bytes: every provider's vision input is built from it
+// at inference time. Images and non-images are routed differently:
+//   - Images go to the canonical images/ path (FileKeyForImage + thumbnail), which the gallery
+//     serves from and which is read back whenever an image goes into a model's context.
 //   - Others go to the chat-scoped path (FileKeyForChat), used by the pgvector file-chunking
 //     pipeline.
 //
@@ -337,7 +259,7 @@ type AttachmentStorage struct {
 func StoreChatAttachment(ctx context.Context, logger *zap.Logger, st AttachmentStorage, userID, chatID uuid.UUID, fileAttachment models.FileAttachment, tempFilePath string) (*models.FileAttachment, error) {
 	createdAttachment, err := st.Records.CreateFileAttachment(ctx, userID, fileAttachment)
 	if err != nil {
-		AbandonFileAttachmentUpload(ctx, logger, st.Provider, fileAttachment, tempFilePath)
+		AbandonFileAttachmentUpload(ctx, fileAttachment, tempFilePath)
 		return nil, uploadErr(http.StatusInternalServerError, "Error creating file attachment", err)
 	}
 
@@ -357,7 +279,6 @@ func StoreChatAttachment(ctx context.Context, logger *zap.Logger, st AttachmentS
 			zap.Error(err),
 			zap.String("file_attachment_id", createdAttachment.ID.String()))
 		_ = st.Records.DeleteFileAttachment(ctx, userID, createdAttachment.ID)
-		DeleteProviderFile(ctx, logger, st.Provider, fileAttachment.FileID)
 		_ = os.Remove(tempFilePath)
 		return nil, uploadErr(http.StatusInternalServerError, "Error saving file — please retry", err)
 	}

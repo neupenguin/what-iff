@@ -22,7 +22,6 @@ type attachmentStore interface {
 
 type attachmentAgent interface {
 	FileStore() storage.FileStore
-	DeleteProviderFileAttachment(ctx context.Context, fileID string) error
 }
 
 // Handler handles file attachment-related API requests

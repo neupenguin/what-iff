@@ -35,7 +35,7 @@ func TestUploadFileAttachmentRejectsAnUnparseableBody(t *testing.T) {
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
 	rec := httptest.NewRecorder()
 
-	_, tempPath, err := UploadFileAttachment(rec, req, zap.NewNop(), &capturingFileAttachmentUploader{}, uuid.New(), nil)
+	_, tempPath, err := UploadFileAttachment(rec, req, zap.NewNop(), uuid.New())
 
 	require.Error(t, err)
 	require.Empty(t, tempPath)
@@ -56,7 +56,7 @@ func TestUploadFileAttachmentRejectsARequestWithoutTheAttachmentPart(t *testing.
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rec := httptest.NewRecorder()
 
-	_, tempPath, err := UploadFileAttachment(rec, req, zap.NewNop(), &capturingFileAttachmentUploader{}, uuid.New(), nil)
+	_, tempPath, err := UploadFileAttachment(rec, req, zap.NewNop(), uuid.New())
 
 	require.Error(t, err)
 	require.Empty(t, tempPath)
@@ -68,7 +68,7 @@ func TestUploadFileAttachmentRejectsARequestWithoutTheAttachmentPart(t *testing.
 func TestUploadFileAttachmentRespondsWithTheProcessUploadError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	_, _, err := UploadFileAttachment(rec, multipartUploadRequest(t, "binary.exe", []byte("MZ")), zap.NewNop(), &capturingFileAttachmentUploader{}, uuid.New(), nil)
+	_, _, err := UploadFileAttachment(rec, multipartUploadRequest(t, "binary.exe", []byte("MZ")), zap.NewNop(), uuid.New())
 
 	require.ErrorIs(t, err, ErrUnsupportedFileType)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -78,7 +78,7 @@ func TestUploadFileAttachmentRespondsWithTheProcessUploadError(t *testing.T) {
 func TestProcessUploadReportsAnUnreadableSourceAsAServerError(t *testing.T) {
 	tm := telemetrytest.UseGlobal(t)
 
-	_, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, errReader{err: errors.New("connection reset")}, "notes.txt")
+	_, tempPath, err := ProcessUpload(context.Background(), uuid.New(), errReader{err: errors.New("connection reset")}, "notes.txt")
 
 	require.Empty(t, tempPath)
 	var ue *UploadError
@@ -89,7 +89,7 @@ func TestProcessUploadReportsAnUnreadableSourceAsAServerError(t *testing.T) {
 }
 
 func TestProcessUploadRejectsAnImageThatCannotBeDecoded(t *testing.T) {
-	_, tempPath, err := ProcessUpload(context.Background(), &capturingFileAttachmentUploader{}, uuid.New(), nil, strings.NewReader("this is not a png"), "pic.png")
+	_, tempPath, err := ProcessUpload(context.Background(), uuid.New(), strings.NewReader("this is not a png"), "pic.png")
 
 	require.Empty(t, tempPath)
 	var ue *UploadError

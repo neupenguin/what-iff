@@ -44,7 +44,7 @@ func TestSegmentBreakdown_CacheableAnyAndImageCount(t *testing.T) {
 	ctx := &ModelContext{}
 	ctx.Append(SegmentKindSystemPrompt, RoleDeveloper, "cached prefix", true)
 	// Image-only user turn: empty text, one image payload.
-	ctx.AppendUserMessage(RoleUser, "", []UserMessageImage{{FileID: "file_1", MediaType: "image/png"}}, false)
+	ctx.AppendUserMessage(RoleUser, "", []UserMessageImage{{MediaType: "image/png", RawBytes: []byte{1}}}, false)
 
 	stats := ctx.SegmentBreakdown(NewTokenCounter())
 

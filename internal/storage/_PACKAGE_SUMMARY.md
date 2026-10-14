@@ -28,10 +28,9 @@
 ## Non-obvious decisions
 
 - Bucket and region come from `internal/server` `Config` (`S3FileBucket`, `AWSRegion`).
-- **S3 is never used by the OpenAI vision path.**
-  OpenAI resolves images via its own Files API (the `FileID` stored on `FileAttachment`).
-  Our S3 keys are used solely by Claude (raw bytes for vision) and the image gallery.
-  This means image uploads only need to write to `FileKeyForImage`; a chat-scoped `FileKeyForChat` copy is not required.
+- **The object store is the only copy of an uploaded file.**
+  Uploads are not mirrored to any provider (OpenAI's Files API was dropped), so every vision provider gets its image bytes from here at inference time, as well as the image gallery.
+  Image uploads only need to write to `FileKeyForImage`; a chat-scoped `FileKeyForChat` copy is not required.
 - **Key layout:** `users/{id}/images/…` for gallery/Claude; `users/{id}/images/thumbs/…` for thumbnails; `users/{id}/chats/{chatId}/…` for non-image file-search assets; `users/{id}/personalities/…` for personality attachments.
 - **Instrumented store keeps the optional interfaces:** `Instrument` returns a type that implements `ObjectLister`/`Presigner` exactly when the wrapped store does, so the account export's type assertions still work.
   It always implements `StreamUploader` (timed as `put_object`), streaming through when the wrapped store can.

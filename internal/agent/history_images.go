@@ -12,8 +12,8 @@ import (
 )
 
 // historyImagesForMessage collects vision payloads for image attachments on a prior message.
-// Raw bytes are loaded when loadRawBytes is true (Claude) or when an attachment lacks an
-// OpenAI FileID and needs a data-URL fallback.
+// The bytes are read from the object store when loadRawBytes is true; with it false there is
+// nothing to send (no provider keeps a copy of the file) and no images are returned.
 func historyImagesForMessage(
 	ctx context.Context,
 	logger *zap.Logger,
@@ -26,27 +26,15 @@ func historyImagesForMessage(
 	if msg == nil || len(msg.Attachments) == 0 {
 		return nil
 	}
-	needBytes := loadRawBytes
-	if !needBytes {
-		for _, att := range msg.Attachments {
-			if att == nil || !strings.HasPrefix(att.FileType, models.ImageMIMEPrefix) {
-				continue
-			}
-			if att.FileID == nil || strings.TrimSpace(*att.FileID) == "" {
-				needBytes = true
-				break
-			}
-		}
+	if !loadRawBytes {
+		return nil
 	}
-	imageBytes := map[uuid.UUID][]byte(nil)
-	if needBytes {
-		imageBytes = loadImageBytesForAttachments(ctx, logger, fileStore, userID, chatID, msg.Attachments)
-	}
+	imageBytes := loadImageBytesForAttachments(ctx, logger, fileStore, userID, chatID, msg.Attachments)
 	return userMessageImagesFromAttachments(msg.Attachments, imageBytes)
 }
 
 // loadImageBytesForAttachments is the canonical path for resolving historical and
-// tool-result image bytes for model context (Claude raw bytes, OpenAI data-URL fallback).
+// tool-result image bytes for model context, for every provider's inline image input.
 //
 // fileStore and logger may both be nil. A nil store skips object-storage lookups and
 // a nil logger skips debug logging.

@@ -10,7 +10,7 @@ import (
 func TestRenderOpenAIInputItems_UserMessageWithImages(t *testing.T) {
 	t.Parallel()
 	ctx := &ModelContext{}
-	ctx.AppendUserMessage(RoleUser, "question", []UserMessageImage{{FileID: "file-xyz", MediaType: "image/jpeg"}}, false)
+	ctx.AppendUserMessage(RoleUser, "question", []UserMessageImage{{MediaType: "image/jpeg", RawBytes: []byte{1, 2, 3}}}, false)
 
 	items := RenderOpenAIInputItems(ctx)
 	require.Len(t, items, 1)
@@ -20,14 +20,28 @@ func TestRenderOpenAIInputItems_UserMessageWithImages(t *testing.T) {
 	require.NotNil(t, parts[0].OfInputText)
 	require.Equal(t, "question", parts[0].OfInputText.Text)
 	require.NotNil(t, parts[1].OfInputImage)
-	require.True(t, parts[1].OfInputImage.FileID.Valid())
-	require.Equal(t, "file-xyz", parts[1].OfInputImage.FileID.Value)
+	require.False(t, parts[1].OfInputImage.FileID.Valid(), "images are inline, never a file reference")
+	require.True(t, parts[1].OfInputImage.ImageURL.Valid())
+	require.Equal(t, "data:image/jpeg;base64,AQID", parts[1].OfInputImage.ImageURL.Value)
+}
+
+// An image with no bytes (its object was not found) is left out rather than sent empty.
+func TestRenderOpenAIInputItems_ImageWithoutBytesIsOmitted(t *testing.T) {
+	t.Parallel()
+	ctx := &ModelContext{}
+	ctx.AppendUserMessage(RoleUser, "question", []UserMessageImage{{MediaType: "image/png"}}, false)
+
+	items := RenderOpenAIInputItems(ctx)
+	require.Len(t, items, 1)
+	for _, part := range items[0].OfMessage.Content.OfInputItemContentList {
+		require.Nil(t, part.OfInputImage)
+	}
 }
 
 func TestRenderOpenAIInputItems_ExpressionPortraitContinuityOrder(t *testing.T) {
 	t.Parallel()
 	ctx := &ModelContext{}
-	ctx.AppendExpressionPortrait([]UserMessageImage{{FileID: "portrait-file", MediaType: "image/jpeg"}})
+	ctx.AppendExpressionPortrait([]UserMessageImage{{MediaType: "image/jpeg", RawBytes: []byte{9}}})
 	ctx.Append(SegmentKindDeveloperContext, RoleDeveloper,
 		`The previous *assistant* message was classified with the expression: "happy" (usage hint: warm).`+ExpressionPortraitContinuityPointerNote,
 		false,
@@ -40,7 +54,7 @@ func TestRenderOpenAIInputItems_ExpressionPortraitContinuityOrder(t *testing.T) 
 	portraitParts := items[0].OfMessage.Content.OfInputItemContentList
 	require.Len(t, portraitParts, 2)
 	require.Equal(t, ExpressionPortraitVisualReferenceCaption, portraitParts[0].OfInputText.Text)
-	require.Equal(t, "portrait-file", portraitParts[1].OfInputImage.FileID.Value)
+	require.True(t, portraitParts[1].OfInputImage.ImageURL.Valid())
 
 	require.Contains(t, items[1].OfMessage.Content.OfString.Value, "preceding user message")
 	require.Equal(t, "current user question", items[2].OfMessage.Content.OfString.Value)
@@ -196,17 +210,17 @@ func TestSanitizeImagesForOpenAIInput(t *testing.T) {
 	t.Parallel()
 
 	ctx := &ModelContext{}
-	// Supported type with bytes: kept, but FileID cleared so it renders as a data URL.
+	// Supported type with bytes: kept.
 	ctx.AppendUserMessage(RoleUser, "keep me", []UserMessageImage{
-		{FileID: "file-jpg", MediaType: "image/jpeg", RawBytes: []byte{1, 2, 3}},
+		{MediaType: "image/jpeg", RawBytes: []byte{1, 2, 3}},
 	}, false)
 	// Unsupported media type (e.g. from another vendor's turn): dropped, text kept.
 	ctx.AppendUserMessage(RoleUser, "heic here", []UserMessageImage{
 		{MediaType: "image/heic", RawBytes: []byte{4, 5}},
 	}, false)
-	// file_id only, no bytes: cannot verify the stored filename extension, so dropped.
-	ctx.AppendUserMessage(RoleUser, "fileid only", []UserMessageImage{
-		{FileID: "file-JPG", MediaType: "image/jpeg"},
+	// No bytes (the object was not found): nothing to send, so dropped.
+	ctx.AppendUserMessage(RoleUser, "no bytes", []UserMessageImage{
+		{MediaType: "image/jpeg"},
 	}, false)
 	// Image-only turn whose sole image is unsupported: whole segment removed.
 	ctx.AppendUserMessage(RoleUser, "", []UserMessageImage{
@@ -218,17 +232,16 @@ func TestSanitizeImagesForOpenAIInput(t *testing.T) {
 	require.Len(t, got.Segments, 3, "image-only unsupported turn should be dropped")
 
 	require.Len(t, got.Segments[0].UserImages, 1)
-	require.Empty(t, got.Segments[0].UserImages[0].FileID, "FileID must be cleared to force the data-URL path")
 	require.Equal(t, []byte{1, 2, 3}, got.Segments[0].UserImages[0].RawBytes)
 
 	require.Equal(t, "heic here", got.Segments[1].Content)
 	require.Empty(t, got.Segments[1].UserImages)
 
-	require.Equal(t, "fileid only", got.Segments[2].Content)
+	require.Equal(t, "no bytes", got.Segments[2].Content)
 	require.Empty(t, got.Segments[2].UserImages)
 
 	// Original context must be untouched (sanitizer works on a clone).
-	require.Equal(t, "file-jpg", ctx.Segments[0].UserImages[0].FileID)
+	require.Equal(t, []byte{1, 2, 3}, ctx.Segments[0].UserImages[0].RawBytes)
 	require.Len(t, ctx.Segments, 4)
 }
 
