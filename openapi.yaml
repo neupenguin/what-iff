@@ -8862,10 +8862,11 @@ components:
           description: ID of the user who owns this file attachment
         file_id:
           type: string
+          deprecated: true
           description: >-
-            Legacy: the OpenAI Files API id of a file uploaded before uploads stopped being mirrored
-            there. Never set for new files and not used for anything; the file's bytes live in the
-            object store.
+            Deprecated. The OpenAI Files API id of a file uploaded before uploads stopped being
+            mirrored there. Never set for new files and not used for anything; the file's bytes live
+            in the object store.
         name:
           type: string
           description: Original filename of the uploaded file
@@ -8922,7 +8923,6 @@ components:
       example:
         id: "123e4567-e89b-12d3-a456-426614174000"
         user_id: "123e4567-e89b-12d3-a456-426614174001"
-        file_id: "file-abc123xyz"
         name: "research_document.pdf"
         file_type: "application/pdf"
         description: "Quarterly research report excerpt"

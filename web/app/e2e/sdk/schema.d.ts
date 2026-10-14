@@ -11364,7 +11364,6 @@ export interface components {
          * @example {
          *       "id": "123e4567-e89b-12d3-a456-426614174000",
          *       "user_id": "123e4567-e89b-12d3-a456-426614174001",
-         *       "file_id": "file-abc123xyz",
          *       "name": "research_document.pdf",
          *       "file_type": "application/pdf",
          *       "description": "Quarterly research report excerpt",
@@ -11389,7 +11388,10 @@ export interface components {
              * @description ID of the user who owns this file attachment
              */
             user_id: string;
-            /** @description Legacy: the OpenAI Files API id of a file uploaded before uploads stopped being mirrored there. Never set for new files and not used for anything; the file's bytes live in the object store. */
+            /**
+             * @deprecated
+             * @description Deprecated. The OpenAI Files API id of a file uploaded before uploads stopped being mirrored there. Never set for new files and not used for anything; the file's bytes live in the object store.
+             */
             file_id?: string;
             /** @description Original filename of the uploaded file */
             name: string;
