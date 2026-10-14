@@ -1,10 +1,10 @@
 services:
-  # Generates this install's JWT and token-encryption secrets on first run, so
-  # `docker compose up` needs no setup. Every install gets its own random values
-  # and nothing is shipped in the repository. An existing file is never
-  # regenerated: TOKEN_ENCRYPTION_SECRET decrypts what is already stored. The
-  # API loads the file without overriding anything already set, so a value from
-  # your shell or .env still wins.
+  # Generates this install's JWT and token-encryption secrets on first run (32
+  # random bytes each, hex-encoded), so `docker compose up` needs no setup. Every
+  # install gets its own random values and nothing is shipped in the repository.
+  # An existing file is never regenerated: TOKEN_ENCRYPTION_SECRET decrypts what
+  # is already stored. The API loads the file without overriding anything already
+  # set, so a value from your shell or .env still wins.
   secrets-init:
     image: busybox:1.36
     command:
@@ -17,8 +17,11 @@ services:
           gen() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
           umask 077
           printf 'JWT_SECRET=%s\nJWT_REFRESH_SECRET=%s\nTOKEN_ENCRYPTION_SECRET=%s\n' "$$(gen)" "$$(gen)" "$$(gen)" > "$$f.tmp"
+          chown 65532:0 "$$f.tmp"
+          chmod 400 "$$f.tmp"
           mv "$$f.tmp" "$$f"
         fi
+        # Re-asserted on every run, so ownership and mode cannot drift.
         chown 65532:0 "$$f"
         chmod 400 "$$f"
     volumes:
