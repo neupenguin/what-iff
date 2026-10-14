@@ -163,7 +163,7 @@ func (a *Agent) extractMemoriesWithScratchpadDeltaClaude(ctx context.Context, us
 func (a *Agent) getMemoryQuery(ctx context.Context, userID uuid.UUID, prompt string, userMessage string) (models.MemoryQuery, error) {
 
 	params := responses.ResponseNewParams{
-		Model:            "gpt-4.1-nano-2025-04-14",
+		Model:            models.UtilityModelName,
 		SafetyIdentifier: openai.String(userID.String()),
 		Temperature:      openai.Float(provider.DefaultTemperature),
 		MaxOutputTokens:  openai.Int(provider.DefaultMaxContentLength),

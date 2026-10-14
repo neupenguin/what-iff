@@ -156,3 +156,30 @@ func TestIsExperimentalModelRecord(t *testing.T) {
 		})
 	}
 }
+
+// TestUtilityModelIsSeeded guards the constraint that made the first-chat
+// greeting silently ignore its configured model: the handler resolves
+// FirstChatGreetingModelName through the model table, so a name absent from
+// AvailableModels never reaches the provider and the greeting quietly falls
+// back to the chat default.
+func TestUtilityModelIsSeeded(t *testing.T) {
+	t.Parallel()
+	for _, m := range AvailableModels {
+		if m.Name == UtilityModelName {
+			require.Equal(t, ModelProviderOpenAI, m.Provider,
+				"UtilityModelName is used on the OpenAI Responses API path")
+			return
+		}
+	}
+	t.Fatalf("UtilityModelName %q is not in AvailableModels; the first-chat greeting resolves it through the seeded catalog and would fall back to the default model", UtilityModelName)
+}
+
+// TestDefaultModelIsSeeded is the same constraint for the chat default.
+// GetDefaultModel falls back to the first catalog entry when the default is
+// missing, so it never returns nil; the check compares names instead.
+func TestDefaultModelIsSeeded(t *testing.T) {
+	t.Parallel()
+	m := GetDefaultModel()
+	require.NotNil(t, m, "AvailableModels must not be empty")
+	require.Equal(t, DefaultModelName, m.Name, "DefaultModelName must name an entry in AvailableModels")
+}
