@@ -1,7 +1,7 @@
 import { environment } from '@environments/environment';
 
 /**
- * Product guides on the docs site (whatiffchat-web), linked from in-app help hints and the
+ * Product guides on the docs site, linked from in-app help hints and the
  * new-user welcome. Paths resolve against `environment.docsUrl`, so a deployment that points
  * docsUrl elsewhere (or blanks it) moves or hides every guide link at once.
  */
