@@ -2302,27 +2302,6 @@ func appendMemoryMessages(messages []responses.ResponseInputItemUnionParam, memo
 	return messages
 }
 
-// appendAttachmentMessages adds attachment information to the input message list
-func appendAttachmentMessages(messages []responses.ResponseInputItemUnionParam, attachments []*models.FileAttachment) []responses.ResponseInputItemUnionParam {
-	attachmentLabels := buildAttachmentLabels(attachments)
-	if len(attachmentLabels) > 0 {
-		attachmentText := fmt.Sprintf("The user has attached the following files to their message: %s", strings.Join(attachmentLabels, ", "))
-		messages = append(messages, responses.ResponseInputItemParamOfMessage(attachmentText, provider.RoleDeveloper))
-	}
-	return messages
-}
-
-// buildAttachmentLabels creates human-readable labels for attachments
-func buildAttachmentLabels(attachments []*models.FileAttachment) []string {
-	labels := make([]string, 0, len(attachments))
-	for _, attachment := range attachments {
-		if attachment.FileID != nil {
-			labels = append(labels, fmt.Sprintf("%s (file_id: %s)", attachment.Name, *attachment.FileID))
-		}
-	}
-	return labels
-}
-
 // prepareUserMessage prepares the user message, enriching it with rituals if applicable.
 // The message is prefixed with a [sys:…] timestamp derived from chatMessage.SentAt
 // (see agentMessageTimestampLayout). Falls back to time.Now() only when SentAt is

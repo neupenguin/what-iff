@@ -116,7 +116,6 @@ chatexport.message_encode_failed = "failed to encode message to json"
 # File Attachment
 file_attachment.relationships_load_failed = "failed to load relationships"
 file_attachment.not_found_or_unauthorized = "file attachment not found or user not authorized (file_attachment_id={{.FileAttachmentID}}, user_id={{.UserID}})"
-file_attachment.update_invalid = "file attachment update requires either file_id or chat_message_id (file_attachment_id={{.FileAttachmentID}}, user_id={{.UserID}})"
 file_attachment.get_updated_failed = "failed to get updated file attachment"
 file_attachment.legacy_chat_check_failed = "failed to check for legacy chat files (chat_id={{.ChatID}}, user_id={{.UserID}})"
 file_attachment.new_chat_check_failed = "failed to check for new chat files (chat_id={{.ChatID}}, user_id={{.UserID}})"

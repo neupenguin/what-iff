@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net/http"
 	"path"
 	"regexp"
 	"strings"
@@ -99,8 +98,6 @@ func (a *OpenAIProvider) SaveMessageAttachments(ctx context.Context, userID, cha
 		switch output.Type {
 		case "image_generation_call":
 			a.saveImageAttachment(ctx, userID, chatMessageID, output.AsImageGenerationCall())
-		case "message", "code_interpreter_call":
-			a.saveInterpreterAttachments(ctx, userID, chatMessageID, output.Content)
 		}
 	}
 
@@ -164,105 +161,6 @@ func (a *OpenAIProvider) saveImageAttachment(ctx context.Context, userID, chatMe
 			a.zapLog().Warn("failed to upload thumbnail to S3",
 				zap.String("attachment_id", created.ID.String()),
 				zap.Error(err))
-		}
-	}
-}
-
-func (a *OpenAIProvider) saveInterpreterAttachments(ctx context.Context, userID, chatMessageID uuid.UUID, content []responses.ResponseOutputMessageContentUnion) {
-	for _, contentEntry := range content {
-		a.processAnnotations(ctx, userID, chatMessageID, contentEntry.Annotations)
-	}
-}
-
-func (a *OpenAIProvider) processAnnotations(ctx context.Context, userID, chatMessageID uuid.UUID, annotations []responses.ResponseOutputTextAnnotationUnion) {
-	for _, annotation := range annotations {
-		switch annotation.Type {
-		case "container_file_citation":
-			a.saveInterpreterAttachment(ctx, userID, chatMessageID, annotation.AsContainerFileCitation())
-		}
-	}
-
-}
-
-func (a *OpenAIProvider) saveInterpreterAttachment(ctx context.Context, userID, chatMessageID uuid.UUID, annotation responses.ResponseOutputTextAnnotationContainerFileCitation) {
-	call := a.startFileCall(ctx)
-	resp, err := a.oaiClient.Containers.Files.Content.Get(ctx, annotation.ContainerID, annotation.FileID)
-	call.end(err)
-	if err != nil {
-		a.zapLog().Error("failed to get container file", zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		a.zapLog().Error("failed to get container file", zap.String("status", resp.Status))
-		return
-	}
-
-	fileTypeInfo, err := utils.GetFileType(annotation.Filename)
-	if err != nil {
-		a.zapLog().Error("failed to get file type", zap.Error(err))
-		return
-	}
-
-	// Read the file bytes directly (no base64 encoding needed).
-	rawBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		a.zapLog().Error("failed to read container file", zap.Error(err))
-		return
-	}
-
-	created, err := a.ds.CreateFileAttachment(ctx, userID, models.FileAttachment{
-		UserID:        userID,
-		FileID:        &annotation.FileID,
-		Name:          annotation.Filename,
-		FileType:      fileTypeInfo.ContentType,
-		ChatMessageID: &chatMessageID,
-	})
-	if err != nil {
-		a.zapLog().Error("failed to create file attachment", zap.Error(err))
-		return
-	}
-
-	// Non-image attachments from the interpreter are only accessible via OpenAI's
-	// Files API (file_id). They are not stored in S3 or the DB file_content column.
-	// If fileStore is nil, this is expected for test environments; non-images don't
-	// require it. Images, however, require S3 to be served by the gallery.
-	if strings.HasPrefix(fileTypeInfo.ContentType, models.ImageMIMEPrefix) {
-		if a.fileStore == nil {
-			a.zapLog().Error("fileStore is nil; interpreter image cannot be persisted to S3 and will be lost",
-				zap.String("attachment_id", created.ID.String()))
-			return
-		}
-
-		imgKey := storage.FileKeyForImage(userID, created.ID, annotation.Filename)
-		if err := a.fileStore.UploadFile(ctx, imgKey, rawBytes, fileTypeInfo.ContentType); err != nil {
-			a.zapLog().Error("failed to upload interpreter image to S3; image will not be available in the gallery",
-				zap.String("attachment_id", created.ID.String()),
-				zap.String("s3_key", imgKey),
-				zap.Error(err))
-			return
-		}
-
-		if err := a.ds.SetFileAttachmentS3Key(ctx, userID, created.ID, imgKey); err != nil {
-			a.zapLog().Warn("failed to persist s3_key for interpreter attachment",
-				zap.String("attachment_id", created.ID.String()),
-				zap.Error(err))
-		}
-
-		// Thumbnail is best-effort.
-		thumb, thumbErr := imageutil.GenerateThumbnail(rawBytes, imageutil.DefaultThumbnailMaxPx)
-		if thumbErr != nil {
-			a.zapLog().Warn("failed to generate thumbnail for interpreter image",
-				zap.String("attachment_id", created.ID.String()),
-				zap.Error(thumbErr))
-		} else {
-			thumbKey := storage.FileKeyForImageThumbnail(userID, created.ID)
-			if err := a.fileStore.UploadFile(ctx, thumbKey, thumb, "image/jpeg"); err != nil {
-				a.zapLog().Warn("failed to upload interpreter thumbnail to S3",
-					zap.String("attachment_id", created.ID.String()),
-					zap.Error(err))
-			}
 		}
 	}
 }

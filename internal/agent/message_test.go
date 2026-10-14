@@ -75,13 +75,6 @@ func TestRunAsyncChatMessageJob_ContainsPanic(t *testing.T) {
 	}
 }
 
-// Test buildAttachmentLabels function
-func TestBuildAttachmentLabels_EmptyAttachments(t *testing.T) {
-	attachments := []*models.FileAttachment{}
-	labels := buildAttachmentLabels(attachments)
-	assert.Empty(t, labels, "Empty attachments should return empty labels")
-}
-
 func TestCancelledInputTokensForBilling_UsesProviderUsage(t *testing.T) {
 	t.Parallel()
 
@@ -294,44 +287,6 @@ func TestRunGeneration_FailsTurnOnEmptyModelResponse(t *testing.T) {
 	require.Nil(t, result)
 }
 
-func TestBuildAttachmentLabels_AttachmentsWithoutFileID(t *testing.T) {
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: nil},
-		{Name: "image.png", FileID: nil},
-	}
-	labels := buildAttachmentLabels(attachments)
-	assert.Empty(t, labels, "Attachments without FileID should not generate labels")
-}
-
-func TestBuildAttachmentLabels_AttachmentsWithFileID(t *testing.T) {
-	fileID1 := "file-123"
-	fileID2 := "file-456"
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: &fileID1},
-		{Name: "image.png", FileID: &fileID2},
-	}
-
-	labels := buildAttachmentLabels(attachments)
-
-	assert.Len(t, labels, 2, "Should generate 2 labels")
-	assert.Equal(t, "document.pdf (file_id: file-123)", labels[0])
-	assert.Equal(t, "image.png (file_id: file-456)", labels[1])
-}
-
-func TestBuildAttachmentLabels_MixedAttachments(t *testing.T) {
-	fileID1 := "file-123"
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: &fileID1},
-		{Name: "image.png", FileID: nil},
-		{Name: "data.csv", FileID: nil},
-	}
-
-	labels := buildAttachmentLabels(attachments)
-
-	assert.Len(t, labels, 1, "Should only generate label for attachment with FileID")
-	assert.Equal(t, "document.pdf (file_id: file-123)", labels[0])
-}
-
 // Test appendMemoryMessages function
 func TestAppendMemoryMessages_NoMemories(t *testing.T) {
 	var messages []responses.ResponseInputItemUnionParam
@@ -375,55 +330,6 @@ func TestAppendMemoryMessages_PreservesExistingMessages(t *testing.T) {
 	result := appendMemoryMessages(existingMessages, memories)
 
 	assert.Len(t, result, 2, "Should preserve existing messages and add memory message")
-}
-
-// Test appendAttachmentMessages function
-func TestAppendAttachmentMessages_NoAttachments(t *testing.T) {
-	var messages []responses.ResponseInputItemUnionParam
-	attachments := []*models.FileAttachment{}
-
-	result := appendAttachmentMessages(messages, attachments)
-
-	assert.Empty(t, result, "Should return empty when no attachments with FileID")
-}
-
-func TestAppendAttachmentMessages_AttachmentsWithoutFileID(t *testing.T) {
-	var messages []responses.ResponseInputItemUnionParam
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: nil},
-	}
-
-	result := appendAttachmentMessages(messages, attachments)
-
-	assert.Empty(t, result, "Should not add message when attachments lack FileID")
-}
-
-func TestAppendAttachmentMessages_AttachmentsWithFileID(t *testing.T) {
-	var messages []responses.ResponseInputItemUnionParam
-	fileID1 := "file-123"
-	fileID2 := "file-456"
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: &fileID1},
-		{Name: "image.png", FileID: &fileID2},
-	}
-
-	result := appendAttachmentMessages(messages, attachments)
-
-	assert.Len(t, result, 1, "Should add one message for attachments")
-}
-
-func TestAppendAttachmentMessages_PreservesExistingMessages(t *testing.T) {
-	existingMessages := []responses.ResponseInputItemUnionParam{
-		responses.ResponseInputItemParamOfMessage("Existing message", provider.RoleUser),
-	}
-	fileID := "file-123"
-	attachments := []*models.FileAttachment{
-		{Name: "document.pdf", FileID: &fileID},
-	}
-
-	result := appendAttachmentMessages(existingMessages, attachments)
-
-	assert.Len(t, result, 2, "Should preserve existing messages and add attachment message")
 }
 
 func TestMemoryToolCallsForChatContext_MemoryEnrichmentFailed(t *testing.T) {
