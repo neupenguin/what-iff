@@ -2371,35 +2371,7 @@ func (d *Datastore) GetRelatedMemories(ctx context.Context, userId, chatId uuid.
 	// Format vector as PostgreSQL array literal to avoid parameter binding issues
 	vectorStr := embVec.String()
 
-	// Chat-scoped memories
-	chatScopedPredicate := memory.And(
-		memory.ScopeEQ(memory.ScopeChat),
-		memory.HasChatWith(entchat.ID(chatId)),
-	)
-
-	// User-scoped memories with pinning logic
-	var userScopedPredicate func(*sql.Selector)
-	if activePersonalityID != uuid.Nil {
-		// Include unpinned OR pinned to active personality
-		userScopedPredicate = memory.And(
-			memory.ScopeEQ(memory.ScopeUser),
-			memory.Or(
-				memory.PinnedPersonalityIDIsNil(),
-				memory.PinnedPersonalityIDEQ(activePersonalityID),
-			),
-		)
-	} else {
-		// include unpinned User-scoped memories
-		userScopedPredicate = memory.And(
-			memory.ScopeEQ(memory.ScopeUser),
-			memory.PinnedPersonalityIDIsNil(),
-		)
-	}
-
-	readable := memory.Or(chatScopedPredicate, userScopedPredicate)
-	if sandboxed {
-		readable = chatScopedPredicate
-	}
+	readable := relatedMemoryReadable(chatId, activePersonalityID, sandboxed)
 	dbEmbeddings, err := tx.Embedding.Query().
 		Where(
 			embedding.HasMemoryWith(
@@ -2450,6 +2422,28 @@ func (d *Datastore) GetRelatedMemories(ctx context.Context, userId, chatId uuid.
 	// Retrieved memory logging removed
 
 	return memories, nil
+}
+
+// relatedMemoryReadable is the scope filter GetRelatedMemories retrieves through: the chat's own
+// Chat-scoped memories and, outside a sandbox, the account's User-scoped ones that are unpinned or
+// pinned to the active personality. Scope, pin and chat edge are all it reads, so a memory moved to
+// another scope (MoveMemoryScope) is retrieved under its new scope with its existing embedding.
+func relatedMemoryReadable(chatID, activePersonalityID uuid.UUID, sandboxed bool) predicate.Memory {
+	chatScoped := memory.And(
+		memory.ScopeEQ(memory.ScopeChat),
+		memory.HasChatWith(entchat.ID(chatID)),
+	)
+	if sandboxed {
+		return chatScoped
+	}
+	pinned := memory.PinnedPersonalityIDIsNil()
+	if activePersonalityID != uuid.Nil {
+		pinned = memory.Or(
+			memory.PinnedPersonalityIDIsNil(),
+			memory.PinnedPersonalityIDEQ(activePersonalityID),
+		)
+	}
+	return memory.Or(chatScoped, memory.And(memory.ScopeEQ(memory.ScopeUser), pinned))
 }
 
 // GetRelatedSummaryMemories returns Summary-scope memories (per-chat checkpoint summaries) ranked

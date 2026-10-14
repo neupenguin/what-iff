@@ -1,0 +1,95 @@
+<ui-modal [open]="true" labelledBy="memory-scope-title" size="md" (dismiss)="cancel.emit()">
+  <h3 id="memory-scope-title" modal-header class="text-base font-semibold text-text-primary">
+    {{ isThreadMemory() ? "Use this memory beyond its thread" : "Move this memory back to a thread" }}
+  </h3>
+
+  <p class="memory-scope__content">{{ memory().content }}</p>
+
+  @if (loading()) {
+    <p class="memory-scope__muted" role="status">Loading threads…</p>
+  } @else if (isThreadMemory()) {
+    <p class="memory-scope__muted">
+      Now used only in {{ memory().chat_name ? "“" + memory().chat_name + "”" : "its thread" }}. The memory itself moves (no copy is made)
+      and remembers this thread, so you can move it back later.
+    </p>
+    <fieldset class="memory-scope__options">
+      <legend class="sr-only">Move to</legend>
+      <label class="memory-scope__option">
+        <input
+          type="radio"
+          name="memory-scope-target"
+          value="global"
+          [checked]="promoteTo() === 'global'"
+          (change)="promoteTo.set('global')"
+        />
+        <span>
+          <strong>{{ globalScopeLabel }}</strong>
+          <small>Used in threads with every personality</small>
+        </span>
+      </label>
+      @if (personalityId()) {
+        <label class="memory-scope__option">
+          <input
+            type="radio"
+            name="memory-scope-target"
+            value="personality"
+            [checked]="promoteTo() === 'personality'"
+            (change)="promoteTo.set('personality')"
+          />
+          <span>
+            <strong>{{ personalityName() ?? "This thread's personality" }}</strong>
+            <small>Used in every thread with this personality</small>
+          </span>
+        </label>
+      }
+    </fieldset>
+  } @else {
+    @if (returnThread(); as source) {
+      <p class="memory-scope__muted">It came from “{{ source.name }}”, which is selected. You can pick another thread instead.</p>
+    } @else {
+      <p class="memory-scope__muted" role="note">
+        {{
+          memory().chat_id
+            ? "The thread it came from is gone or belongs to another personality. Choose the thread it should belong to."
+            : "No source thread is recorded for this memory. Choose the thread it should belong to."
+        }}
+      </p>
+    }
+    <label class="memory-scope__field">
+      <span>Thread{{ personalityName() ? " (" + personalityName() + ")" : "" }}</span>
+      <select name="memory-scope-thread" [ngModel]="threadId()" (ngModelChange)="threadId.set($event)">
+        <option [ngValue]="null" disabled>Choose a thread…</option>
+        @for (chat of threadOptions(); track chat.id) {
+          <option [ngValue]="chat.id">{{ chat.name }}{{ chat.id === returnThread()?.id ? " (where it came from)" : "" }}</option>
+        }
+      </select>
+    </label>
+    @if (threadOptions().length === 0) {
+      <p class="memory-scope__muted">No threads to move it to.</p>
+    }
+    <p class="memory-scope__muted">It will be used only in that thread.</p>
+  }
+
+  @if (error(); as message) {
+    <p class="memory-scope__error" role="alert">{{ message }}</p>
+  }
+
+  <div modal-footer class="flex justify-end gap-2">
+    <button
+      type="button"
+      class="rounded-lg border border-border-base px-3 py-2 text-sm text-text-secondary"
+      [disabled]="saving()"
+      (click)="cancel.emit()"
+    >
+      Cancel
+    </button>
+    <button
+      type="button"
+      class="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+      [disabled]="!canSubmit()"
+      (click)="submit()"
+    >
+      {{ saving() ? "Moving…" : "Move" }}
+    </button>
+  </div>
+</ui-modal>

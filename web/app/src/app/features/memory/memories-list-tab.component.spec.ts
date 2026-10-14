@@ -4,6 +4,7 @@ import { ActivatedRoute, Params, Router } from '@angular/router';
 import { Observable, of, Subject, throwError } from 'rxjs';
 
 import { Memory, MemoryMergeEvent } from '../../core/models/memory.model';
+import { ChatService } from '../../core/services/chat.service';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
@@ -187,6 +188,8 @@ async function createComponent(options: HarnessOptions = {}): Promise<{
       { provide: MemoryViewService, useValue: view },
       { provide: PersonalityService, useValue: personalityService },
       { provide: MemoryService, useValue: memoryService },
+      // The scope dialog loads threads to pick from.
+      { provide: ChatService, useValue: { listChatsPage: vi.fn().mockReturnValue(of({ results: [], total_count: 0, page: 1 })) } },
       {
         provide: ActivatedRoute,
         useValue: {
@@ -1075,6 +1078,52 @@ describe('MemoriesListTabComponent per-card single actions', () => {
     component.moveToPersonality('persona-1');
     expect(view.patchOne).toHaveBeenCalledWith('m-1', { level: 'personality', pinned_personality_id: 'persona-1' });
     expect(view.setSelectedIds).not.toHaveBeenCalled();
+  });
+
+  it('opens the scope dialog, not the personality menu, to move a thread memory', async () => {
+    const thread: Memory = { ...SAMPLE_MEMORY, level: 'thread', chat_id: 'chat-1', chat_name: 'Trip' };
+    const { fixture, component } = await createComponent({ view: makeViewService({ memories: [thread] }) });
+
+    component.onMoveOne('m-1');
+    fixture.detectChanges();
+
+    expect(component.moveMenuOpen()).toBe(false);
+    expect(component.scopeDialogMemory()).toEqual(thread);
+    expect(fixture.nativeElement.querySelector('app-memory-scope-dialog')).toBeTruthy();
+  });
+
+  it('offers Back to a thread in the single-memory Move menu only', async () => {
+    const view = makeViewService({ memories: [SAMPLE_MEMORY, { ...SAMPLE_MEMORY, id: 'm-2' }] });
+    const { fixture, component } = await createComponent({ view });
+    const backButton = () =>
+      Array.from(fixture.nativeElement.querySelectorAll('.memories-list__move-menu button') as NodeListOf<HTMLButtonElement>).find(
+        button => button.textContent?.trim() === 'Back to a thread…',
+      );
+
+    component.openMoveMenu(['m-1', 'm-2']);
+    fixture.detectChanges();
+    expect(backButton()).toBeUndefined();
+
+    component.closeMoveMenu();
+    component.onMoveOne('m-1');
+    fixture.detectChanges();
+    backButton()!.click();
+    fixture.detectChanges();
+
+    expect(component.moveMenuOpen()).toBe(false);
+    expect(component.scopeDialogMemory()?.id).toBe('m-1');
+  });
+
+  it('closes the scope dialog and reloads the page after a move', async () => {
+    const view = makeViewService();
+    const { component } = await createComponent({ view });
+    component.scopeDialogMemory.set(SAMPLE_MEMORY);
+    view.load.mockClear();
+
+    component.onScopeMoved();
+
+    expect(component.scopeDialogMemory()).toBeNull();
+    expect(view.load).toHaveBeenCalledWith(1);
   });
 });
 

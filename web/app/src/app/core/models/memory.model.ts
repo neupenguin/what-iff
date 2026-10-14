@@ -108,6 +108,18 @@ export interface MemoryPatch {
   confidence?: 'low' | 'medium' | 'high';
 }
 
+/**
+ * Moves one memory across the thread boundary (POST /memory/{id}/scope). The record moves, so it
+ * keeps its id, content and embedding. A promoted memory keeps its source thread as `chat_id`.
+ */
+export interface MemoryScopeMoveInput {
+  level: 'global' | 'personality' | 'thread';
+  /** Destination thread; required for `thread` (never defaulted server-side). */
+  chat_id?: string;
+  /** Personality to pin to; a thread memory defaults to (and may only use) its thread's personality. */
+  personality_id?: string;
+}
+
 export interface MemoryImportResult {
   imported_count: number;
   duplicate_count: number;

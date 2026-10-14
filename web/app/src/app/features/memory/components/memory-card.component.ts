@@ -8,6 +8,7 @@ import {
   GLOBAL_SCOPE_LABEL,
   isUserScopedMemoryLevel,
   levelDescription,
+  moveActionHint,
   MemoryCardVm,
   VERIFIED_HINT,
 } from '../helpers/memory-vm.helpers';
@@ -57,6 +58,7 @@ export class MemoryCardComponent {
   readonly confidenceHint = CONFIDENCE_HINT;
   readonly verifiedHint = VERIFIED_HINT;
   readonly levelHint = computed(() => levelDescription(this.memory().level));
+  readonly moveHint = computed(() => moveActionHint(this.memory().level));
 
   readonly editing = signal(false);
   readonly draft = signal('');
@@ -133,7 +135,6 @@ export class MemoryCardComponent {
   onMove(event?: Event): void {
     event?.stopPropagation();
     this.menuOpen.set(false);
-    if (this.memory().level === 'thread') return;
     this.move.emit(this.memory().id);
   }
 

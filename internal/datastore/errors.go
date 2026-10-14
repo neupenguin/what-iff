@@ -53,6 +53,10 @@ var (
 	// memory. A sandboxed chat treats it like ErrMemoryNotFound so it cannot probe for memories it
 	// may not read.
 	ErrMemoryIDPrefixAmbiguous = errors.New("memory ID prefix is ambiguous")
+	// ErrMemoryScopeMove wraps the reason MoveMemoryScope refused a move (a summary, a thread of
+	// another personality, a sandboxed thread, a missing destination). The wrapped text is meant
+	// for the user.
+	ErrMemoryScopeMove = errors.New("memory cannot be moved there")
 
 	// Personality-related errors
 	ErrPersonalityNotFound = errors.New("personality not found")

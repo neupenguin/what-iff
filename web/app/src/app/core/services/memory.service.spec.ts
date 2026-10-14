@@ -310,6 +310,17 @@ describe('MemoryService', () => {
     });
   });
 
+  describe('moveMemoryScope', () => {
+    it('POSTs the move to the scope endpoint', () => {
+      service.moveMemoryScope('mem-1', { level: 'thread', chat_id: 'chat-1' }).subscribe();
+
+      const req = httpMock.expectOne(`${environment.apiUrl}/memory/mem-1/scope`);
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body).toEqual({ level: 'thread', chat_id: 'chat-1' });
+      req.flush(mockMemory);
+    });
+  });
+
   describe('updateMemoryPin', () => {
     it('PUTs a string pinned_personality_id', () => {
       service.updateMemoryPin('mem-1', 'persona-1').subscribe();

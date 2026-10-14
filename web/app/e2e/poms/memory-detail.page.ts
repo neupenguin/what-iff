@@ -15,7 +15,6 @@ export class MemoryDetailPage {
       name: 'Back to memories',
     });
     this.contentTextarea = this.page.getByLabel('Content');
-    this.levelSelect = this.page.getByLabel('Memory level');
     this.metadataHeading = this.page.getByRole('heading', { name: 'Metadata' });
   }
 
@@ -31,8 +30,6 @@ export class MemoryDetailPage {
   }
 
   readonly contentTextarea: Locator;
-
-  readonly levelSelect: Locator;
 
   readonly metadataHeading: Locator;
 

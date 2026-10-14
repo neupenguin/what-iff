@@ -64,17 +64,9 @@
             @if (menuOpen()) {
               <div class="memory-card__menu" role="menu">
                 <button type="button" role="menuitem" (click)="startEdit($event)">Edit</button>
-                @if (memory().level !== "thread") {
-                  <button
-                    type="button"
-                    role="menuitem"
-                    uiTooltip="Change which personality can use this memory"
-                    placement="left"
-                    (click)="onMove($event)"
-                  >
-                    Move
-                  </button>
-                }
+                <button type="button" role="menuitem" [uiTooltip]="moveHint()" placement="left" (click)="onMove($event)">
+                  Move
+                </button>
                 <button
                   type="button"
                   role="menuitem"

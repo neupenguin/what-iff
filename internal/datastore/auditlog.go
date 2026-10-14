@@ -23,6 +23,7 @@ const (
 	auditCategoryAccountImport = "account_import"
 	auditCategoryMemoryPack    = "memory_pack"
 	auditCategoryChatImport    = "chat_import"
+	auditCategoryMemory        = "memory"
 )
 
 // accountActivityCategories are the audit categories surfaced on the Import & Export screen's

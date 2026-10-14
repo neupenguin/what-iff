@@ -10,6 +10,8 @@ HTTP API for **semantic memories** — CRUD, search, plus export/import portabil
 - **Batch actions:** `batch_actions.go` — `POST /memory/batch/delete` and `POST /memory/batch/patch` for bulk delete / move / archive (`all_or_none` supported).
 - **Embedding on write:** `embed.go` — after `POST /memory`, `POST /memory/batch`, and content-bearing `PATCH /memory/{id}` / `POST /memory/batch/patch` commit, the handler embeds whichever of the saved memories has no embedding (new rows, or rows whose content changed, since the datastore drops a stale embedding on edit).
   It is best-effort: a provider or store failure is logged, the save still returns success, and the agent's startup `BackfillMemoryEmbeddings` pass picks the row up on the next restart.
+- **Scope moves:** `scope.go` — `POST /memory/{id}/scope` (`datastore.MoveMemoryScope`) moves one memory across the thread boundary; refused moves (`ErrMemoryScopeMove`) are a 409 with the reason, a missing memory, thread or personality a 404.
+  Content is unchanged, so it never re-embeds.
 - **Import/export:** `export.go` streams memory ZIP downloads; `import.go` accepts a ZIP upload and triggers UUID-deduped import with bounded OpenAI embedding batches and bulk persistence.
 
 ## Dependencies

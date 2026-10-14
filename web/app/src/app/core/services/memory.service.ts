@@ -18,6 +18,7 @@ import {
   CompactionEvent,
   MemoryMergeEvent,
   MemoryPatch,
+  MemoryScopeMoveInput,
   PaginatedCompactionEventResponse,
   PaginatedMemoryMergeEventResponse,
   PaginatedMemoryResponse,
@@ -127,6 +128,11 @@ export class MemoryService {
         pinned_personality_id: pinnedPersonalityId,
       })
       .pipe(catchError(this.handleError));
+  }
+
+  /** Move a memory to another scope: a thread memory up to global/personality, or back to a thread. */
+  moveMemoryScope(id: string, move: MemoryScopeMoveInput): Observable<Memory> {
+    return this.http.post<Memory>(`${this.apiUrl}/${id}/scope`, move).pipe(catchError(this.handleError));
   }
 
   /**

@@ -278,9 +278,21 @@
       @for (personality of personalities(); track personality.id) {
         <button type="button" (click)="moveToPersonality(personality.id)">{{ personality.label }}</button>
       }
+      @if (moveTargetIds().length === 1) {
+        <button type="button" class="memories-list__move-thread" (click)="moveBackToThread()">Back to a thread…</button>
+      }
       <button type="button" class="memories-list__move-cancel" (click)="closeMoveMenu()">Cancel</button>
     </div>
   </div>
+}
+
+@if (scopeDialogMemory(); as scopeMemory) {
+  <app-memory-scope-dialog
+    [memory]="scopeMemory"
+    [personalities]="personalities()"
+    (moved)="onScopeMoved()"
+    (cancel)="closeScopeDialog()"
+  />
 }
 
 <app-delete-memory-modal

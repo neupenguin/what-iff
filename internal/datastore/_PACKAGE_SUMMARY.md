@@ -12,7 +12,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
     **`ListChats`** defaults to `archived=false`; set `ChatFilters.Archived` to `true` for the archive view or `IncludeArchived` for agent discovery spanning both states; **`ChatFilters.HasMessages`** excludes empty shells (`last_message_time IS NOT NULL`); **`UpdateChat`** persists `archived` from the loaded model (including PATCH).
   - Conversation import & rehydration: `chat_import.go` (**`ImportChats`** — one tx per conversation, dedups on `(owner_id, import_hash)`, sets `source`, optional progress callback) and `chat_rehydration.go` (**`GetChatMessagesForSummary`** lean chronological transcript; **`GetChatRehydrationState`**; **`GetChatPersonalityID`** (cheap lookup of the thread's personality for memory seeding); **`SetChatRehydrationState`**; **`SetImportedThreadRehydrated`** — writes checkpoint summary + count + window pointer `last_checkpoint_at` and flips `rehydration_state=ready` in one update).
 - Account backup: `accountbackup.go` imports versioned admin ZIP archives into an existing target user with UUID-based idempotency.
-- **Audit trail:** `auditlog.go` appends rows to Ent `AuditLog` for admin model CRUD, quota bucket **consume** / lazy **refill**, account backup import, user account export/import, and profile **memory ZIP** export/import (best-effort writes; failures only log).
+- **Audit trail:** `auditlog.go` appends rows to Ent `AuditLog` for admin model CRUD, quota bucket **consume** / lazy **refill**, account backup import, user account export/import, profile **memory ZIP** export/import, and memory scope moves (`memory` / `scope_move`, ids and levels only, never content) (best-effort writes; failures only log).
   - Memory & embeddings: `memory.go` (CRUD, vector search, **`DeleteMemoriesBatch`** / **`PatchMemoriesBatch`** for bulk UI actions), ZIP export, and UUID-deduped import with embedding regeneration.
     `UpsertChatSummaryMemory` maintains the singleton `Scope=Summary` checkpoint index (including immediately resumable account-imported summaries).
     **`GetMemory`** permits an owner to inspect inactive (archived/merge-retired) rows for Memory Manager detail/history, while `GetMemoryByIDPrefix` resolves only active rows by an 8–32 digit hex UUID prefix (used by `find_context` `related`/`origin` short `memory:df3e519d` hops), translating it into an indexed UUID range rather than formatting every row.
@@ -146,6 +146,10 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   Their embeddings were hard-deleted by the old fold, so undo logs that they need a re-embed backfill.
 - **Memory scope versus source chat:** `Memory.Scope` controls retrieval scope (`User`, `Chat`, or `Summary`); the optional `chat` edge records a memory's source conversation and is valid for User-scoped Global and Personality memories too.
   Moves preserve that provenance edge.
+  **`MoveMemoryScope`** (`memory_scope_move.go`) moves one memory across the thread boundary: thread to global or personality, or global/personality back to a thread.
+  The record moves (same id, content, embedding), so nothing is duplicated or re-embedded; `relatedMemoryReadable` is the scope filter `GetRelatedMemories` retrieves through, so retrieval follows the new scope.
+  A promoted memory keeps its chat edge as its source thread; the destination of a move back is always named by the caller (never defaulted), and must be a thread of the memory's personality (its pin, else its source thread's).
+  A thread memory promoted to personality is pinned to its thread's personality; a sandboxed thread takes back only memories made in it; refusals wrap `ErrMemoryScopeMove`.
   `PatchMemoriesBatch` rejects changes to actual Chat-scoped Thread memories before individual updates begin, preventing a mixed bulk Move from partially moving User memories.
   In partial (`all_or_none=false`) mode, only `ErrMemoryNotFound` is skipped; other errors abort the batch so operators are not told a row was merely "missing" when the datastore failed.
 - **Account-activity audit projection:** audit rows use distinct `account_export`, `account_import`, and `chat_import` categories.
@@ -195,6 +199,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
 - `compaction_event_test.go`, `memory_merge_test.go`, `memory_merge_fold_test.go` — SQLite harness mirrors ent FK semantics (`memory_merge_events.compaction_event_id` → `compaction_events` ON DELETE SET NULL); compaction tests cover content-addressed snapshots, merge grouping, page-size cap, and FK null-on-delete.
   `memory_merge_fold_test.go` covers the fold rewrite rule (same content, rewrite, starred) and exact fold undo, including legacy events.
   `TestAutoPin_AppliesToEveryMemoryCreationPath` covers the auto-pin rule on each creation path.
+- `memory_scope_move_test.go` — scope moves: record moved not copied, source thread and embedding kept, audit row, personality and sandbox rules, ownership, and that `relatedMemoryReadable` follows each move.
 - `accountbackup_test.go` — backup JSONL parsing edge cases such as large records and optional sections.
 - `accountexport_test.go` — conversation export’s timestamp/ID cursor covers a batch boundary where all messages share a timestamp.
 - `token_crypto_test.go` — round-trip encryption.

@@ -8,7 +8,7 @@ import { fromEvent } from 'rxjs';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
-import { MemoryMergeEvent, MemorySort } from '../../core/models/memory.model';
+import { Memory, MemoryMergeEvent, MemorySort } from '../../core/models/memory.model';
 import { GLOBAL_SCOPE_LABEL, toMemoryCardVm } from './helpers/memory-vm.helpers';
 import {
   parseQueryParams,
@@ -22,6 +22,7 @@ import {
 import { MemoryPersonalityOption } from './components/memory-form.component';
 import { MemoryCardGridComponent } from './components/memory-card-grid.component';
 import { MemoryFocusPanelComponent } from './components/memory-focus-panel.component';
+import { MemoryScopeDialogComponent } from './components/memory-scope-dialog.component';
 import { DeleteMemoryModalComponent } from './components/delete-memory-modal.component';
 import { ModalComponent } from '../../shared/ui/modal/modal.component';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
@@ -37,6 +38,7 @@ const DESKTOP_FOCUS_QUERY = '(min-width: 961px)';
     FormsModule,
     MemoryCardGridComponent,
     MemoryFocusPanelComponent,
+    MemoryScopeDialogComponent,
     DeleteMemoryModalComponent,
     ModalComponent,
     CalendarIconComponent,
@@ -62,6 +64,8 @@ export class MemoriesListTabComponent implements OnInit {
   readonly deleteTargetIds = signal<string[]>([]);
   readonly moveMenuOpen = signal(false);
   readonly moveTargetIds = signal<string[]>([]);
+  /** The memory whose scope is being changed across the thread boundary (MemoryScopeDialogComponent). */
+  readonly scopeDialogMemory = signal<Memory | null>(null);
   readonly searchDraft = signal('');
   readonly pinUpdatingId = signal<string | null>(null);
   readonly focusedId = signal<string | null>(null);
@@ -437,7 +441,29 @@ export class MemoriesListTabComponent implements OnInit {
   }
 
   onMoveOne(memoryId: string): void {
+    const memory = this.view.memories().find(item => item.id === memoryId);
+    if (memory?.level === 'thread') {
+      this.scopeDialogMemory.set(memory);
+      return;
+    }
     this.openMoveMenu([memoryId]);
+  }
+
+  /** From the single-memory Move menu: send a global/personality memory back to a thread. */
+  moveBackToThread(): void {
+    const [id] = this.moveTargetIds();
+    const memory = this.view.memories().find(item => item.id === id);
+    this.closeMoveMenu();
+    if (memory) this.scopeDialogMemory.set(memory);
+  }
+
+  closeScopeDialog(): void {
+    this.scopeDialogMemory.set(null);
+  }
+
+  onScopeMoved(): void {
+    this.scopeDialogMemory.set(null);
+    this.view.load(this.currentPage());
   }
 
   onMoveSelected(): void {

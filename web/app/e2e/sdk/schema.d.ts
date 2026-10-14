@@ -5148,6 +5148,97 @@ export interface paths {
         };
         trace?: never;
     };
+    "/memory/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move memory to another scope
+         * @description Moves one memory across the thread boundary: a thread memory to global or personality,
+         *     or a global/personality memory back to a thread. The record itself moves (same id,
+         *     content and embedding), so no duplicate is created and nothing is re-embedded; retrieval
+         *     follows the new scope. A promoted memory keeps the thread it came from as `chat_id`
+         *     (provenance), which the memory manager preselects when moving it back.
+         *
+         *     Personalities are not crossed: a thread memory moved to personality is pinned to its
+         *     thread's personality, and a memory moved to a thread must go to a thread of its
+         *     personality (its pin, else its source thread's). A sandboxed thread accepts only
+         *     memories that were made in it. Each move is written to the audit log.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Memory ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryScopeMoveRequest"];
+                };
+            };
+            responses: {
+                /** @description Memory moved (or already there) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Memory"];
+                    };
+                };
+                /** @description Malformed move (unknown level, or a field the level does not take) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Memory, destination thread or personality not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The move is not allowed: a summary, a thread of another personality, a sandboxed thread the memory was not made in, a missing destination thread, or a thread memory pinned to a personality other than its thread's */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/memory/export": {
         parameters: {
             query?: never;
@@ -11765,7 +11856,7 @@ export interface components {
             id: string;
             /**
              * Format: uuid
-             * @description ID of the chat this memory belongs to (optional for User-scoped memories)
+             * @description The thread of a thread memory. For a global or personality memory, the thread it was created in or promoted from (provenance), absent when it has none or that thread was deleted
              */
             chat_id?: string;
             /** @description Name of the chat this memory belongs to (if applicable) */
@@ -12014,6 +12105,23 @@ export interface components {
             /** @enum {string} */
             confidence?: "low" | "medium" | "high";
             provenance?: components["schemas"]["MemoryProvenance"];
+        };
+        MemoryScopeMoveRequest: {
+            /**
+             * @description The level to move the memory to
+             * @enum {string}
+             */
+            level: "global" | "personality" | "thread";
+            /**
+             * Format: uuid
+             * @description Destination thread; required for `thread`, never defaulted
+             */
+            chat_id?: string;
+            /**
+             * Format: uuid
+             * @description Personality to pin to for `personality`. A thread memory defaults to, and may only use, its thread's personality.
+             */
+            personality_id?: string;
         };
         MemoryMergeEvent: {
             /** Format: uuid */
