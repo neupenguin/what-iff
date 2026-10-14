@@ -72,7 +72,7 @@ Split the work along the repo seam, because this feature straddles the OSS bound
   install a resolver to vary the budget per conversation. **This ADR + the landed seam.**
 - **The private overlay owns the *policy*** — the concrete capacity tiers, their calibrated values,
   billing gating (which tier a user may hold, free-overage slab allowance, overage fallback). This
-  lives in `what-iff-private` and is captured in a dated decision doc there, **not** in the public
+  lives in the private overlay and is captured in a dated decision doc there, **not** in the public
   repo, mirroring how billing/quota already evacuated to the overlay.
 
 **[what-iff] — this is the biggest divergence from `0x019`.** The source ADR wove billing gating
