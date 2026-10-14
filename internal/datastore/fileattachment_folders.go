@@ -82,10 +82,15 @@ func (d *Datastore) MoveFileAttachmentsToFolder(ctx context.Context, userID uuid
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	// Only rows that have a key can name its reference copies. s3_key is NULL for legacy rows and for
+	// files that never live in S3 (code-interpreter documents), and a NULL cannot scan into a string,
+	// so leave those out of the read; they are still moved by id below.
 	named, err := d.dbClient.FileAttachment.Query().
 		Where(
 			entfileattachment.HasOwnerWith(user.ID(userID)),
 			entfileattachment.IDIn(ids...),
+			entfileattachment.S3KeyNotNil(),
+			entfileattachment.S3KeyNEQ(""),
 		).
 		Select(entfileattachment.FieldS3Key).
 		Strings(ctx)
@@ -94,8 +99,8 @@ func (d *Datastore) MoveFileAttachmentsToFolder(ctx context.Context, userID uuid
 		return 0, err
 	}
 	match := []predicate.FileAttachment{entfileattachment.IDIn(ids...)}
-	if keys := nonEmpty(named); len(keys) > 0 {
-		match = append(match, entfileattachment.S3KeyIn(keys...))
+	if len(named) > 0 {
+		match = append(match, entfileattachment.S3KeyIn(named...))
 	}
 	moved, err := d.dbClient.FileAttachment.Update().
 		Where(galleryFiles(userID, models.GalleryKindAll)...).
@@ -107,16 +112,6 @@ func (d *Datastore) MoveFileAttachmentsToFolder(ctx context.Context, userID uuid
 		return 0, err
 	}
 	return moved, nil
-}
-
-func nonEmpty(values []string) []string {
-	out := values[:0:0]
-	for _, v := range values {
-		if v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // maxFolderMovePasses bounds how many times a folder rename re-reads what is left under the old
