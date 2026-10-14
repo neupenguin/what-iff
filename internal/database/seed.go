@@ -18,6 +18,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// SeedModelCatalog reports whether boot seeds the model catalog from
+// models.AvailableModels. A self-hosted install needs it until models are chosen
+// per account. A build whose operator curates the catalog replaces it in an
+// init(), so boot never adds a model the operator did not choose, with whatever
+// pricing and tier the schema defaults happen to give it.
+//
+// It is a function rather than a value because it is consulted when
+// EnsureSeedData runs, after the server has loaded its configuration. A
+// package init() runs before that, so a replacement that reads configuration
+// sees it only when asked at call time.
+var SeedModelCatalog = func() bool { return true }
+
 // EnsureSeedData makes sure critical reference data exists before serving requests.
 func EnsureSeedData(ctx context.Context, client *ent.Client, logger *zap.Logger) error {
 	// Seed roles first (required for user creation)
@@ -26,9 +38,10 @@ func EnsureSeedData(ctx context.Context, client *ent.Client, logger *zap.Logger)
 		return err
 	}
 
-	// Seed all available models
-	if err := ensureAllModels(ctx, client, logger); err != nil {
-		return err
+	if SeedModelCatalog() {
+		if err := ensureAllModels(ctx, client, logger); err != nil {
+			return err
+		}
 	}
 
 	// Fail fast if DEFAULT_MODEL_NAME does not name an active model
