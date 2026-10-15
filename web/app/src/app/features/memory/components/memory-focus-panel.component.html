@@ -50,17 +50,15 @@
       } @else {
         <span class="focus-panel__scope-chip" [attr.data-level]="memory().level">{{ association() }}</span>
       }
-      @if (!readOnly() && memory().level !== "thread") {
-        <button
-          type="button"
-          class="focus-panel__link-btn"
-          uiTooltip="Change which personality can use this memory"
-          (click)="move.emit(memory().id)"
-        >
+      @if (!readOnly()) {
+        <button type="button" class="focus-panel__link-btn" [uiTooltip]="moveHint" (click)="move.emit(memory().id)">
           Move
         </button>
       }
     </div>
+    @if (sourceThreadName(); as source) {
+      <p class="focus-panel__muted focus-panel__source">From thread “{{ source }}”</p>
+    }
   </section>
 
   <section class="focus-panel__section">

@@ -207,3 +207,19 @@ func TestCountWebSearchToolResultsInMessage(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &msg))
 	require.Equal(t, 2, countWebSearchToolResultsInMessage(&msg))
 }
+
+// A response that stops for tool use but carries no tool_use block (the call was lost) is
+// still returned as the final answer, keeping stop_reason tool_use so callers can tell.
+func TestClaudeAdapter_Call_ToolUseStopWithoutAToolCall(t *testing.T) {
+	srv := jsonHandlerServer(t, `{"id":"msg_1","type":"message","role":"assistant","model":"test-model",`+
+		`"content":[{"type":"text","text":"Firing:"}],"stop_reason":"tool_use","stop_sequence":null,`+
+		`"usage":{"input_tokens":5,"output_tokens":7}}`)
+	defer srv.Close()
+
+	resp, toolUses, err := newTestClaudeAdapter(srv.URL).Call(context.Background())
+
+	require.NoError(t, err)
+	require.Empty(t, toolUses)
+	require.Equal(t, "Firing:", resp.Text)
+	require.Equal(t, "tool_use", resp.StopReason)
+}

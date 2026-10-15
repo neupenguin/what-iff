@@ -199,11 +199,19 @@ describe('MemoryFocusPanelComponent', () => {
     expect(moveSpy).toHaveBeenCalledWith('m-1');
   });
 
-  it('hides Move for thread memories', () => {
-    fixture.componentRef.setInput('memory', makeVm({ level: 'thread', levelLabel: 'Thread' }));
+  it('offers Move for thread memories too', () => {
+    fixture.componentRef.setInput('memory', makeVm({ level: 'thread', levelLabel: 'Thread', chatName: 'Trip planning' }));
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('.focus-panel__link-btn')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.focus-panel__link-btn')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('.focus-panel__source')).toBeNull();
+  });
+
+  it('shows the thread a promoted memory came from', () => {
+    fixture.componentRef.setInput('memory', makeVm({ level: 'global', levelLabel: 'Global', chatName: 'Trip planning' }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.focus-panel__source')?.textContent).toContain('Trip planning');
   });
 
   it('opens the confidence help hint with an explanation', () => {

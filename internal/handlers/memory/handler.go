@@ -84,6 +84,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router) {
 	memoryRouter.HandleFunc("/{id}", h.PatchMemory).Methods("PATCH")
 	memoryRouter.HandleFunc("/{id}", h.DeleteMemory).Methods("DELETE")
 	memoryRouter.HandleFunc("/{id}/pin", h.UpdateMemoryPin).Methods("PUT")
+	memoryRouter.HandleFunc("/{id}/scope", h.MoveMemoryScope).Methods("POST")
 }
 
 func (h *Handler) createEmbedding(ctx context.Context, input string) ([]float32, error) {

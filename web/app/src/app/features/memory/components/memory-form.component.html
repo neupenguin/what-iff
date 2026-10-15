@@ -1,20 +1,11 @@
 <form class="grid gap-4" (ngSubmit)="onSubmit()">
   <div>
-    <label class="block text-xs text-text-secondary">
-      Memory level
-      <select
-        class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
-        [ngModel]="level()"
-        name="memory-level"
-        aria-describedby="memory-level-hint"
-        (ngModelChange)="onLevelChange($event)">
-        <option value="global">Global</option>
-        <option value="personality">Personality</option>
-        <option value="thread">Thread</option>
-        <option value="summary">Summary</option>
-      </select>
-    </label>
-    <p id="memory-level-hint" class="mt-1 text-[11px] text-text-muted">{{ levelHint() }}</p>
+    <p class="text-xs text-text-secondary">
+      Memory level: <span class="font-semibold text-text-primary">{{ levelLabel() }}</span>
+    </p>
+    <p class="mt-1 text-[11px] text-text-muted">
+      {{ levelHint() }}. To use a thread memory more widely, or move one back to a thread, use Move in the memory list.
+    </p>
   </div>
 
   @if (showPinControl()) {
