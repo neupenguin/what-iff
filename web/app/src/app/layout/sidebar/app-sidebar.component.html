@@ -125,6 +125,20 @@
         </button>
       }
     </div>
+    @if (isChatView()) {
+      <div class="app-sidebar__collapsed-actions">
+        <button
+          type="button"
+          class="app-sidebar__new-thread-fab"
+          aria-label="New thread"
+          uiTooltip="New thread"
+          placement="right"
+          (click)="startNewThread()"
+        >
+          <ui-plus-icon [size]="16" />
+        </button>
+      </div>
+    }
   }
 
   @if (!collapsed() && isChatView()) {
@@ -972,6 +986,18 @@
           <span class="app-sidebar__palette-launcher-shortcut" aria-hidden="true">⌘K</span>
         </button>
       </div>
+    } @else {
+      <button
+        type="button"
+        class="app-sidebar__icon-btn app-sidebar__footer-search-icon"
+        aria-label="Open command palette"
+        aria-keyshortcuts="Meta+K Control+K"
+        uiTooltip="Search (⌘K)"
+        placement="right"
+        (click)="openPalette()"
+      >
+        <ui-search-icon [size]="15" />
+      </button>
     }
     <app-sidebar-profile [collapsed]="collapsed()" />
   </div>

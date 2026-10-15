@@ -292,6 +292,41 @@ describe('AppSidebarComponent', () => {
         expect(profile.querySelector('.app-sidebar-profile__name')).toBeNull();
     });
 
+    it('offers a round New thread button on the collapsed rail in chat view', () => {
+        navCollapsed = true;
+        const fixture = create();
+        const emitted = vi.fn();
+        fixture.componentInstance.newThread.subscribe(emitted);
+        const fab = fixture.nativeElement.querySelector('.app-sidebar__new-thread-fab') as HTMLButtonElement;
+        expect(fab.getAttribute('aria-label')).toBe('New thread');
+        fab.click();
+        expect(emitted).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the rail New thread button to chat view, like the expanded one', () => {
+        navCollapsed = true;
+        routerUrlSpy.mockReturnValue('/gallery');
+        const fixture = create();
+        expect(fixture.nativeElement.querySelector('.app-sidebar__new-thread-fab')).toBeNull();
+    });
+
+    it('shows a search icon above the profile icon on the collapsed rail that opens the palette', () => {
+        navCollapsed = true;
+        const fixture = create();
+        const footer = fixture.nativeElement.querySelector('.app-sidebar__footer') as HTMLElement;
+        const search = footer.querySelector('.app-sidebar__footer-search-icon') as HTMLButtonElement;
+        expect(search.getAttribute('aria-label')).toBe('Open command palette');
+        expect(search.nextElementSibling?.tagName.toLowerCase()).toBe('app-sidebar-profile');
+        search.click();
+        expect(paletteSpy.open).toHaveBeenCalled();
+    });
+
+    it('uses the full launcher, not the rail icons, when expanded', () => {
+        const fixture = create();
+        expect(fixture.nativeElement.querySelector('.app-sidebar__footer-search-icon')).toBeNull();
+        expect(fixture.nativeElement.querySelector('.app-sidebar__new-thread-fab')).toBeNull();
+    });
+
     it('renders starred threads and allows unstar-all after confirmation', async () => {
         const fixture = create();
         expect(fixture.nativeElement.textContent).toContain('Starred Threads');
