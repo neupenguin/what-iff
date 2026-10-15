@@ -124,21 +124,21 @@
           <ui-gear-icon [size]="14" />
         </button>
       }
-    </div>
-    @if (isChatView()) {
-      <div class="app-sidebar__collapsed-actions">
+      @if (isChatView()) {
         <button
           type="button"
-          class="app-sidebar__new-thread-fab"
+          class="app-sidebar__icon-link app-sidebar__new-thread-fab"
           aria-label="New thread"
           uiTooltip="New thread"
           placement="right"
           (click)="startNewThread()"
         >
-          <ui-plus-icon [size]="16" />
+          <span class="app-sidebar__new-thread-dot">
+            <ui-plus-icon [size]="12" />
+          </span>
         </button>
-      </div>
-    }
+      }
+    </div>
   }
 
   @if (!collapsed() && isChatView()) {

@@ -97,25 +97,8 @@
   color: var(--accent-mode);
 }
 
-.app-sidebar__collapsed-actions {
-  display: flex;
-  justify-content: center;
-  padding: 4px 8px 6px;
-}
-
 .app-sidebar__new-thread-fab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--cta, var(--accent));
-  color: var(--cta-text, #fff);
-  cursor: pointer;
-
-  &:hover {
+  &:hover .app-sidebar__new-thread-dot {
     filter: brightness(1.08);
   }
 
@@ -123,6 +106,17 @@
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
+}
+
+.app-sidebar__new-thread-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--cta, var(--accent));
+  color: var(--cta-text, #fff);
 }
 
 .app-sidebar__chat-controls {
