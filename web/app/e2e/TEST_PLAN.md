@@ -147,10 +147,9 @@ the subscription gate (open in the OSS build) for exactly that reason.
 
 ### 5. Skills
 
-Route: `/skills` (Config mode). A built-in system skill "Generate image"
-already exists (`SYSTEM` badge, `Call`/`Edit` buttons, `Delete` disabled —
-presumably system skills aren't user-deletable). `Create skill` button for
-custom ones.
+Route: `/skills` (Config mode). Every skill is the user's own; the built-in
+"Generate image" system skill was removed. `Create skill` button for new
+ones.
 
 - [x] Create a custom skill (name + prompt template), verify it appears in
       the list, then delete it — `skills.spec.ts`
@@ -161,9 +160,8 @@ custom ones.
       `rituals` field on the send — `journeys/skill-in-conversation.spec.ts`;
       the `/skill` slash command and the no-match state —
       `functional/chat/skill-picker.spec.ts`. Note this is a different data
-      source from the Skills page: `getAvailableRituals(chatId)` merged with
-      `listSystemRituals()`, so a skill that lists at `/skills` can still be
-      absent here.
+      source from the Skills page: `getAvailableRituals(chatId)`, so a skill
+      that lists at `/skills` can still be absent here.
 - [ ] Call a skill from the Skills page directly (`Call` button) — still
       open, and distinct from the composer path now covered above
 

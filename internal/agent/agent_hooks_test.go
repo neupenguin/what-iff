@@ -21,8 +21,8 @@ func TestAgentTestHooks_AnySet(t *testing.T) {
 	}.anySet())
 
 	require.True(t, agentTestHooks{
-		ImageRitualPersistImage: func(ctx context.Context, userID uuid.UUID, attachment *models.FileAttachment, imageBase64 string) error {
-			return nil
+		ImageGenerationPreference: func(ctx context.Context, userID uuid.UUID) (models.ModelProvider, error) {
+			return "", nil
 		},
 	}.anySet())
 }

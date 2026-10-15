@@ -33,9 +33,10 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
   The pass runs only on the instance that wins the Postgres advisory lock `MemoryEmbeddingBackfillLockKey` (default 80920033); other instances, and databases without advisory locks, skip it quietly.
   It does not start at all under mock/local LLM backends (`nonVendorLLM`), where embeddings have no provider.
   Both backfills are idempotent and only log failures; a pass stops early when the provider is unreachable (e.g. the deny-network client under mock/local backends).
-- **Rituals:** User and system rituals, image ritual flow, registry of built-in system rituals.
+- **Rituals:** User rituals (skills).
+  The code-defined "system rituals" are gone; `retired_rituals.go` drops a retired system-ritual ID (the old image-generation ritual, `…0101`) that an old client may still send, so it is never linked as a ritual row.
 - **Image vendor (`image_generators.go`):** `NewAgent` builds a `provider.ImageGenerator` for each image vendor with a credential.
-  `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool and the image ritual, among the vendors the caller holds a key for (asked per request, since keys can belong to accounts), falling back to the first of those (OpenAI first).
+  `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool, among the vendors the caller holds a key for (asked per request, since keys can belong to accounts), falling back to the first of those (OpenAI first).
   The tool records the vendor on each image's usage as `metering.Usage.ImageProvider` (plus `engine`/`provider` metadata) so a metering implementation can price vendors separately.
   Portrait and expression-grid generation stay on `OpenAIProvider` because they need the edit-with-reference endpoint.
 - **Jobs:** Running scheduled/async agent work (`agentjob_run.go`, `agentjob_schedule.go`) and tools that create jobs.
@@ -103,12 +104,10 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   **`runGeneration`** is the shared draft-buffer → `handleAgentLoop` → tool-call-merge → `saveAgentResponse` pipeline for OpenAI, Claude, Gemini, OpenAI-compatible, mock, and local paths, so their save/stream invariants cannot drift.
   **`assertGenerationProducedOutput`** gates the save: a turn whose model call returned no assistant text and no generated attachments fails instead of persisting a blank assistant message.
   A provider call can succeed at the transport level and still carry no text (stream closed after `message_start`, truncation before any text, a content block shape the extractor does not recognise); persisting that produced a turn that looked answered but was empty, with no error and no retry offered — and because `AppendHistoryTurn` skips empty content, the blank row then vanished from the rebuilt context on the next turn.
-  Attachment-only turns (image rituals) are explicitly allowed.
   The failure is logged with `stop_reason` and `output_tokens`, which distinguish "text was generated and dropped in extraction" from "nothing came back".
   An **output-length truncation** (`stop_reason` `max_tokens` / `max_output_tokens`, via `isTruncationStopReason`) — common on tool-use-heavy GLM/Claude turns that spend the whole `DefaultMaxContentLength` budget on reasoning or a partial tool call before emitting any text — gets its own clearer, actionable user-facing message ("…cut off at the length limit…please try again") instead of the raw diagnostic dump; there is nothing to clip because no text block was produced.
   `LocalProvider` deliberately uses its own real HTTP client while `AgentConfig.HTTPClient` (deny transport) covers every other provider.
   That local client gets `AgentConfig.LLMCallTimeouts` through `provider.WithCallTimeouts`; the server has already applied the same limits to `HTTPClient`.
-  Image rituals persist an embedded fixture PNG (`mock_fixture.go`) through `saveImageRitualResult` under both non-vendor backends.
   Downstream consumers key off `Agent.nonVendorLLM()` (mock **or** local) for deliberate skip/fake behavior — memory enrichment no-ops (`getMemoriesForEnrichment`), chat naming uses `mockChatName`, and checkpoint evaluation (`postMessageProcessing`) plus expression classification (`applyExpressionPhase`) are skipped — so nothing unexpectedly reaches the deny transport.
 - **`saveImageRitualResult`** attaches the created PNG attachment to the returned assistant message (previously discarded, leaving `Attachments` empty on the return value); shared by real and mock ritual paths.
 - **Streamed generation failures:** `runGeneration` persists text deltas on the job as they arrive.
@@ -215,7 +214,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 
 ## Testing
 
-- `agent_hooks.go` — `agentTestHooks` groups test-only seams (memory/history overrides, image ritual fakes).
+- `agent_hooks.go` — `agentTestHooks` groups test-only seams (memory/history overrides, image vendor preference).
   `assertNoTestHooksInProduction` runs under `NewAgent`, `handleUserMessage`, and `HandleAgentJobPrompt` when not inside `go test`.
 - `agentloop_test.go` — tool loop and adapter append behavior.
 - `job_telemetry_test.go` — job outcome mapping (success, quota, cancelled, timeout, failed, panic), media job tracking, bounded tool labels, quota rejections and turn stage labels.
@@ -236,7 +235,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 - `subagent_tools_test.go` — minimal subagent context composition and argument validation behavior.
 - `subagent_providers_test.go` — subagent routing to Chat Completions providers (Qwen et al.) and z.ai against fake endpoints: tool-support gate, text-only rendering, missing-key and provider-error diagnostics.
 - `testsupport_test.go` — shared datastore and agent constructors for unit tests.
-- `rituals_test.go`, `system_rituals_test.go` — ritual registry and system IDs.
+- `rituals_test.go`, `retired_rituals_test.go` — ritual helpers and the retired system-ritual ID.
 - `tools_test.go` — native web-search registration and logical-toggle coverage.
 
 ## Related documentation

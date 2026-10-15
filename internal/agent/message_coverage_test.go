@@ -152,7 +152,7 @@ func TestAgentMetrics_NoopWithNilMetrics(t *testing.T) {
 	})
 }
 
-// --- mergedRitualIDsForTools / mergeRitualSets ---
+// --- mergedRitualIDsForTools ---
 
 func TestMergedRitualIDsForTools_NilChatMessageUsesMoodOnly(t *testing.T) {
 	t.Parallel()
@@ -174,26 +174,6 @@ func TestMergedRitualIDsForTools_CombinesMessageAndMoodRituals(t *testing.T) {
 
 	got := mergedRitualIDsForTools(chatMessage, mood)
 	require.ElementsMatch(t, []uuid.UUID{msgRitualID, moodRitualID}, got)
-}
-
-func TestMergeRitualSets_NoExtraReturnsBase(t *testing.T) {
-	t.Parallel()
-	base := []*models.Ritual{{ID: uuid.New()}}
-	got := mergeRitualSets(base, nil)
-	require.Equal(t, base, got)
-}
-
-func TestMergeRitualSets_DedupesAndSkipsNils(t *testing.T) {
-	t.Parallel()
-	shared := uuid.New()
-	onlyExtra := uuid.New()
-	base := []*models.Ritual{{ID: shared}, nil}
-	extra := []*models.Ritual{{ID: shared}, {ID: onlyExtra}, nil}
-
-	got := mergeRitualSets(base, extra)
-	require.Len(t, got, 2)
-	ids := []uuid.UUID{got[0].ID, got[1].ID}
-	require.ElementsMatch(t, []uuid.UUID{shared, onlyExtra}, ids)
 }
 
 // --- isFirstCheckpoint / maxTurnsBeforeCheckpoint ---

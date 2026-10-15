@@ -672,18 +672,13 @@ func (a *Agent) HandleUserMessage(ctx context.Context, request models.ChatMessag
 	// Extract user ID from context
 	userID, _ := middleware.GetUserIDFromContext(ctx)
 
-	// System rituals are UI-only and must never be persisted.
-	// Persist only DB-backed rituals, but keep system rituals for in-memory branching.
-	dbRituals, systemRituals := SplitRituals(request.Rituals)
-	request.Rituals = dbRituals
+	// A client may still send a retired system ritual; it has no row to link to.
+	request.Rituals = dropRetiredRituals(request.Rituals)
 
 	// Create a new chat message in the database
 	chatMessage, err := a.ds.CreateChatMessage(ctx, userID, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat message: %w", err)
-	}
-	if len(systemRituals) > 0 {
-		chatMessage.Rituals = append(chatMessage.Rituals, systemRituals...)
 	}
 
 	// Create a job for asynchronous processing
@@ -975,11 +970,7 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	chatCtx.activeMoodRituals = moodRituals
 	doneMood()
 
-	// Determine action type: image generation rituals override the base chat type.
 	turnActionType := models.ActionTypeChatMessage
-	if hasSystemRitual(mergeRitualSets(chatMessage.Rituals, moodRituals), SystemRitualIDImageGenerate) {
-		turnActionType = models.ActionTypeImageGeneration
-	}
 
 	// Quota gate — checked after prepareChatContext so we know the model tier.
 	// The check is fuzzy by design (see metering.Meter.Check); the meter's atomic
@@ -1117,10 +1108,8 @@ func (a *Agent) generateAssistantForMessage(ctx context.Context, userID uuid.UUI
 // image ritual, or a real vendor). See generateAssistantForMessage for the surrounding
 // telemetry and context-breakdown capture.
 func (a *Agent) dispatchAssistantGeneration(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	// Branch: mock mode serves every turn in-process. Placed before the
-	// image-ritual branch so mock mode guarantees no provider or
-	// image-generation network call; image rituals take a fixture branch inside
-	// handleImageGenerateRitual.
+	// Branch: mock mode serves every turn in-process, so it never makes a
+	// provider network call.
 	if a.mockLLM {
 		return a.generateAssistantForMessageMock(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
 	}
@@ -1129,10 +1118,6 @@ func (a *Agent) dispatchAssistantGeneration(ctx context.Context, userID uuid.UUI
 	// configured), same placement rationale as mock mode above.
 	if a.localLLM {
 		return a.generateAssistantForMessageLocal(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
-	}
-	// Branch: system ritual image generation (bypasses OpenAI native image_generation tool).
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
 	}
 	if models.IsGeminiModel(chatCtx.modelProvider, chatCtx.model) {
 		return a.generateAssistantForMessageGemini(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
@@ -1241,14 +1226,8 @@ func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *mo
 // generateAssistantForMessageMock mirrors the real provider paths but drives a
 // per-request MockAdapter through the same shared runGeneration pipeline, so
 // mock mode exercises the code real chat runs (streamed-text reconciliation,
-// tool-call recording, personality/mood, save). Image rituals route to
-// handleImageGenerateRitual, which persists an embedded fixture PNG through
-// the real save path under mock mode.
+// tool-call recording, personality/mood, save).
 func (a *Agent) generateAssistantForMessageMock(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
-	}
-
 	// The mock adapter offers no tools to a model, but record the same agent-tool set the real
 	// paths do (no MCP discovery: mock mode is hermetic), so a scripted tool call is gated exactly
 	// like a real model's.
@@ -1268,36 +1247,9 @@ func mergedRitualIDsForTools(chatMessage *models.ChatMessage, activeMood *models
 	if chatMessage == nil {
 		return moodRitualIDs(activeMood)
 	}
-	dbRituals, _ := SplitRituals(chatMessage.Rituals)
-	ritualIDs := GetRitualIds(dbRituals)
+	ritualIDs := GetRitualIds(dropRetiredRituals(chatMessage.Rituals))
 	ritualIDs = append(ritualIDs, moodRitualIDs(activeMood)...)
 	return ritualIDs
-}
-
-func mergeRitualSets(base []*models.Ritual, extra []*models.Ritual) []*models.Ritual {
-	if len(extra) == 0 {
-		return base
-	}
-	out := make([]*models.Ritual, 0, len(base)+len(extra))
-	seen := make(map[uuid.UUID]struct{}, len(base)+len(extra))
-	for _, r := range base {
-		if r == nil {
-			continue
-		}
-		out = append(out, r)
-		seen[r.ID] = struct{}{}
-	}
-	for _, r := range extra {
-		if r == nil {
-			continue
-		}
-		if _, exists := seen[r.ID]; exists {
-			continue
-		}
-		out = append(out, r)
-		seen[r.ID] = struct{}{}
-	}
-	return out
 }
 
 func (a *Agent) loadMoodRituals(ctx context.Context, userID uuid.UUID, activeMood *models.Mood) []*models.Ritual {
@@ -1492,13 +1444,8 @@ func (a *Agent) generateAssistantForMessageGemini(ctx context.Context, userID uu
 // the same draft-buffer → handleAgentLoop → saveAgentResponse pipeline as
 // every other provider path. Unlike vendor paths, it always targets
 // a.localLLMModel rather than chatCtx.model — only one local model is
-// configured, so there is no per-chat model routing to honor. Image rituals
-// still take the mock fixture branch (image generation stays a "deliberate
-// mock behavior" consumer, same as under LLM_BACKEND=mock).
+// configured, so there is no per-chat model routing to honor.
 func (a *Agent) generateAssistantForMessageLocal(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
-	}
 	if a.LocalProvider == nil {
 		return nil, nil, fmt.Errorf("LLM_BACKEND=local but no local model server is configured")
 	}
@@ -2684,12 +2631,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 		// separately records per-image image_generation events. Both charges are
 		// intentional: the LLM call that decided to use the tool has its own cost,
 		// and each generated image is an additional billable action.
-		// Resolve the image-generation reclassification agent-side so the meter
-		// receives an authoritative action type and stays free of ritual knowledge.
 		recordAction := actionType
-		if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-			recordAction = models.ActionTypeImageGeneration
-		}
 		// Link this turn's primary metered event to the assistant message that owns
 		// its Context X-ray, so an implementation can surface the turn's cost on the
 		// X-ray later. Empty when the turn produced no assistant message.
@@ -3234,9 +3176,6 @@ func (a *Agent) recordCancelledChatUsage(
 		metadata["output_tokens"] = outputTokens
 	}
 	recordAction := models.ActionTypeChatMessage
-	if hasSystemRitual(userMessage.Rituals, SystemRitualIDImageGenerate) {
-		recordAction = models.ActionTypeImageGeneration
-	}
 	a.meter.Record(ctx, qd, metering.Usage{
 		UserID:     chatJob.UserID,
 		ActionType: recordAction,

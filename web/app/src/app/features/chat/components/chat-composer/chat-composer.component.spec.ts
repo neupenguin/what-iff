@@ -37,7 +37,7 @@ const TEST_MODES: Mood[] = [
 ];
 
 describe('ChatComposerComponent', () => {
-    type RitualServiceMock = Pick<MockedObject<RitualService>, 'getAvailableRituals' | 'listSystemRituals'>;
+    type RitualServiceMock = Pick<MockedObject<RitualService>, 'getAvailableRituals'>;
     type ImageGalleryServiceMock = Pick<MockedObject<ImageGalleryService>, 'listImages' | 'referenceImage' | 'getImageUrl'>;
     type MoodServiceMock = Pick<MockedObject<MoodService>, 'listMoods'>;
 
@@ -49,10 +49,8 @@ describe('ChatComposerComponent', () => {
     beforeEach(async () => {
         ritualService = {
             getAvailableRituals: vi.fn().mockName("RitualService.getAvailableRituals"),
-            listSystemRituals: vi.fn().mockName("RitualService.listSystemRituals")
         } as unknown as RitualServiceMock;
         ritualService.getAvailableRituals.mockReturnValue(of({ results: [{ id: 'r1', name: 'Alpha', description: '', content: '', hotkeys: '', personality_id: null, created_at: '', updated_at: '' }], total_count: 1, page: 1 }));
-        ritualService.listSystemRituals.mockReturnValue(of([]));
 
         imageGallery = {
             listImages: vi.fn().mockName("ImageGalleryService.listImages"),
@@ -569,7 +567,6 @@ describe('ChatComposerComponent', () => {
         expect(fixture.componentInstance.skillPickerOpen()).toBe(true);
         expect(fixture.componentInstance.plusOpen()).toBe(false);
         expect(ritualService.getAvailableRituals).toHaveBeenCalledWith('chat-1', 1, 100);
-        expect(ritualService.listSystemRituals).toHaveBeenCalled();
     });
 
     it('closes plus and slash menus when clicking outside the composer', () => {

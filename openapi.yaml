@@ -3859,27 +3859,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /ritual/system:
-    get:
-      summary: List system rituals
-      description: Returns a list of built-in, read-only system rituals available to all users.
-      tags: [Ritual Management]
-      responses:
-        '200':
-          description: System rituals retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Ritual'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
   /ritual/{id}:
     get:
       summary: Get ritual by ID

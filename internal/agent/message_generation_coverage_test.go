@@ -266,40 +266,6 @@ func TestGenerateAssistantForMessageMock_SaveFailurePropagates(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGenerateAssistantForMessageMock_ImageRitualBranch proves that a chat message carrying
-// the image-generate system ritual routes to handleImageGenerateRitual instead of the normal
-// mock-adapter echo pipeline, even under mock mode. Uses the same test-hook seam as
-// TestHandleImageGenerateRitual_MockMode_PersistsFixturePNG so no real datastore is needed.
-func TestGenerateAssistantForMessageMock_ImageRitualBranch(t *testing.T) {
-	t.Parallel()
-	chatID := uuid.New()
-	a := &Agent{logger: zap.NewNop(), mockLLM: true, testHooks: agentTestHooks{
-		ImageRitualCreateChatMessage: func(_ context.Context, _ uuid.UUID, cm models.ChatMessage) (*models.ChatMessage, error) {
-			return &models.ChatMessage{ID: uuid.New(), ChatID: chatID, Message: cm.Message, Origin: cm.Origin, ToolCalls: cm.ToolCalls}, nil
-		},
-		ImageRitualCreateFileAttachment: func(_ context.Context, _ uuid.UUID, fa models.FileAttachment) (*models.FileAttachment, error) {
-			return &models.FileAttachment{ID: uuid.New(), Name: fa.Name, FileType: fa.FileType}, nil
-		},
-		ImageRitualPersistImage: func(_ context.Context, _ uuid.UUID, _ *models.FileAttachment, _ string) error {
-			return nil
-		},
-	}}
-	chatMessage := &models.ChatMessage{
-		ChatID:  chatID,
-		Message: "draw a fox",
-		Rituals: []*models.Ritual{{ID: SystemRitualIDImageGenerate}},
-	}
-	chatCtx := &chatContext{model: models.DefaultModelName, chat: &models.Chat{ID: chatID}}
-	mc := &provider.ModelContext{}
-	mc.Append(provider.SegmentKindUserMessage, provider.RoleUser, "context", false)
-
-	agentMessage, result, err := a.generateAssistantForMessageMock(context.Background(), uuid.New(), &models.Job{}, chatMessage, chatCtx, mc)
-	require.NoError(t, err)
-	require.NotNil(t, agentMessage)
-	require.NotNil(t, result)
-	require.Contains(t, result.Text, "draw a fox")
-}
-
 // --- saveAgentResponse ---
 
 func TestSaveAgentResponse_CreateChatMessageErrorIsWrapped(t *testing.T) {

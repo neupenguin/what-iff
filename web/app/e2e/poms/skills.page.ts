@@ -16,7 +16,6 @@ export class SkillsPage {
     this.nameInput = this.page.getByPlaceholder('e.g., Source Analysis');
     this.descriptionInput = this.page.getByPlaceholder('Brief description of what this skill does');
     this.contentInput = this.page.getByPlaceholder('The prompt text that will be inserted into chat when this skill is called...');
-    this.readOnlySystemMarker = this.page.getByLabel('Read-only system skill');
     this.heading = this.page.getByRole('heading', { name: 'Skills', level: 1 });
     this.searchInput = this.page.getByPlaceholder('Search skills...');
     this.emptyMessage = this.page.getByText('No personal skills match your filters.');
@@ -49,19 +48,19 @@ export class SkillsPage {
   readonly emptyMessage: Locator;
 
   /**
-   * Row actions are icon buttons labelled "Edit <name>" (or "View <name>" for
-   * built-in skills) and "Delete <name>"; anchored so a skill name containing
-   * "edit" or "delete" can't match the other button.
+   * Row actions are icon buttons labelled "Edit <name>" and "Delete <name>";
+   * anchored so a skill name containing "edit" or "delete" can't match the
+   * other button.
    */
   async openEditor(name: string): Promise<void> {
-    await this.card(name).getByRole('button', { name: /^(Edit|View) / }).click();
+    await this.card(name).getByRole('button', { name: /^Edit / }).click();
   }
 
   async requestDelete(name: string): Promise<void> {
     await this.card(name).getByRole('button', { name: /^Delete / }).click();
   }
 
-  /** The Delete button is disabled for built-in system skills. */
+  /** A skill card's Delete button. */
   deleteButton(name: string): Locator {
     return this.card(name).getByRole('button', { name: /^Delete / });
   }
@@ -101,9 +100,6 @@ export class SkillsPage {
   readonly descriptionInput: Locator;
 
   readonly contentInput: Locator;
-
-  /** Read-only marker shown on system skills — the form is disabled for them. */
-  readonly readOnlySystemMarker: Locator;
 
   async fillEditor(details: { name: string; description: string; content: string }): Promise<void> {
     await this.nameInput.fill(details.name);
