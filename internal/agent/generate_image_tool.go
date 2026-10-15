@@ -311,11 +311,12 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 	if a.meter != nil {
 		for i := 0; i < successCount; i++ {
 			a.meter.Record(ctx, qd, metering.Usage{
-				UserID:       chat.UserID,
-				ActionType:   models.ActionTypeImageGeneration,
-				ChatID:       chat.ID.String(),
-				ImageQuality: string(quality),
-				Source:       metering.TurnSourceFromContext(ctx),
+				UserID:        chat.UserID,
+				ActionType:    models.ActionTypeImageGeneration,
+				ChatID:        chat.ID.String(),
+				ImageQuality:  string(quality),
+				ImageProvider: string(generator.Provider()),
+				Source:        metering.TurnSourceFromContext(ctx),
 				Metadata: map[string]interface{}{
 					"path":        "tool",
 					"engine":      generator.Model(),

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
 	"github.com/theimaginaryfoundation/what-iff/internal/imageutil"
+	"github.com/theimaginaryfoundation/what-iff/internal/metering"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
@@ -136,6 +137,7 @@ func (a *Agent) handleImageGenerateRitual(ctx context.Context, userID uuid.UUID,
 		var generator provider.ImageGenerator
 		generator, err = a.imageGeneratorForUser(ctx, userID)
 		if err == nil {
+			chatCtx.ritualImageGenerator = generator
 			image, err = generator.GenerateImage(ctx, prompt, provider.ImageQualityLow, provider.ImageAspectRatioSquare)
 		}
 	}
@@ -253,4 +255,24 @@ func (a *Agent) persistImageRitualAttachment(ctx context.Context, userID uuid.UU
 		return nil
 	}
 	return nil
+}
+
+// ritualImageUsage attributes an image-generation ritual turn's usage to the
+// vendor that drew its image: ImageProvider for pricing, and the same engine and
+// provider metadata the generate_image tool records, for display. A turn whose
+// ritual never reached a vendor is left as it was (priced as OpenAI).
+func ritualImageUsage(usage *metering.Usage, chatCtx *chatContext) {
+	if chatCtx == nil || chatCtx.ritualImageGenerator == nil {
+		return
+	}
+	generator := chatCtx.ritualImageGenerator
+	usage.ImageProvider = string(generator.Provider())
+	metadata := make(map[string]interface{}, len(usage.Metadata)+3)
+	for k, v := range usage.Metadata {
+		metadata[k] = v
+	}
+	metadata["path"] = "ritual"
+	metadata["engine"] = generator.Model()
+	metadata["provider"] = string(generator.Provider())
+	usage.Metadata = metadata
 }
