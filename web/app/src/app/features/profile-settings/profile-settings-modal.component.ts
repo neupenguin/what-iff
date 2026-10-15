@@ -8,19 +8,21 @@ import { firstValueFrom } from 'rxjs';
 import { ExternalAuthProvider } from '../../core/auth/external-auth.provider';
 import { Model } from '../../core/models/model.model';
 import { Personality } from '../../core/models/personality.model';
-import { UpdatePasswordRequest, UpdateUserRequest, UserPreferences, UserResponse } from '../../core/models/user.model';
+import {
+  IMAGE_GENERATION_PROVIDER_LABELS,
+  ImageGenerationProvider,
+  UpdatePasswordRequest,
+  UpdateUserRequest,
+  UserPreferences,
+  UserResponse,
+} from '../../core/models/user.model';
 import { AuthService } from '../../core/services/auth.service';
 import { LoggerService } from '../../core/services/logger.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeMode, ThemeService } from '../../core/services/theme.service';
 import { UserPreferencesService } from '../../core/services/user-preferences.service';
-import {
-  TIMEZONE_MAX_LENGTH,
-  detectBrowserTimezone,
-  listTimezones,
-  timezoneValidator,
-} from '../../core/utils/timezone.helpers';
+import { TIMEZONE_MAX_LENGTH, detectBrowserTimezone, listTimezones, timezoneValidator } from '../../core/utils/timezone.helpers';
 import { ModalComponent } from '../../shared/ui/modal/modal.component';
 import { UserIconComponent } from '../../shared/ui/icons/icons';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
@@ -47,9 +49,7 @@ export class ProfileSettingsModalComponent {
   private readonly router = inject(Router);
   private readonly logger = inject(LoggerService);
 
-  readonly tabs: Array<{ id: ProfileSettingsTab; label: string; icon: 'profile' }> = [
-    { id: 'profile', label: 'Profile', icon: 'profile' },
-  ];
+  readonly tabs: Array<{ id: ProfileSettingsTab; label: string; icon: 'profile' }> = [{ id: 'profile', label: 'Profile', icon: 'profile' }];
 
   readonly profileForm = this.fb.group({
     email: ['', [Validators.required, Validators.email, Validators.maxLength(255)]],
@@ -57,14 +57,27 @@ export class ProfileSettingsModalComponent {
     last_name: ['', [Validators.maxLength(50)]],
     timezone: ['', [Validators.maxLength(TIMEZONE_MAX_LENGTH), timezoneValidator]],
   });
-  readonly passwordForm = this.fb.group({
-    current_password: [''],
-    new_password: ['', [Validators.minLength(8)]],
-    confirm_password: [''],
-  }, { validators: this.passwordMatchValidator });
+  readonly passwordForm = this.fb.group(
+    {
+      current_password: [''],
+      new_password: ['', [Validators.minLength(8)]],
+      confirm_password: [''],
+    },
+    { validators: this.passwordMatchValidator },
+  );
 
   readonly currentUser = signal<UserResponse | null>(null);
   readonly preferences = signal<UserPreferences | null>(null);
+  /** Image vendors to choose between; the picker is hidden when there is no choice. */
+  readonly imageGenerationProviders = computed(() =>
+    (this.preferences()?.image_generation_providers ?? []).map(id => ({ id, label: IMAGE_GENERATION_PROVIDER_LABELS[id] ?? id })),
+  );
+  /** The vendor images actually use: the stored pick when available, else the first offered (the server's fallback). */
+  readonly imageGenerationProvider = computed(() => {
+    const offered = this.preferences()?.image_generation_providers ?? [];
+    const chosen = this.preferences()?.image_generation_provider;
+    return chosen && offered.includes(chosen) ? chosen : (offered[0] ?? '');
+  });
   readonly models = signal<readonly Model[]>([]);
   readonly personalities = signal<readonly Personality[]>([]);
   readonly themeMode = signal<ThemeMode>('system');
@@ -100,7 +113,11 @@ export class ProfileSettingsModalComponent {
     const user = this.currentUser();
     if (!user) return '?';
     const parts = [user.first_name, user.last_name].filter(Boolean);
-    if (parts.length > 0) return parts.map(part => String(part).charAt(0).toUpperCase()).join('').slice(0, 2);
+    if (parts.length > 0)
+      return parts
+        .map(part => String(part).charAt(0).toUpperCase())
+        .join('')
+        .slice(0, 2);
     return (user.username || user.email || '?').slice(0, 2).toUpperCase();
   });
 
@@ -118,7 +135,9 @@ export class ProfileSettingsModalComponent {
     });
   }
 
-  close(): void { this.modal.close(); }
+  close(): void {
+    this.modal.close();
+  }
 
   /** Selects the browser's timezone in the form; it is saved with the next Save Changes. */
   useBrowserTimezone(): void {
@@ -126,7 +145,9 @@ export class ProfileSettingsModalComponent {
     control.setValue(this.browserTimezone);
     control.markAsDirty();
   }
-  setTab(tab: ProfileSettingsTab): void { this.modal.setTab(tab); }
+  setTab(tab: ProfileSettingsTab): void {
+    this.modal.setTab(tab);
+  }
 
   /** Closes the modal and opens the Import & Export screen. */
   goToData(): void {
@@ -145,11 +166,12 @@ export class ProfileSettingsModalComponent {
     await this.savePreferences({ default_model_id: modelId }, 'Default model updated.');
   }
 
+  async onImageGenerationProviderChange(provider: ImageGenerationProvider): Promise<void> {
+    await this.savePreferences({ image_generation_provider: provider }, 'Image generation provider updated.');
+  }
+
   async onDefaultPersonalityChange(personalityId: string): Promise<void> {
-    await this.savePreferences(
-      { default_personality_id: personalityId || undefined },
-      'Default personality updated.',
-    );
+    await this.savePreferences({ default_personality_id: personalityId || undefined }, 'Default personality updated.');
   }
 
   async saveProfile(): Promise<void> {
@@ -271,7 +293,7 @@ export class ProfileSettingsModalComponent {
   }
 
   private async savePreferences(
-    patch: Partial<Pick<UserPreferences, 'default_model_id' | 'default_personality_id'>>,
+    patch: Partial<Pick<UserPreferences, 'default_model_id' | 'default_personality_id' | 'image_generation_provider'>>,
     successMessage: string,
   ): Promise<void> {
     const current = this.preferences();
@@ -283,9 +305,7 @@ export class ProfileSettingsModalComponent {
       if ('default_personality_id' in patch && patch.default_personality_id === undefined) {
         delete updatedPreferences.default_personality_id;
       }
-      const updated = await firstValueFrom(
-        this.preferencesService.updateUserPreferences(updatedPreferences),
-      );
+      const updated = await firstValueFrom(this.preferencesService.updateUserPreferences(updatedPreferences));
       this.preferences.set(updated);
       this.message.set({ type: 'success', text: successMessage });
     } catch (error) {

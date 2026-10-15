@@ -128,8 +128,8 @@ func (g *QwenImageGenerator) GenerateImage(ctx context.Context, prompt string, q
 	}
 	call := startGenAICall(ctx, g.tel, telemetry.DependencyQwen, g.model, genAIOpGenerateImage)
 	var resp qwenImageResponse
-	url := joinURL(g.baseURL, "services/aigc/multimodal-generation/generation")
-	err := g.postJSON(ctx, url, nil, buildQwenImageRequest(g.model, prompt, quality, aspectRatio), &resp)
+	endpoint := joinURL(g.baseURL, "services/aigc/multimodal-generation/generation")
+	err := g.postJSON(ctx, endpoint, nil, buildQwenImageRequest(g.model, prompt, quality, aspectRatio), &resp)
 	call.end(err)
 	if err != nil {
 		return GeneratedImage{}, qwenImageError(err)

@@ -45,7 +45,7 @@ type fakeImageVendor struct {
 
 func newFakeImageVendor(t *testing.T) *fakeImageVendor {
 	f := &fakeImageVendor{t: t}
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && len(r.URL.Path) > len("/files/") && r.URL.Path[:len("/files/")] == "/files/" {
 			_, _ = w.Write(f.file)
 			return
@@ -245,8 +245,15 @@ func TestQwenImageGenerator(t *testing.T) {
 	})
 }
 
+func TestImageDownloadRefusesNonHTTPSURLs(t *testing.T) {
+	for _, u := range []string{"http://169.254.169.254/latest/meta-data", "file:///etc/passwd", "", "https://"} {
+		_, err := imageHTTPClient{}.download(context.Background(), u)
+		require.ErrorContains(t, err, "non-https", u)
+	}
+}
+
 func TestImageDownloadRejectsNonImages(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html>expired</html>"))
 	}))
 	defer srv.Close()

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
@@ -91,12 +92,12 @@ func (c imageHTTPClient) httpClient() *http.Client {
 // postJSON POSTs body to url and decodes a 2xx response into out. A non-2xx
 // response is returned as *imageAPIError carrying the body, so adapters can
 // recognise their vendor's content-policy refusals.
-func (c imageHTTPClient) postJSON(ctx context.Context, url string, headers map[string]string, body, out any) error {
+func (c imageHTTPClient) postJSON(ctx context.Context, endpoint string, headers map[string]string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encode image request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("build image request: %w", err)
 	}
@@ -123,9 +124,16 @@ func (c imageHTTPClient) postJSON(ctx context.Context, url string, headers map[s
 }
 
 // download fetches a result image and returns it base64-encoded with its
-// sniffed MIME type. Result URLs are pre-signed, so no credential is sent.
-func (c imageHTTPClient) download(ctx context.Context, url string) (GeneratedImage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// sniffed MIME type. Result URLs are pre-signed object-store links on the
+// vendor's CDN. The URL comes from the vendor's response, so only https is
+// followed: a plain-http or other-scheme link is refused rather than fetched
+// through the provider client.
+func (c imageHTTPClient) download(ctx context.Context, rawURL string) (GeneratedImage, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return GeneratedImage{}, fmt.Errorf("download image: refusing non-https result URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return GeneratedImage{}, fmt.Errorf("build image download: %w", err)
 	}

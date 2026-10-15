@@ -128,10 +128,10 @@ func (g *GeminiImageGenerator) GenerateImage(ctx context.Context, prompt string,
 	if prompt == "" {
 		return GeneratedImage{}, fmt.Errorf("prompt is required")
 	}
-	url := joinURL(g.baseURL, "models/"+g.model+":generateContent")
+	endpoint := joinURL(g.baseURL, "models/"+g.model+":generateContent")
 	call := startGenAICall(ctx, g.tel, telemetry.DependencyGemini, g.model, genAIOpGenerateImage)
 	var resp geminiImageResponse
-	err := g.postJSON(ctx, url, nil, buildGeminiImageRequest(prompt, quality, aspectRatio), &resp)
+	err := g.postJSON(ctx, endpoint, nil, buildGeminiImageRequest(prompt, quality, aspectRatio), &resp)
 	if err == nil {
 		call.recordUsage(genAIUsage{Input: resp.UsageMetadata.PromptTokenCount, Output: resp.UsageMetadata.CandidatesTokenCount})
 	}

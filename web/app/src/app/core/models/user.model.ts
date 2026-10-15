@@ -75,4 +75,21 @@ export interface UserPreferences {
    * the list wholesale, so send the full set and use `[]` to clear all favorites.
    */
   favorite_model_ids?: string[];
+  /**
+   * The vendor the generate_image tool and image ritual call. Always present on a
+   * response (`openai` when never chosen); omitted on update leaves it unchanged.
+   */
+  image_generation_provider?: ImageGenerationProvider;
+  /** Read-only: the image vendors this deployment has keys for, in display order. */
+  image_generation_providers?: ImageGenerationProvider[];
 }
+
+export type ImageGenerationProvider = 'openai' | 'google' | 'zai' | 'qwen';
+
+/** Display names for the image vendors, naming the model each one uses. */
+export const IMAGE_GENERATION_PROVIDER_LABELS: Record<ImageGenerationProvider, string> = {
+  openai: 'OpenAI (GPT Image)',
+  google: 'Google (Gemini image)',
+  zai: 'Z.ai (GLM-Image)',
+  qwen: 'Qwen (Qwen-Image)',
+};
