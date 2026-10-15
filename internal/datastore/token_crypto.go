@@ -104,3 +104,14 @@ func (t *tokenCrypto) Decrypt(ciphertext string) (string, error) {
 
 	return string(plaintext), nil
 }
+
+// EncryptToken encrypts a secret for storage with the deployment's token key,
+// for packages that keep their own tables but share the one key.
+func (d *Datastore) EncryptToken(plaintext string) (string, error) {
+	return d.encryptTokenForWrite(plaintext)
+}
+
+// DecryptToken reverses EncryptToken.
+func (d *Datastore) DecryptToken(ciphertext string) (string, error) {
+	return d.decryptTokenForRead(ciphertext)
+}

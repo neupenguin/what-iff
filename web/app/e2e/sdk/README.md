@@ -26,8 +26,7 @@
     its reply)
   - memories — `createMemory`, `createMemoriesBatch`, `listMemories`,
     `deleteMemory`
-  - rituals (skills) — `createRitual`, `listRituals`, `listSystemRituals`,
-    `deleteRitual`
+  - rituals (skills) — `createRitual`, `listRituals`, `deleteRitual`
   - webhook tokens — `createWebhookToken`, `listWebhookTokens`,
     `revokeWebhookToken`
   - agent jobs — `listAgentJobs`, `parseSchedule`, `deleteAgentJob`

@@ -16,14 +16,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-// --- loadImageBytesForClaude ---
+// --- loadImageBytesForVision ---
 
-func TestLoadImageBytesForClaude_NoAttachmentsReturnsEmptyMap(t *testing.T) {
+func TestLoadImageBytesForVision_NoAttachmentsReturnsEmptyMap(t *testing.T) {
 	t.Parallel()
 	a := &Agent{logger: zap.NewNop()}
 	chatMessage := &models.ChatMessage{ChatID: uuid.New()}
 
-	got := a.loadImageBytesForClaude(context.Background(), uuid.New(), chatMessage)
+	got := a.loadImageBytesForVision(context.Background(), uuid.New(), chatMessage)
 	require.NotNil(t, got)
 	require.Empty(t, got)
 }

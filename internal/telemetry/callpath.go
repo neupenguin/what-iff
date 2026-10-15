@@ -13,7 +13,6 @@ const (
 	CallPathScratchpad          CallPath = "scratchpad"
 	CallPathMemory              CallPath = "memory"
 	CallPathConversationSummary CallPath = "conversation_summary"
-	CallPathImageRitual         CallPath = "image_ritual"
 	CallPathChatName            CallPath = "chat_name"
 	CallPathGeneratePersonality CallPath = "generate_personality"
 	CallPathExpressionGrid      CallPath = "expression_grid"

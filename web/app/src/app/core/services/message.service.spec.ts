@@ -141,6 +141,7 @@ describe('MessageService', () => {
         const req = httpMock.expectOne(r => r.url.endsWith('/chat-1/chat-message'));
         expect(req.request.params.get('page')).toBe('1');
         expect(req.request.params.get('cursor')).toBeNull();
+        expect(req.request.params.get('include_total')).toBe('false');
         req.flush({ results: [newer, older], page: 1, total_count: 2, next_cursor: 'cursor-older' });
 
         expect(service.getMessages().map(m => m.id)).toEqual(['msg-1', 'msg-2']);
@@ -163,6 +164,7 @@ describe('MessageService', () => {
         expect(older.request.params.get('cursor')).toBe('cursor-older');
         expect(older.request.params.get('page')).toBeNull();
         expect(older.request.params.get('limit')).toBe('200');
+        expect(older.request.params.get('include_total')).toBe('false');
         older.flush({
             results: [
                 makeMessage({ id: 'msg-2', sent_at: '2026-06-23T00:00:02Z' }),

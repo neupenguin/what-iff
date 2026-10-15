@@ -12,7 +12,7 @@ import { ImageGalleryService } from '../../core/services/image-gallery.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { RitualService } from '../../core/services/ritual.service';
-import { isSandboxed } from '../../core/models/chat.model';
+import { Chat, isSandboxed } from '../../core/models/chat.model';
 import { ChatMessage, MessageBookmark } from '../../core/models/message.model';
 import {
   createPendingFileAttachment,
@@ -28,6 +28,8 @@ import { ThreadBookmarksComponent } from './components/thread-bookmarks/thread-b
 import { MessageService } from '../../core/services/message.service';
 import { PersonaPickerDialogComponent } from '../personality/picker/persona-picker-dialog.component';
 import { personalityCoverUrl } from '../personality/helpers/cover-image.helpers';
+import { startChatFailureAlert } from '../personality/helpers/start-chat-failure.helpers';
+import { ConfirmationService } from '../../core/services/confirmation.service';
 import { AuthImagePipe } from '../../core/pipes/auth-image.pipe';
 import { ToolCallDetailModalComponent } from './components/tool-call-detail-modal/tool-call-detail-modal.component';
 import {
@@ -106,6 +108,7 @@ export class ChatPageComponent implements OnInit, OnDestroy {
   private readonly imageGallery = inject(ImageGalleryService);
   private readonly modelService = inject(ModelService);
   private readonly personalityService = inject(PersonalityService);
+  private readonly confirmation = inject(ConfirmationService);
   private readonly ritualService = inject(RitualService);
   private readonly messageService = inject(MessageService);
   private readonly route = inject(ActivatedRoute);
@@ -464,6 +467,9 @@ export class ChatPageComponent implements OnInit, OnDestroy {
     void this.threadList.refresh();
     this.subscriptions.add(this.modelService.getModels().subscribe());
     this.reloadPersonalities();
+    // Keep names, accents and avatars current when a personality is created, edited or removed
+    // elsewhere while this page stays mounted (#318).
+    this.subscriptions.add(this.personalityService.changes$.subscribe(() => this.reloadPersonalities()));
     this.subscriptions.add(
       this.route.paramMap.subscribe(params => {
         const id = params.get('id');
@@ -556,7 +562,19 @@ export class ChatPageComponent implements OnInit, OnDestroy {
   async onPersonaPicked(personality: Personality): Promise<void> {
     this.personaPickerOpen.set(false);
     if (this.personaPickerMode() === 'new-thread') {
-      const chat = await this.session.createThread({ personalityId: personality.id });
+      let chat: Chat;
+      try {
+        chat = await this.session.createThread({ personalityId: personality.id });
+      } catch (error) {
+        // Never fail silently (#318); see AppLayoutComponent.onPersonaPicked.
+        console.error('Failed to start chat with personality', error);
+        this.personalityService.invalidate();
+        await this.confirmation.alert({
+          ...startChatFailureAlert(personality.name, error),
+          type: 'danger',
+        });
+        return;
+      }
       this.threadList.setActiveThreadId(chat.id);
       await this.router.navigate(['/chat', chat.id]);
       void this.threadList.refresh();

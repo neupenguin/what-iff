@@ -48,15 +48,6 @@ func (m *memRows) DeleteFileAttachment(_ context.Context, _ uuid.UUID, id uuid.U
 	return nil
 }
 
-func (m *memRows) FileAttachmentProviderFileShared(_ context.Context, id uuid.UUID, fileID string) (bool, error) {
-	for rid, r := range m.rows {
-		if rid != id && r.FileID != nil && *r.FileID == fileID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (m *memRows) ReferencedFileAttachmentKeys(_ context.Context, keys []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	for _, k := range keys {
@@ -114,8 +105,7 @@ func TestDeleteFileAttachment_RemovesUnreferencedObjectAndThumbnail(t *testing.T
 	put(t, fs, img.S3Key)
 	put(t, fs, thumb)
 
-	agent := &stubAgent{store: fs}
-	h := &Handler{logger: zap.NewNop(), ds: newMemRows(img), agent: agent}
+	h := &Handler{logger: zap.NewNop(), ds: newMemRows(img), agent: &stubAgent{store: fs}}
 	rec := httptest.NewRecorder()
 	h.DeleteFileAttachment(rec, deleteRequest(userID, img.ID))
 
@@ -127,33 +117,29 @@ func TestDeleteFileAttachment_RemovesUnreferencedObjectAndThumbnail(t *testing.T
 func TestDeleteFileAttachment_KeepsObjectSharedByReferenceCopy(t *testing.T) {
 	fs := newLocalStore(t)
 	userID := uuid.New()
-	fileID := "file-shared"
-	orig := models.FileAttachment{ID: uuid.New(), Name: "cat.png", FileType: "image/png", FileID: &fileID}
+	orig := models.FileAttachment{ID: uuid.New(), Name: "cat.png", FileType: "image/png"}
 	orig.S3Key = storage.FileKeyForImage(userID, orig.ID, orig.Name)
-	// A reference copy (datastore.CreateFileAttachmentReference) reuses s3_key and FileID.
-	ref := models.FileAttachment{ID: uuid.New(), Name: orig.Name, FileType: orig.FileType, FileID: &fileID, S3Key: orig.S3Key}
+	// A reference copy (datastore.CreateFileAttachmentReference) reuses s3_key.
+	ref := models.FileAttachment{ID: uuid.New(), Name: orig.Name, FileType: orig.FileType, S3Key: orig.S3Key}
 	origThumb := storage.FileKeyForImageThumbnail(userID, orig.ID)
 	put(t, fs, orig.S3Key)
 	put(t, fs, origThumb)
 
 	rows := newMemRows(orig, ref)
-	agent := &stubAgent{store: fs}
-	h := &Handler{logger: zap.NewNop(), ds: rows, agent: agent}
+	h := &Handler{logger: zap.NewNop(), ds: rows, agent: &stubAgent{store: fs}}
 
-	// Deleting the original keeps the shared object and provider file for the reference copy.
+	// Deleting the original keeps the shared object for the reference copy.
 	rec := httptest.NewRecorder()
 	h.DeleteFileAttachment(rec, deleteRequest(userID, orig.ID))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, exists(t, fs, orig.S3Key), "object is still referenced by the copy")
 	require.False(t, exists(t, fs, origThumb), "the thumbnail is keyed by the deleted row's id, so it goes")
-	require.Empty(t, agent.deletedFileID, "provider file is still referenced by the copy")
 
-	// Deleting the last reference removes the object and the provider file.
+	// Deleting the last reference removes the object.
 	rec = httptest.NewRecorder()
 	h.DeleteFileAttachment(rec, deleteRequest(userID, ref.ID))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.False(t, exists(t, fs, orig.S3Key))
-	require.Equal(t, fileID, agent.deletedFileID)
 }
 
 func TestDeleteFileAttachment_ObjectDeleteFailureDoesNotFailDelete(t *testing.T) {

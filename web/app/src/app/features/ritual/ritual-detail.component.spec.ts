@@ -16,7 +16,7 @@ import { NULL_PERSONALITY_ID } from '../../core/constants/app.constants';
 describe('RitualDetailComponent', () => {
     let component: RitualDetailComponent;
     let fixture: ComponentFixture<RitualDetailComponent>;
-    let mockRitualService: Pick<MockedObject<RitualService>, 'listSystemRituals' | 'getRitual' | 'updateRitual' | 'deleteRitual'>;
+    let mockRitualService: Pick<MockedObject<RitualService>, 'getRitual' | 'updateRitual' | 'deleteRitual'>;
     let mockPersonalityService: Pick<MockedObject<PersonalityService>, 'listPersonalities'>;
     let mockConfirmationService: Pick<MockedObject<ConfirmationService>, 'confirm' | 'alert' | 'setLoading' | 'close'>;
     let mockMcpServerService: Pick<MockedObject<MCPServerService>, 'listMCPServers'>;
@@ -63,11 +63,10 @@ describe('RitualDetailComponent', () => {
 
     beforeEach(async () => {
         mockRitualService = {
-            listSystemRituals: vi.fn().mockName("RitualService.listSystemRituals"),
             getRitual: vi.fn().mockName("RitualService.getRitual"),
             updateRitual: vi.fn().mockName("RitualService.updateRitual"),
             deleteRitual: vi.fn().mockName("RitualService.deleteRitual")
-        } as unknown as Pick<MockedObject<RitualService>, 'listSystemRituals' | 'getRitual' | 'updateRitual' | 'deleteRitual'>;
+        } as unknown as Pick<MockedObject<RitualService>, 'getRitual' | 'updateRitual' | 'deleteRitual'>;
         mockPersonalityService = {
             listPersonalities: vi.fn().mockName("PersonalityService.listPersonalities")
         } as unknown as Pick<MockedObject<PersonalityService>, 'listPersonalities'>;
@@ -111,7 +110,6 @@ describe('RitualDetailComponent', () => {
             ]
         }).compileComponents();
 
-        mockRitualService.listSystemRituals.mockReturnValue(of([]));
         mockRitualService.getRitual.mockReturnValue(of(mockRitual));
         mockPersonalityService.listPersonalities.mockReturnValue(of({
             results: mockPersonalities,

@@ -9,7 +9,7 @@ import { Ritual } from '../models/ritual.model';
 
 describe('RitualViewService', () => {
     let service: RitualViewService;
-    let ritualService: Pick<MockedObject<RitualService>, 'listRituals' | 'listSystemRituals' | 'deleteRitual'>;
+    let ritualService: Pick<MockedObject<RitualService>, 'listRituals' | 'deleteRitual'>;
 
     const ritual: Ritual = {
         id: 'r-1',
@@ -25,11 +25,9 @@ describe('RitualViewService', () => {
     beforeEach(() => {
         ritualService = {
             listRituals: vi.fn().mockName("RitualService.listRituals"),
-            listSystemRituals: vi.fn().mockName("RitualService.listSystemRituals"),
             deleteRitual: vi.fn().mockName("RitualService.deleteRitual")
-        } as unknown as Pick<MockedObject<RitualService>, 'listRituals' | 'listSystemRituals' | 'deleteRitual'>;
+        } as unknown as Pick<MockedObject<RitualService>, 'listRituals' | 'deleteRitual'>;
         ritualService.listRituals.mockReturnValue(of({ results: [ritual], total_count: 1, page: 1 }));
-        ritualService.listSystemRituals.mockReturnValue(of([]));
         ritualService.deleteRitual.mockReturnValue(of(void 0));
 
         TestBed.configureTestingModule({

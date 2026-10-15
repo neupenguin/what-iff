@@ -37,6 +37,7 @@ type fakeStore struct {
 	referencedKeysFn          func(ctx context.Context, keys []string) (map[string]bool, error)
 	existingIDsFn             func(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
 	createFileAttachmentFn    func(ctx context.Context, userID uuid.UUID, fileAttachment models.FileAttachment) (*models.FileAttachment, error)
+	listChatMessagesFn        func(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, filters models.ChatMessageFilters) (*models.PaginatedResponse, error)
 }
 
 func (f *fakeStore) CreateChat(ctx context.Context, userID uuid.UUID, chat models.Chat) (*models.Chat, error) {
@@ -79,6 +80,9 @@ func (f *fakeStore) ReferencedFileAttachmentKeys(ctx context.Context, keys []str
 	return map[string]bool{}, nil
 }
 func (f *fakeStore) ListChatMessages(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, filters models.ChatMessageFilters) (*models.PaginatedResponse, error) {
+	if f.listChatMessagesFn != nil {
+		return f.listChatMessagesFn(ctx, userID, chatID, pageNum, pageSize, filters)
+	}
 	return nil, errors.New("not implemented")
 }
 func (f *fakeStore) ListChatMessagesBefore(ctx context.Context, userID, chatID uuid.UUID, beforeSentAt time.Time, beforeID uuid.UUID, pageSize int, filters models.ChatMessageFilters) (*models.PaginatedResponse, error) {
@@ -113,9 +117,6 @@ func (f *fakeStore) SetFileAttachmentS3Key(ctx context.Context, userID, id uuid.
 }
 func (f *fakeStore) GetAvailableRituals(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, filters models.RitualFilters) (*models.PaginatedResponse, error) {
 	return nil, errors.New("not implemented")
-}
-func (f *fakeStore) GetSystemBindingsForUser(ctx context.Context, userID uuid.UUID) ([]*models.SystemRitualBinding, error) {
-	return nil, nil
 }
 func (f *fakeStore) ListChatMCPServers(ctx context.Context, userID, chatID uuid.UUID) ([]*models.MCPServer, error) {
 	return nil, errors.New("not implemented")
@@ -232,6 +233,43 @@ func TestListChats_TrimsSearchFilter(t *testing.T) {
 	}
 	if gotFilters.Query == nil || *gotFilters.Query != "checkpoint" {
 		t.Fatalf("expected trimmed search filter, got %#v", gotFilters.Query)
+	}
+}
+
+func TestGetChatMessages_IncludeTotalParam(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		query    string
+		wantSkip bool
+	}{
+		{query: "", wantSkip: false},
+		{query: "&include_total=true", wantSkip: false},
+		{query: "&include_total=false", wantSkip: true},
+	} {
+		userID, chatID := uuid.New(), uuid.New()
+		var gotFilters models.ChatMessageFilters
+		store := &fakeStore{
+			listChatMessagesFn: func(ctx context.Context, uid, cid uuid.UUID, pageNum, pageSize int, filters models.ChatMessageFilters) (*models.PaginatedResponse, error) {
+				gotFilters = filters
+				return &models.PaginatedResponse{Results: []any{}, Page: pageNum}, nil
+			},
+		}
+		h := NewHandler(store, zap.NewNop(), nil, HandlerConfig{})
+		router := mux.NewRouter()
+		h.RegisterRoutes(router)
+
+		req := httptest.NewRequest(http.MethodGet, "/chat/"+chatID.String()+"/chat-message?page=1"+tc.query, nil)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%q: expected status %d, got %d: %s", tc.query, http.StatusOK, w.Code, w.Body.String())
+		}
+		if gotFilters.SkipTotal != tc.wantSkip {
+			t.Fatalf("%q: SkipTotal = %v, want %v", tc.query, gotFilters.SkipTotal, tc.wantSkip)
+		}
 	}
 }
 

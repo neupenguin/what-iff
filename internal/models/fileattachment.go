@@ -26,11 +26,16 @@ const (
 
 // FileAttachment represents a file that has been uploaded and attached to the system
 type FileAttachment struct {
-	ID       uuid.UUID `json:"id"`
-	UserID   uuid.UUID `json:"user_id"`
-	FileID   *string   `json:"file_id,omitempty"`
-	Name     string    `json:"name"`
-	FileType string    `json:"file_type"`
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+	// FileID is the OpenAI Files API id of a file uploaded before uploads stopped being mirrored
+	// there.
+	//
+	// Deprecated: never set for new files and not read for anything; the file's bytes live in the
+	// object store. The column and field are kept only so old rows still load.
+	FileID   *string `json:"file_id,omitempty"`
+	Name     string  `json:"name"`
+	FileType string  `json:"file_type"`
 	// Description is optional user-provided context for gallery metadata.
 	Description *string `json:"description,omitempty"`
 	// FileContent is ephemeral base64 image data used only while forwarding a tool result

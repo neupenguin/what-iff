@@ -1,8 +1,6 @@
 package provider
 
 const (
-	DefaultTemperature         = 1
-	ScratchpadTemperature      = 1
 	DefaultMaxContentLength    = 8192
 	ScratchpadMaxContentLength = 2048
 	RoleDeveloper              = "developer"

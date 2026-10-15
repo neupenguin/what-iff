@@ -25,6 +25,7 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/modeltypes"
+	"github.com/theimaginaryfoundation/what-iff/internal/providerkeys"
 	"github.com/theimaginaryfoundation/what-iff/internal/pushnotify"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
@@ -67,7 +68,6 @@ const (
 	// cannot force a checkpoint every turn. Scheduled turn-count checkpointing is
 	// unaffected.
 	checkpointMinTurnsBetweenCheckpoints = 5
-	summaryMemoryBackfillBatchSize       = 50
 
 	MAX_PERSONALITY_FILES       = 40
 	maxToolCallRounds           = 10
@@ -136,6 +136,12 @@ type Agent struct {
 	pushNotifier pushnotify.Notifier
 	// webSearch backs the first-party web search tools; nil when not configured (ADR 0x021).
 	webSearch *websearch.Service
+	// imageGenerators are the image vendors this deployment can call, keyed by
+	// vendor; the user's preference picks one (imageGeneratorForUser).
+	imageGenerators map[models.ModelProvider]provider.ImageGenerator
+	// keyResolver answers which vendors the caller holds a key for; nil (an Agent
+	// built without NewAgent) treats every registered image generator as usable.
+	keyResolver providerkeys.Resolver
 	// pushEnabled is true when a real push implementation was wired (a non-nil
 	// PushNotifier). It lets the completion hook skip spawning a detached
 	// goroutine when push is off (the open-source default).
@@ -204,6 +210,11 @@ type AgentConfig struct {
 	// Nil defaults to context.Background().
 	LifecycleContext context.Context
 
+	// KeyResolver answers which provider credential each request carries. It
+	// is the only place that question is decided; provider clients are built
+	// without a credential and receive one at the transport.
+	KeyResolver providerkeys.Resolver
+
 	// HTTPClient, when non-nil, replaces the default HTTP client in every
 	// provider SDK client built by NewAgent. Mock mode passes
 	// provider.DenyNetworkHTTPClient() so no provider call can leave the
@@ -232,40 +243,37 @@ type AgentConfig struct {
 	// zero value sets no limits.
 	LLMCallTimeouts provider.CallTimeouts
 
-	// ZAIKey enables z.ai GLM models (Anthropic-compatible endpoint) when set.
-	ZAIKey string
 	// ZAIBaseURL overrides z.ai's Anthropic-compatible base URL. Empty uses the
 	// provider default (see server config).
 	ZAIBaseURL string
-	// GeminiKey enables Google Gemini models (OpenAI-compatible Chat Completions)
-	// when set.
-	GeminiKey string
 	// GeminiBaseURL overrides Google's OpenAI-compatible base URL. Empty uses
 	// provider.DefaultGeminiBaseURL.
 	GeminiBaseURL string
-	// MistralKey enables Mistral models (OpenAI-compatible Chat Completions); optional.
-	MistralKey string
 	// MistralBaseURL overrides Mistral's OpenAI-compatible base URL; optional.
 	MistralBaseURL string
-	// DeepSeekKey enables DeepSeek models (OpenAI-compatible Chat Completions); optional.
-	DeepSeekKey string
 	// DeepSeekBaseURL overrides DeepSeek's OpenAI-compatible base URL; optional.
 	DeepSeekBaseURL string
-	// QwenKey enables Qwen models via DashScope (OpenAI-compatible); optional.
-	QwenKey string
 	// QwenBaseURL overrides Qwen's OpenAI-compatible base URL; optional.
 	QwenBaseURL string
-	// XiaomiKey enables Xiaomi MiMo models (OpenAI-compatible Chat Completions); optional.
-	XiaomiKey string
 	// XiaomiBaseURL overrides Xiaomi MiMo's OpenAI-compatible base URL; optional.
 	XiaomiBaseURL string
 }
 
-// NewAgent creates a new agent wired to OpenAI (required) and optionally Claude.
-// Pass anthropicKey="" to start without Claude support.
-// cfg carries immutable agent configuration; zero value is safe for development.
-func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Telemetry, apiKey string, fileStore storage.FileStore, anthropicKey string, cfg AgentConfig) *Agent {
-	oaiOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+// NewAgent creates a new agent wired to every provider this deployment can
+// reach. Which those are is answered by cfg.KeyResolver, not by keys passed
+// here: a client is built without a credential and given one per request.
+//
+// cfg carries immutable agent configuration; the zero value is safe, and
+// resolves to a deployment with no credentials at all.
+func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Telemetry, fileStore storage.FileStore, cfg AgentConfig) *Agent {
+	if cfg.KeyResolver == nil {
+		// Nothing configured: every provider reports unconfigured rather than
+		// leaving a nil waiting for the first request.
+		cfg.KeyResolver = providerkeys.NewDeploymentResolver(nil)
+	}
+	// Clients are built without a credential; cfg.HTTPClient supplies one per
+	// request. A client built outside this constructor would bypass that.
+	oaiOpts := []option.RequestOption{}
 	if cfg.HTTPClient != nil {
 		oaiOpts = append(oaiOpts, option.WithHTTPClient(cfg.HTTPClient))
 	}
@@ -317,51 +325,58 @@ func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Teleme
 	// OpenAIProvider (set in the struct literal above).
 	a.recallTool = tools.NewRecallTool(ds, &oaiClient, newRecallDistiller(a), a.fileStore, logger)
 
-	if anthropicKey != "" {
-		a.ClaudeProvider = provider.NewClaudeProvider(anthropicKey, tel, cfg.HTTPClient)
+	// Every provider client is built the same way: constructed when this
+	// deployment can reach the provider at all, and given a credential per
+	// request by the shared HTTP client rather than at construction. Whether a
+	// particular caller can use it is a question for the request.
+	if cfg.KeyResolver.Configured(models.ModelProviderAnthropic) {
+		a.ClaudeProvider = provider.NewClaudeProvider("", tel, cfg.HTTPClient)
 	} else {
-		logger.Info("ANTHROPIC_API_KEY not set; Claude models will be unavailable")
+		logger.Info("no Anthropic credential configured; Claude models will be unavailable")
 	}
 
-	if cfg.ZAIKey != "" {
+	if cfg.KeyResolver.Configured(models.ModelProviderZAI) {
 		zaiBaseURL := cfg.ZAIBaseURL
 		if zaiBaseURL == "" {
 			zaiBaseURL = provider.DefaultZAIBaseURL
 		}
-		a.ZAIProvider = provider.NewClaudeProviderWithBaseURL(cfg.ZAIKey, zaiBaseURL, tel, cfg.HTTPClient)
+		a.ZAIProvider = provider.NewClaudeProviderWithBaseURL("", zaiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("ZAI_API_KEY not set; z.ai GLM models will be unavailable")
+		logger.Info("no z.ai credential configured; GLM models will be unavailable")
 	}
 
-	if cfg.GeminiKey != "" {
-		a.GeminiProvider = provider.NewGeminiProvider(cfg.GeminiKey, cfg.GeminiBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderGoogle) {
+		a.GeminiProvider = provider.NewGeminiProvider("", cfg.GeminiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("GEMINI_API_KEY not set; Gemini models will be unavailable")
+		logger.Info("no Gemini credential configured; Gemini models will be unavailable")
 	}
 
-	if cfg.MistralKey != "" {
-		a.MistralProvider = provider.NewMistralProvider(cfg.MistralKey, cfg.MistralBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderMistral) {
+		a.MistralProvider = provider.NewMistralProvider("", cfg.MistralBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("MISTRAL_API_KEY not set; Mistral models will be unavailable")
+		logger.Info("no Mistral credential configured; Mistral models will be unavailable")
 	}
 
-	if cfg.DeepSeekKey != "" {
-		a.DeepSeekProvider = provider.NewDeepSeekProvider(cfg.DeepSeekKey, cfg.DeepSeekBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderDeepSeek) {
+		a.DeepSeekProvider = provider.NewDeepSeekProvider("", cfg.DeepSeekBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("DEEPSEEK_API_KEY not set; DeepSeek models will be unavailable")
+		logger.Info("no DeepSeek credential configured; DeepSeek models will be unavailable")
 	}
 
-	if cfg.QwenKey != "" {
-		a.QwenProvider = provider.NewQwenProvider(cfg.QwenKey, cfg.QwenBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderQwen) {
+		a.QwenProvider = provider.NewQwenProvider("", cfg.QwenBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("QWEN_API_KEY not set; Qwen models will be unavailable")
+		logger.Info("no Qwen credential configured; Qwen models will be unavailable")
 	}
 
-	if cfg.XiaomiKey != "" {
-		a.XiaomiProvider = provider.NewXiaomiProvider(cfg.XiaomiKey, cfg.XiaomiBaseURL, tel, cfg.HTTPClient)
+	if cfg.KeyResolver.Configured(models.ModelProviderXiaomi) {
+		a.XiaomiProvider = provider.NewXiaomiProvider("", cfg.XiaomiBaseURL, tel, cfg.HTTPClient)
 	} else {
-		logger.Info("XIAOMI_API_KEY not set; Xiaomi MiMo models will be unavailable")
+		logger.Info("no Xiaomi MiMo credential configured; MiMo models will be unavailable")
 	}
+
+	a.imageGenerators = buildImageGenerators(cfg, a)
+	a.keyResolver = cfg.KeyResolver
 
 	if a.localLLM {
 		// LocalProvider deliberately does NOT use cfg.HTTPClient: under
@@ -579,14 +594,6 @@ func (a *Agent) DataStore() *datastore.Datastore { return a.ds }
 // Logger returns the agent logger for extension seams.
 func (a *Agent) Logger() *zap.Logger { return a.logger }
 
-// DeleteProviderFileAttachment deletes a provider-managed file by provider file ID.
-func (a *Agent) DeleteProviderFileAttachment(ctx context.Context, fileID string) error {
-	if a == nil || a.OpenAIProvider == nil {
-		return fmt.Errorf("openai provider is not configured")
-	}
-	return a.OpenAIProvider.DeleteFileAttachment(ctx, fileID)
-}
-
 // messageContextBuilder returns a context builder wired to this agent's datastore,
 // telemetry, and test-only history override (when set).
 func (a *Agent) messageContextBuilder() (*messageContextBuilder, error) {
@@ -609,6 +616,11 @@ func (a *Agent) buildModelContextForChatMessage(ctx context.Context, userID uuid
 	// Attachment labels are only injected when tools are enabled, matching the
 	// previous behavior for OpenAI chat turns.
 	additionalDevContext := mcpLifecycleDeveloperContext()
+	if policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage); policy.toolsEnabled {
+		if loadable := loadableToolsDeveloperContext(policy.offeredAgentToolNames(), a.loadedBuiltinToolSet(ctx, userID, chatCtx)); loadable != "" {
+			additionalDevContext += "\n\n" + loadable
+		}
+	}
 	if additionalDeveloperContextForChat != nil {
 		additionalDevContext = strings.TrimSpace(strings.Join([]string{
 			additionalDevContext,
@@ -632,18 +644,18 @@ func (a *Agent) buildModelContextForChatMessage(ctx context.Context, userID uuid
 		ExpressionsEnabled:         chatCtx.expressionsEnabled,
 		IncludeAttachmentContext:   chatCtx.chat.ToolsEnabled,
 		AdditionalDeveloperContext: additionalDevContext,
-		LoadHistoryImageBytes:      models.UsesAnthropicMessagesAPI(chatCtx.modelProvider, chatCtx.model),
+		LoadHistoryImageBytes:      chatCtx.modelVisionSupport,
 	})
 }
 
 func mcpLifecycleDeveloperContext() string {
-	return "MCP tool lifecycle: MCP tools are NOT auto-loaded. First call list(kind=\"mcp_servers\") to inspect connectors and discoverable tool names. Then call load_mcp_tools with mcp_server_id + tools to activate only the tools you need. Loaded MCP tools remain active across future turns in this chat until you call unload_mcp_tools. Use unload_mcp_tools with tools [\"all\"] or [\"*\"] (optionally with mcp_server_id) to clear loaded tools."
+	return "Tool lifecycle: MCP tools and the loadable built-in tools are NOT auto-loaded, and their definitions are only sent once loaded. For MCP tools, first call list(kind=\"mcp_servers\") to inspect connectors and discoverable tool names, then call load_tools with mcp_server_id + tools to activate only the tools you need. Loaded tools remain active across future turns in this chat until you call unload_tools; when the conversation is checkpointed, tools it did not use since the last checkpoint are unloaded, so load them again if you need them. Use unload_tools with tools [\"all\"] or [\"*\"] (optionally with mcp_server_id) to clear loaded tools."
 }
 
-// loadImageBytesForClaude downloads raw image bytes for each image attachment on the
-// current user message so that Claude can receive them as vision blocks. Missing bytes are logged as warnings; the
-// attachment is still included in the user turn but Claude will fall back to text-only.
-func (a *Agent) loadImageBytesForClaude(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage) map[uuid.UUID][]byte {
+// loadImageBytesForVision downloads raw image bytes for each image attachment on the current
+// user message so any vision-capable provider can receive them inline. Missing bytes are logged as
+// warnings; an image that cannot be resolved is left out of the user turn rather than sent empty.
+func (a *Agent) loadImageBytesForVision(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage) map[uuid.UUID][]byte {
 	return loadImageBytesForAttachments(ctx, a.logger, a.fileStore, userID, chatMessage.ChatID, chatMessage.Attachments)
 }
 
@@ -660,18 +672,13 @@ func (a *Agent) HandleUserMessage(ctx context.Context, request models.ChatMessag
 	// Extract user ID from context
 	userID, _ := middleware.GetUserIDFromContext(ctx)
 
-	// System rituals are UI-only and must never be persisted.
-	// Persist only DB-backed rituals, but keep system rituals for in-memory branching.
-	dbRituals, systemRituals := SplitRituals(request.Rituals)
-	request.Rituals = dbRituals
+	// A client may still send a retired system ritual; it has no row to link to.
+	request.Rituals = dropRetiredRituals(request.Rituals)
 
 	// Create a new chat message in the database
 	chatMessage, err := a.ds.CreateChatMessage(ctx, userID, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat message: %w", err)
-	}
-	if len(systemRituals) > 0 {
-		chatMessage.Rituals = append(chatMessage.Rituals, systemRituals...)
 	}
 
 	// Create a job for asynchronous processing
@@ -869,6 +876,15 @@ type chatContext struct {
 	mcpRitualIDs []uuid.UUID
 	// loadedMCPTools tracks the per-connector set of loaded MCP full tool names for this chat.
 	loadedMCPTools map[uuid.UUID]map[string]struct{}
+	// toolsLoadGated is set for a chat turn (not a sub-agent loop): the agent loop then sends the
+	// model only loaded MCP tools and loaded loadable built-in tools each round (see
+	// loadedToolFilter).
+	toolsLoadGated bool
+	// loadableTools are the built-in tools this turn offers only once loaded: the catalog's
+	// Loadable tools that the turn's policy offers.
+	loadableTools map[string]struct{}
+	// loadedTools are the built-in tools loaded in this chat.
+	loadedTools map[string]struct{}
 	// mcpSessions stores MCP session ids for this single conversation turn.
 	mcpSessions map[string]string
 }
@@ -954,11 +970,7 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	chatCtx.activeMoodRituals = moodRituals
 	doneMood()
 
-	// Determine action type: image generation rituals override the base chat type.
 	turnActionType := models.ActionTypeChatMessage
-	if hasSystemRitual(mergeRitualSets(chatMessage.Rituals, moodRituals), SystemRitualIDImageGenerate) {
-		turnActionType = models.ActionTypeImageGeneration
-	}
 
 	// Quota gate — checked after prepareChatContext so we know the model tier.
 	// The check is fuzzy by design (see metering.Meter.Check); the meter's atomic
@@ -973,12 +985,10 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	}
 	doneBuildContext := a.timeTurnStage(ctx, turnStageBuildContext)
 	var imageBytes map[uuid.UUID][]byte
-	// Anthropic and Chat Completions wire formats take inline image bytes; OpenAI
-	// Responses references uploaded file IDs and only needs bytes as a fallback.
-	if chatCtx.modelVisionSupport && (models.UsesAnthropicMessagesAPI(chatCtx.modelProvider, chatCtx.model) ||
-		models.UsesOpenAIChatCompletionsAPI(chatCtx.modelProvider, chatCtx.model) ||
-		hasImageAttachmentsWithoutFileID(chatMessage.Attachments)) {
-		imageBytes = a.loadImageBytesForClaude(ctx, chatJob.UserID, chatMessage)
+	// Every provider takes images inline (base64 bytes read from the object store); no provider
+	// holds a copy of the file for us to reference.
+	if chatCtx.modelVisionSupport {
+		imageBytes = a.loadImageBytesForVision(ctx, chatJob.UserID, chatMessage)
 	}
 	modelContext, err := a.buildModelContextForChatMessage(ctx, chatJob.UserID, chatMessage, chatCtx, imageBytes)
 	doneBuildContext()
@@ -1098,10 +1108,8 @@ func (a *Agent) generateAssistantForMessage(ctx context.Context, userID uuid.UUI
 // image ritual, or a real vendor). See generateAssistantForMessage for the surrounding
 // telemetry and context-breakdown capture.
 func (a *Agent) dispatchAssistantGeneration(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	// Branch: mock mode serves every turn in-process. Placed before the
-	// image-ritual branch so mock mode guarantees no provider or
-	// image-generation network call; image rituals take a fixture branch inside
-	// handleImageGenerateRitual.
+	// Branch: mock mode serves every turn in-process, so it never makes a
+	// provider network call.
 	if a.mockLLM {
 		return a.generateAssistantForMessageMock(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
 	}
@@ -1110,10 +1118,6 @@ func (a *Agent) dispatchAssistantGeneration(ctx context.Context, userID uuid.UUI
 	// configured), same placement rationale as mock mode above.
 	if a.localLLM {
 		return a.generateAssistantForMessageLocal(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
-	}
-	// Branch: system ritual image generation (bypasses OpenAI native image_generation tool).
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
 	}
 	if models.IsGeminiModel(chatCtx.modelProvider, chatCtx.model) {
 		return a.generateAssistantForMessageGemini(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
@@ -1222,14 +1226,8 @@ func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *mo
 // generateAssistantForMessageMock mirrors the real provider paths but drives a
 // per-request MockAdapter through the same shared runGeneration pipeline, so
 // mock mode exercises the code real chat runs (streamed-text reconciliation,
-// tool-call recording, personality/mood, save). Image rituals route to
-// handleImageGenerateRitual, which persists an embedded fixture PNG through
-// the real save path under mock mode.
+// tool-call recording, personality/mood, save).
 func (a *Agent) generateAssistantForMessageMock(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
-	}
-
 	// The mock adapter offers no tools to a model, but record the same agent-tool set the real
 	// paths do (no MCP discovery: mock mode is hermetic), so a scripted tool call is gated exactly
 	// like a real model's.
@@ -1249,48 +1247,9 @@ func mergedRitualIDsForTools(chatMessage *models.ChatMessage, activeMood *models
 	if chatMessage == nil {
 		return moodRitualIDs(activeMood)
 	}
-	dbRituals, _ := SplitRituals(chatMessage.Rituals)
-	ritualIDs := GetRitualIds(dbRituals)
+	ritualIDs := GetRitualIds(dropRetiredRituals(chatMessage.Rituals))
 	ritualIDs = append(ritualIDs, moodRitualIDs(activeMood)...)
 	return ritualIDs
-}
-
-func mergeRitualSets(base []*models.Ritual, extra []*models.Ritual) []*models.Ritual {
-	if len(extra) == 0 {
-		return base
-	}
-	out := make([]*models.Ritual, 0, len(base)+len(extra))
-	seen := make(map[uuid.UUID]struct{}, len(base)+len(extra))
-	for _, r := range base {
-		if r == nil {
-			continue
-		}
-		out = append(out, r)
-		seen[r.ID] = struct{}{}
-	}
-	for _, r := range extra {
-		if r == nil {
-			continue
-		}
-		if _, exists := seen[r.ID]; exists {
-			continue
-		}
-		out = append(out, r)
-		seen[r.ID] = struct{}{}
-	}
-	return out
-}
-
-func hasImageAttachmentsWithoutFileID(attachments []*models.FileAttachment) bool {
-	for _, att := range attachments {
-		if att == nil || !strings.HasPrefix(att.FileType, models.ImageMIMEPrefix) {
-			continue
-		}
-		if att.FileID == nil || strings.TrimSpace(*att.FileID) == "" {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *Agent) loadMoodRituals(ctx context.Context, userID uuid.UUID, activeMood *models.Mood) []*models.Ritual {
@@ -1337,11 +1296,13 @@ func (a *Agent) openAIResponseParamsForChat(ctx context.Context, chatCtx *chatCo
 		mcpSpecs := a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)
 		mcpTools := tools.OpenAIFunctionTools(mcpSpecs)
 		toolParams = provider.BuildOpenAITools(chatCtx.model, chatTools, agentTools, mcpTools)
-		chatCtx.setOfferedTools(offeredToolNames(append(tools.AgentFunctionToolSpecs(policy.showMoodTools), mcpSpecs...), policy.disabledTools))
+		offered := offeredToolNames(append(tools.AgentFunctionToolSpecs(policy.showMoodTools), mcpSpecs...), policy.disabledTools)
+		chatCtx.setOfferedTools(offered)
+		a.prepareTurnLoadableTools(ctx, chatCtx, offered)
 	} else {
 		chatCtx.setOfferedTools(nil) // no tools are offered, so none may run
 	}
-	a.recordToolDefinitionEstimate(modelCtx, toolParams)
+	a.recordToolDefinitionEstimate(modelCtx, visibleResponsesTools(toolParams, chatCtx.loadedToolFilter()))
 	var include []responses.ResponseIncludable
 	if policy.nativeWebSearch {
 		include = []responses.ResponseIncludable{
@@ -1410,7 +1371,7 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 
 	// Build the full message list from DB history + context injections.
 	// User images use base64 blocks when `UserMessageImage.RawBytes` is populated
-	// (see `loadImageBytesForClaude`); otherwise the user turn falls back to text-only.
+	// (see `loadImageBytesForVision`); otherwise the user turn falls back to text-only.
 	claudeParams := visionRenderContext(chatCtx, modelContext).BuildClaudeParams(chatCtx.model)
 
 	// GLM/z.ai models always think and ignore a thinking budget; left alone, reasoning
@@ -1422,13 +1383,9 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 	}
 
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := tools.AgentFunctionToolSpecs(policy.showMoodTools)
-	if policy.toolsEnabled {
-		specs = append(specs, a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)...)
-	}
-	chatCtx.setOfferedTools(offeredToolNames(specs, policy.disabledTools))
+	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
+	a.recordToolDefinitionEstimate(modelContext, claudeFunctionTools(chatCtx.visibleToolSpecs(specs)))
 	claudeFunctionTools := claudeFunctionTools(specs)
-	a.recordToolDefinitionEstimate(modelContext, claudeFunctionTools)
 	webSearchEnabled := nativeAnthropic && policy.nativeWebSearch
 	adapter := provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools, webSearchEnabled, nil, policy.disabledTools)
 	if zai {
@@ -1463,13 +1420,9 @@ func (a *Agent) generateAssistantForMessageGemini(ctx context.Context, userID uu
 	geminiParams := visionRenderContext(chatCtx, modelContext).BuildGeminiParams(chatCtx.model)
 
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := tools.AgentFunctionToolSpecs(policy.showMoodTools)
-	if policy.toolsEnabled {
-		specs = append(specs, a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)...)
-	}
-	chatCtx.setOfferedTools(offeredToolNames(specs, policy.disabledTools))
+	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
+	a.recordToolDefinitionEstimate(modelContext, geminiFunctionTools(chatCtx.visibleToolSpecs(specs)))
 	geminiFunctionTools := geminiFunctionTools(specs)
-	a.recordToolDefinitionEstimate(modelContext, geminiFunctionTools)
 	toolNames := make([]string, 0, len(geminiFunctionTools))
 	for _, t := range geminiFunctionTools {
 		if t.OfFunction != nil {
@@ -1491,13 +1444,8 @@ func (a *Agent) generateAssistantForMessageGemini(ctx context.Context, userID uu
 // the same draft-buffer → handleAgentLoop → saveAgentResponse pipeline as
 // every other provider path. Unlike vendor paths, it always targets
 // a.localLLMModel rather than chatCtx.model — only one local model is
-// configured, so there is no per-chat model routing to honor. Image rituals
-// still take the mock fixture branch (image generation stays a "deliberate
-// mock behavior" consumer, same as under LLM_BACKEND=mock).
+// configured, so there is no per-chat model routing to honor.
 func (a *Agent) generateAssistantForMessageLocal(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-		return a.handleImageGenerateRitual(ctx, userID, chatMessage, chatCtx, modelContext)
-	}
 	if a.LocalProvider == nil {
 		return nil, nil, fmt.Errorf("LLM_BACKEND=local but no local model server is configured")
 	}
@@ -1507,13 +1455,9 @@ func (a *Agent) generateAssistantForMessageLocal(ctx context.Context, userID uui
 	params := renderCtx.BuildOpenAIChatCompletionParams(a.localLLMModel)
 
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := tools.AgentFunctionToolSpecs(policy.showMoodTools)
-	if policy.toolsEnabled {
-		specs = append(specs, a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)...)
-	}
-	chatCtx.setOfferedTools(offeredToolNames(specs, policy.disabledTools))
+	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
 	functionTools := openAIChatCompletionFunctionTools(specs)
-	a.recordToolDefinitionEstimate(modelContext, functionTools)
+	a.recordToolDefinitionEstimate(modelContext, openAIChatCompletionFunctionTools(chatCtx.visibleToolSpecs(specs)))
 
 	adapter := provider.NewLocalAdapter(a.LocalProvider, params, functionTools, policy.disabledTools)
 	draftBuffer := newJobDraftDeltaBuffer(a.lifecycleCtx, a.ds, a.logger, chatJob, jobDraftDeltaFlushMinChars, jobDraftDeltaFlushMaxWait)
@@ -1565,13 +1509,9 @@ func (a *Agent) generateAssistantForMessageOpenAIChatCompletions(ctx context.Con
 	params := buildOpenAIChatCompletionsParams(chatCtx, modelContext)
 
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := tools.AgentFunctionToolSpecs(policy.showMoodTools)
-	if policy.toolsEnabled {
-		specs = append(specs, a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)...)
-	}
-	chatCtx.setOfferedTools(offeredToolNames(specs, policy.disabledTools))
+	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
 	functionTools := openAIChatCompletionFunctionTools(specs)
-	a.recordToolDefinitionEstimate(modelContext, functionTools)
+	a.recordToolDefinitionEstimate(modelContext, openAIChatCompletionFunctionTools(chatCtx.visibleToolSpecs(specs)))
 
 	adapter, err := a.openAIChatCompletionsAdapter(chatCtx, params, functionTools, policy.disabledTools)
 	if err != nil {
@@ -2303,27 +2243,6 @@ func appendMemoryMessages(messages []responses.ResponseInputItemUnionParam, memo
 	return messages
 }
 
-// appendAttachmentMessages adds attachment information to the input message list
-func appendAttachmentMessages(messages []responses.ResponseInputItemUnionParam, attachments []*models.FileAttachment) []responses.ResponseInputItemUnionParam {
-	attachmentLabels := buildAttachmentLabels(attachments)
-	if len(attachmentLabels) > 0 {
-		attachmentText := fmt.Sprintf("The user has attached the following files to their message: %s", strings.Join(attachmentLabels, ", "))
-		messages = append(messages, responses.ResponseInputItemParamOfMessage(attachmentText, provider.RoleDeveloper))
-	}
-	return messages
-}
-
-// buildAttachmentLabels creates human-readable labels for attachments
-func buildAttachmentLabels(attachments []*models.FileAttachment) []string {
-	labels := make([]string, 0, len(attachments))
-	for _, attachment := range attachments {
-		if attachment.FileID != nil {
-			labels = append(labels, fmt.Sprintf("%s (file_id: %s)", attachment.Name, *attachment.FileID))
-		}
-	}
-	return labels
-}
-
 // prepareUserMessage prepares the user message, enriching it with rituals if applicable.
 // The message is prefixed with a [sys:…] timestamp derived from chatMessage.SentAt
 // (see agentMessageTimestampLayout). Falls back to time.Now() only when SentAt is
@@ -2712,12 +2631,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 		// separately records per-image image_generation events. Both charges are
 		// intentional: the LLM call that decided to use the tool has its own cost,
 		// and each generated image is an additional billable action.
-		// Resolve the image-generation reclassification agent-side so the meter
-		// receives an authoritative action type and stays free of ritual knowledge.
 		recordAction := actionType
-		if hasSystemRitual(chatMessage.Rituals, SystemRitualIDImageGenerate) {
-			recordAction = models.ActionTypeImageGeneration
-		}
 		// Link this turn's primary metered event to the assistant message that owns
 		// its Context X-ray, so an implementation can surface the turn's cost on the
 		// X-ray later. Empty when the turn produced no assistant message.
@@ -2879,6 +2793,7 @@ func (a *Agent) runCheckpointOpenAI(ctx context.Context, userID uuid.UUID, chatM
 	donePersist := a.timeTurnStage(ctx, turnStageCheckpointPersist)
 	if a.persistCheckpointSummary(ctx, userID, chatMessage.ChatID, summary, assistantMessageCount, "OpenAI", chatMessage, agentMessage) {
 		a.finishCompactionEvent(ctx, userID, compactionEventID, summary)
+		a.unloadToolsUnusedInSegment(ctx, userID, chatMessage.ChatID, checkpointSegmentStart(chatCtx))
 	}
 	donePersist()
 }
@@ -2959,6 +2874,7 @@ func (a *Agent) runCheckpointClaude(ctx context.Context, userID uuid.UUID, chatM
 	donePersist := a.timeTurnStage(ctx, turnStageCheckpointPersist)
 	if a.persistCheckpointSummary(ctx, userID, chatMessage.ChatID, summary, assistantMessageCount, "Claude", chatMessage, agentMessage) {
 		a.finishCompactionEvent(ctx, userID, compactionEventID, summary)
+		a.unloadToolsUnusedInSegment(ctx, userID, chatMessage.ChatID, checkpointSegmentStart(chatCtx))
 	}
 	donePersist()
 }
@@ -3043,81 +2959,6 @@ func checkpointWindowStartAfter(userSentAt, replySentAt time.Time, firstOther *t
 		return userSentAt.Add(-time.Microsecond)
 	}
 	return afterReply
-}
-
-type SummaryMemoryBackfillStats struct {
-	Processed int
-	Skipped   int
-	Failed    int
-}
-
-// StartSummaryMemoryBackfill copies legacy chat checkpoint summaries into
-// singleton Summary memories in the background.
-func (a *Agent) StartSummaryMemoryBackfill(ctx context.Context) {
-	go func() {
-		stats := a.BackfillSummaryMemories(ctx, summaryMemoryBackfillBatchSize)
-		a.logger.Info("summary memory backfill finished",
-			zap.Int("processed", stats.Processed),
-			zap.Int("skipped", stats.Skipped),
-			zap.Int("failed", stats.Failed))
-	}()
-}
-
-func (a *Agent) BackfillSummaryMemories(ctx context.Context, batchSize int) SummaryMemoryBackfillStats {
-	if batchSize <= 0 {
-		batchSize = summaryMemoryBackfillBatchSize
-	}
-
-	stats := SummaryMemoryBackfillStats{}
-	if a.memoryTool == nil {
-		a.logger.Warn("summary memory backfill skipped because memory tool is unavailable")
-		stats.Skipped++
-		return stats
-	}
-
-	for {
-		candidates, err := a.ds.ListChatsMissingSummaryMemory(ctx, batchSize)
-		if err != nil {
-			a.logger.Error("failed to list summary memory backfill candidates", zap.Error(err))
-			stats.Failed++
-			return stats
-		}
-		if len(candidates) == 0 {
-			return stats
-		}
-
-		successesThisBatch := 0
-		for _, candidate := range candidates {
-			if strings.TrimSpace(candidate.Summary) == "" {
-				stats.Skipped++
-				continue
-			}
-
-			embeddingVector, err := a.memoryTool.CreateEmbedding(ctx, candidate.Summary)
-			if err != nil {
-				a.logger.Error("failed to create embedding for summary memory backfill",
-					zap.String("chat_id", candidate.ChatID.String()),
-					zap.Error(err))
-				stats.Failed++
-				continue
-			}
-
-			if err := a.ds.UpsertChatSummaryMemory(ctx, candidate.UserID, candidate.ChatID, candidate.Summary, embeddingVector); err != nil {
-				a.logger.Error("failed to upsert summary memory during backfill",
-					zap.String("chat_id", candidate.ChatID.String()),
-					zap.Error(err))
-				stats.Failed++
-				continue
-			}
-
-			stats.Processed++
-			successesThisBatch++
-		}
-
-		if len(candidates) < batchSize || successesThisBatch == 0 {
-			return stats
-		}
-	}
 }
 
 // setJobStatusFailedWithPartial preserves already-streamed text before marking a chat turn
@@ -3335,9 +3176,6 @@ func (a *Agent) recordCancelledChatUsage(
 		metadata["output_tokens"] = outputTokens
 	}
 	recordAction := models.ActionTypeChatMessage
-	if hasSystemRitual(userMessage.Rituals, SystemRitualIDImageGenerate) {
-		recordAction = models.ActionTypeImageGeneration
-	}
 	a.meter.Record(ctx, qd, metering.Usage{
 		UserID:     chatJob.UserID,
 		ActionType: recordAction,

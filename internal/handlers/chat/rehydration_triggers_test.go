@@ -33,7 +33,7 @@ func newRehydrationHandler(t *testing.T, store *fakeStore) (*mux.Router, sqlmock
 	ds, err := datastore.NewDatastore(client, db, zap.NewNop(), "12345678901234567890123456789012", nil)
 	require.NoError(t, err)
 
-	h := NewHandler(store, zap.NewNop(), agent.NewAgent(ds, zap.NewNop(), nil, "test-key", nil, "", agent.AgentConfig{}), HandlerConfig{})
+	h := NewHandler(store, zap.NewNop(), agent.NewAgent(ds, zap.NewNop(), nil, nil, agent.AgentConfig{}), HandlerConfig{})
 	router := mux.NewRouter()
 	h.RegisterRoutes(router)
 	return router, mock

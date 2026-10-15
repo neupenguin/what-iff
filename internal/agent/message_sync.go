@@ -20,16 +20,12 @@ func (a *Agent) HandleUserMessageSync(ctx context.Context, request models.ChatMe
 
 	userID, _ := middleware.GetUserIDFromContext(ctx)
 
-	// System rituals are UI-only and must never be persisted.
-	dbRituals, systemRituals := SplitRituals(request.Rituals)
-	request.Rituals = dbRituals
+	// A client may still send a retired system ritual; it has no row to link to.
+	request.Rituals = dropRetiredRituals(request.Rituals)
 
 	chatMessage, err := a.ds.CreateChatMessage(ctx, userID, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat message: %w", err)
-	}
-	if len(systemRituals) > 0 {
-		chatMessage.Rituals = append(chatMessage.Rituals, systemRituals...)
 	}
 
 	runJob, err := a.ds.CreateJob(ctx, userID, models.Job{

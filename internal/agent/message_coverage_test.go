@@ -128,13 +128,6 @@ func TestDataStoreAndLogger_ReturnConfiguredFields(t *testing.T) {
 	require.Same(t, logger, a.Logger())
 }
 
-func TestDeleteProviderFileAttachment_NoProviderConfigured(t *testing.T) {
-	t.Parallel()
-	a := &Agent{logger: zap.NewNop()}
-	err := a.DeleteProviderFileAttachment(context.Background(), "file_123")
-	require.ErrorContains(t, err, "openai provider is not configured")
-}
-
 // --- agent metrics helpers ---
 
 func TestRecordTurnStage_NoopWithNilTelemetry(t *testing.T) {
@@ -159,7 +152,7 @@ func TestAgentMetrics_NoopWithNilMetrics(t *testing.T) {
 	})
 }
 
-// --- mergedRitualIDsForTools / mergeRitualSets ---
+// --- mergedRitualIDsForTools ---
 
 func TestMergedRitualIDsForTools_NilChatMessageUsesMoodOnly(t *testing.T) {
 	t.Parallel()
@@ -181,54 +174,6 @@ func TestMergedRitualIDsForTools_CombinesMessageAndMoodRituals(t *testing.T) {
 
 	got := mergedRitualIDsForTools(chatMessage, mood)
 	require.ElementsMatch(t, []uuid.UUID{msgRitualID, moodRitualID}, got)
-}
-
-func TestMergeRitualSets_NoExtraReturnsBase(t *testing.T) {
-	t.Parallel()
-	base := []*models.Ritual{{ID: uuid.New()}}
-	got := mergeRitualSets(base, nil)
-	require.Equal(t, base, got)
-}
-
-func TestMergeRitualSets_DedupesAndSkipsNils(t *testing.T) {
-	t.Parallel()
-	shared := uuid.New()
-	onlyExtra := uuid.New()
-	base := []*models.Ritual{{ID: shared}, nil}
-	extra := []*models.Ritual{{ID: shared}, {ID: onlyExtra}, nil}
-
-	got := mergeRitualSets(base, extra)
-	require.Len(t, got, 2)
-	ids := []uuid.UUID{got[0].ID, got[1].ID}
-	require.ElementsMatch(t, []uuid.UUID{shared, onlyExtra}, ids)
-}
-
-// --- hasImageAttachmentsWithoutFileID ---
-
-func TestHasImageAttachmentsWithoutFileID(t *testing.T) {
-	t.Parallel()
-
-	fid := "file-1"
-	blank := ""
-	cases := []struct {
-		name string
-		atts []*models.FileAttachment
-		want bool
-	}{
-		{"empty", nil, false},
-		{"nil entry skipped", []*models.FileAttachment{nil}, false},
-		{"non-image ignored", []*models.FileAttachment{{FileType: "application/pdf"}}, false},
-		{"image with file id", []*models.FileAttachment{{FileType: "image/png", FileID: &fid}}, false},
-		{"image without file id", []*models.FileAttachment{{FileType: "image/png"}}, true},
-		{"image with blank file id", []*models.FileAttachment{{FileType: "image/png", FileID: &blank}}, true},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tc.want, hasImageAttachmentsWithoutFileID(tc.atts))
-		})
-	}
 }
 
 // --- isFirstCheckpoint / maxTurnsBeforeCheckpoint ---
@@ -587,21 +532,6 @@ func TestLoadMoodRituals_NilOrEmptyMoodReturnsNil(t *testing.T) {
 
 	require.Nil(t, a.loadMoodRituals(context.Background(), uuid.New(), nil))
 	require.Nil(t, a.loadMoodRituals(context.Background(), uuid.New(), &models.Mood{}))
-}
-
-// --- StartSummaryMemoryBackfill ---
-
-func TestStartSummaryMemoryBackfill_RunsInBackgroundWithoutPanicking(t *testing.T) {
-	t.Parallel()
-	a := &Agent{logger: zap.NewNop()}
-
-	require.NotPanics(t, func() {
-		a.StartSummaryMemoryBackfill(context.Background())
-	})
-	// memoryTool is nil, so the background goroutine's BackfillSummaryMemories
-	// call returns immediately (Skipped++); give it a moment to finish logging
-	// before the test process exits, since it races with nothing else here.
-	time.Sleep(50 * time.Millisecond)
 }
 
 // --- setJobStatusCancelledWithPartial ---

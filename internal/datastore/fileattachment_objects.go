@@ -114,18 +114,3 @@ func (d *Datastore) ExistingFileAttachmentIDs(ctx context.Context, ids []uuid.UU
 	}
 	return out, nil
 }
-
-// FileAttachmentProviderFileShared reports whether a row other than id carries the same provider
-// FileID. Reference copies clone the source's FileID, so deleting the provider file for one row
-// would break the others.
-func (d *Datastore) FileAttachmentProviderFileShared(ctx context.Context, id uuid.UUID, fileID string) (bool, error) {
-	if strings.TrimSpace(fileID) == "" {
-		return false, nil
-	}
-	return d.dbClient.FileAttachment.Query().
-		Where(
-			entfileattachment.FileIDEQ(fileID),
-			entfileattachment.IDNEQ(id),
-		).
-		Exist(ctx)
-}

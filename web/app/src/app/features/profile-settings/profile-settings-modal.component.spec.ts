@@ -2,12 +2,13 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { Router } from '@angular/router';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 import { ProfileSettingsModalComponent } from './profile-settings-modal.component';
 import { ProfileSettingsModalService } from './profile-settings-modal.service';
 import { AuthService } from '../../core/services/auth.service';
 import { ExternalAuthProvider, NoopExternalAuthProvider } from '../../core/auth/external-auth.provider';
+import { LoggerService } from '../../core/services/logger.service';
 import { ModelService } from '../../core/services/model.service';
 import { PersonalityService } from '../../core/services/personality.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -22,6 +23,28 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     listPersonalities: ReturnType<typeof vi.fn>;
   };
   let router: { navigate: ReturnType<typeof vi.fn> };
+  let authService: {
+    getUserProfile: ReturnType<typeof vi.fn>;
+    updateProfile: ReturnType<typeof vi.fn>;
+    updatePassword: ReturnType<typeof vi.fn>;
+    logoutPreferred: ReturnType<typeof vi.fn>;
+  };
+  let user: Record<string, unknown>;
+  let logger: { error: ReturnType<typeof vi.fn> };
+  /** Swapped per test before the component is created; the provider factory reads it lazily. */
+  let externalAuth: ExternalAuthProvider;
+
+  /** An external provider with a live session that refuses attribute writes. */
+  function attributeRefusingProvider(): ExternalAuthProvider & { updateProfileAttributes: ReturnType<typeof vi.fn> } {
+    const provider = new NoopExternalAuthProvider() as unknown as ExternalAuthProvider & {
+      available: boolean;
+      updateProfileAttributes: ReturnType<typeof vi.fn>;
+    };
+    Object.defineProperty(provider, 'available', { value: true });
+    provider.fetchSession = vi.fn().mockResolvedValue({ accessToken: 'access', idToken: 'id' });
+    provider.updateProfileAttributes = vi.fn().mockRejectedValue(new Error('attribute write refused'));
+    return provider;
+  }
 
   async function openAndWaitForProfile(fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>): Promise<void> {
     const component = fixture.componentInstance;
@@ -32,14 +55,16 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
   }
 
   beforeEach(async () => {
-    const user = {
+    user = {
       id: 'user-1',
       username: 'testuser',
       email: 'testuser@example.com',
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-01T00:00:00Z',
     };
-    const authService = {
+    externalAuth = new NoopExternalAuthProvider();
+    logger = { error: vi.fn() };
+    authService = {
       getUserProfile: vi.fn().mockReturnValue(of(user)),
       updateProfile: vi.fn().mockReturnValue(of(user)),
       updatePassword: vi.fn().mockReturnValue(of({ message: 'ok' }) as any),
@@ -61,17 +86,21 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       updateUserPreferences: vi.fn().mockImplementation(updated => of(updated)),
     };
     const modelService = {
-      getModels: vi.fn().mockReturnValue(of([
-        { id: 'model-1', name: 'model-one', display_name: 'Model One', description: '', tool_support: true },
-        { id: 'model-2', name: 'model-two', display_name: 'Model Two', description: '', tool_support: true },
-      ])),
+      getModels: vi.fn().mockReturnValue(
+        of([
+          { id: 'model-1', name: 'model-one', display_name: 'Model One', description: '', tool_support: true },
+          { id: 'model-2', name: 'model-two', display_name: 'Model Two', description: '', tool_support: true },
+        ]),
+      ),
     };
     personalityService = {
-      listPersonalities: vi.fn().mockReturnValue(of({
-        results: [{ id: 'personality-1', name: 'Vera' }],
-        total_count: 1,
-        page: 1,
-      })),
+      listPersonalities: vi.fn().mockReturnValue(
+        of({
+          results: [{ id: 'personality-1', name: 'Vera' }],
+          total_count: 1,
+          page: 1,
+        }),
+      ),
     };
     router = { navigate: vi.fn().mockName('Router.navigate') };
 
@@ -86,7 +115,8 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
         { provide: ModelService, useValue: modelService },
         { provide: PersonalityService, useValue: personalityService },
         { provide: Router, useValue: router },
-        { provide: ExternalAuthProvider, useClass: NoopExternalAuthProvider },
+        { provide: ExternalAuthProvider, useFactory: () => externalAuth },
+        { provide: LoggerService, useValue: logger },
       ],
     }).compileComponents();
   });
@@ -146,12 +176,14 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
 
     await component.onDefaultModelChange('model-2');
 
-    expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      user_id: 'user-1',
-      default_model_id: 'model-2',
-      default_personality_id: 'personality-1',
-      favorite_model_ids: [],
-    }));
+    expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'user-1',
+        default_model_id: 'model-2',
+        default_personality_id: 'personality-1',
+        favorite_model_ids: [],
+      }),
+    );
   });
 
   it('clears the default personality by omitting it from the serialized update', async () => {
@@ -162,29 +194,33 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     await component.onDefaultPersonalityChange('');
 
     const update = preferencesService.updateUserPreferences.mock.calls.at(-1)?.[0];
-    expect(update).toEqual(expect.objectContaining({
-      user_id: 'user-1',
-      default_model_id: 'model-1',
-      favorite_model_ids: [],
-    }));
+    expect(update).toEqual(
+      expect.objectContaining({
+        user_id: 'user-1',
+        default_model_id: 'model-1',
+        favorite_model_ids: [],
+      }),
+    );
     expect(update).not.toHaveProperty('default_personality_id');
     expect(JSON.stringify(update)).not.toContain('default_personality_id');
   });
 
   it('loads every personality page for the default selector', async () => {
-    personalityService.listPersonalities.mockImplementation((page: number) => of(
-      page === 1
-        ? {
-            results: Array.from({ length: 100 }, (_, index) => ({ id: `personality-${index}`, name: `Personality ${index}` })),
-            total_count: 101,
-            page: 1,
-          }
-        : {
-            results: [{ id: 'personality-100', name: 'Personality 100' }],
-            total_count: 101,
-            page: 2,
-          },
-    ));
+    personalityService.listPersonalities.mockImplementation((page: number) =>
+      of(
+        page === 1
+          ? {
+              results: Array.from({ length: 100 }, (_, index) => ({ id: `personality-${index}`, name: `Personality ${index}` })),
+              total_count: 101,
+              page: 1,
+            }
+          : {
+              results: [{ id: 'personality-100', name: 'Personality 100' }],
+              total_count: 101,
+              page: 2,
+            },
+      ),
+    );
     const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
     const component = fixture.componentInstance;
 
@@ -213,5 +249,263 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
 
     button.click();
     expect(router.navigate).toHaveBeenCalledWith(['/data']);
+  });
+
+  describe('image generation', () => {
+    function withImageProviders(chosen: string, offered: string[]): void {
+      preferencesService.getUserPreferences.mockReturnValue(
+        of({
+          id: 'prefs-1',
+          user_id: 'user-1',
+          default_model_id: 'model-1',
+          default_personality_id: 'personality-1',
+          favorite_model_ids: [],
+          image_generation_provider: chosen,
+          image_generation_providers: offered,
+        }),
+      );
+    }
+
+    function imageSection(fixture: { nativeElement: HTMLElement }): HTMLElement | null {
+      return fixture.nativeElement.querySelector('[data-testid="image-generation"]');
+    }
+
+    it('is hidden when the deployment offers no choice of provider', async () => {
+      withImageProviders('openai', ['openai']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(imageSection(fixture)).toBeNull();
+    });
+
+    it('offers the configured providers with the stored pick selected', async () => {
+      withImageProviders('zai', ['openai', 'google', 'zai', 'qwen']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      const select = imageSection(fixture)?.querySelector('select') as HTMLSelectElement | null;
+      expect(select).not.toBeNull();
+      expect(Array.from(select!.options).map(o => o.textContent?.trim())).toEqual([
+        'OpenAI (GPT Image)',
+        'Google (Gemini image)',
+        'Z.ai (GLM-Image)',
+        'Qwen (Qwen-Image)',
+      ]);
+      expect(select!.value).toBe('zai');
+    });
+
+    it('shows the provider the server falls back to when the stored pick is not offered', async () => {
+      withImageProviders('qwen', ['google', 'zai']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(fixture.componentInstance.imageGenerationProvider()).toBe('google');
+    });
+
+    it('saves a new provider without dropping other preferences', async () => {
+      withImageProviders('openai', ['openai', 'google']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      await fixture.componentInstance.onImageGenerationProviderChange('google');
+
+      expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          default_model_id: 'model-1',
+          default_personality_id: 'personality-1',
+          image_generation_provider: 'google',
+        }),
+      );
+      expect(fixture.componentInstance.imageGenerationProvider()).toBe('google');
+    });
+  });
+
+  describe('timezone', () => {
+    const timezoneInput = (fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>) =>
+      fixture.nativeElement.querySelector('select[formControlName="timezone"]') as HTMLSelectElement;
+
+    const mockBrowserTimezone = (timeZone: string): void => {
+      vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+        timeZone,
+      } as unknown as Intl.ResolvedDateTimeFormatOptions);
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const timezoneOffer = (fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>) =>
+      fixture.nativeElement.querySelector('[data-testid="timezone-offer"]') as HTMLElement | null;
+
+    it('shows the saved timezone with no offer when the browser agrees', async () => {
+      mockBrowserTimezone('America/Chicago');
+      user['timezone'] = 'America/Chicago';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(timezoneInput(fixture).value).toBe('America/Chicago');
+      expect(timezoneOffer(fixture)).toBeNull();
+    });
+
+    it('offers every zone in a select and keeps a saved zone the browser does not list', async () => {
+      user['timezone'] = 'Legacy/Zone';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      const select = timezoneInput(fixture);
+      const values = Array.from(select.options).map(option => option.value);
+      expect(values).toContain('America/New_York');
+      expect(values).toContain('UTC');
+      expect(values).toContain('Legacy/Zone');
+      expect(select.value).toBe('Legacy/Zone');
+    });
+
+    // The server gives every account a timezone (America/New_York by default), so a saved
+    // zone that differs from the browser's is the normal case for a user who never chose one.
+    it('offers the browser timezone when it differs from the saved one, without changing the form', async () => {
+      mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      expect(timezoneInput(fixture).value).toBe('America/New_York');
+      expect(timezoneOffer(fixture)?.textContent).toContain('Your browser is set to Europe/Berlin.');
+      expect(component.profileForm.pristine).toBe(true);
+      expect(authService.updateProfile).not.toHaveBeenCalled();
+    });
+
+    it('does not slip the browser timezone into an unrelated save', async () => {
+      mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      component.profileForm.patchValue({ first_name: 'Ada' });
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith(expect.objectContaining({ first_name: 'Ada', timezone: 'America/New_York' }));
+    });
+
+    it('offers nothing when the browser reports an unusable zone', async () => {
+      mockBrowserTimezone('Etc/Unknown');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(timezoneOffer(fixture)).toBeNull();
+      expect(fixture.componentInstance.profileForm.valid).toBe(true);
+    });
+
+    it('saves the timezone through the profile API on Save Changes', async () => {
+      user['timezone'] = 'America/Chicago';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      component.profileForm.patchValue({ timezone: ' Asia/Tokyo ' });
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'testuser@example.com', timezone: 'Asia/Tokyo' }),
+      );
+      expect(component.message()?.type).toBe('success');
+    });
+
+    it('selects the offered browser timezone on click and saves it on Save Changes', async () => {
+      mockBrowserTimezone('Europe/Berlin');
+      user['timezone'] = 'America/New_York';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      (timezoneOffer(fixture)?.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(timezoneInput(fixture).value).toBe('Europe/Berlin');
+      expect(component.profileForm.dirty).toBe(true);
+      expect(timezoneOffer(fixture)).toBeNull();
+      expect(authService.updateProfile).not.toHaveBeenCalled();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith(expect.objectContaining({ timezone: 'Europe/Berlin' }));
+    });
+
+    it('rejects an unknown timezone without calling the API', async () => {
+      user['timezone'] = 'America/Chicago';
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      component.profileForm.patchValue({ timezone: 'Mars/Olympus_Mons' });
+      await component.saveProfile();
+      fixture.detectChanges();
+
+      expect(component.profileForm.controls.timezone.hasError('timezone')).toBe(true);
+      expect(authService.updateProfile).not.toHaveBeenCalled();
+      expect(fixture.nativeElement.textContent).toContain('Enter a valid IANA timezone');
+    });
+
+    it('surfaces the server error when saving fails', async () => {
+      user['timezone'] = 'America/Chicago';
+      authService.updateProfile.mockReturnValue(throwError(() => ({ error: { error: 'Invalid timezone' } })));
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+
+      await component.saveProfile();
+
+      expect(component.message()).toEqual({ type: 'error', text: 'Invalid timezone' });
+    });
+  });
+
+  describe('saving the profile', () => {
+    async function openAndEditName(): Promise<ProfileSettingsModalComponent> {
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      const component = fixture.componentInstance;
+      await openAndWaitForProfile(fixture);
+      component.profileForm.patchValue({ first_name: ' Ada ', last_name: 'Lovelace' });
+      return component;
+    }
+
+    it('saves through the profile API and reports success', async () => {
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalledWith({
+        email: 'testuser@example.com',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+      });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+    });
+
+    it('still saves when the identity provider rejects the name update', async () => {
+      const provider = attributeRefusingProvider();
+      externalAuth = provider;
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(authService.updateProfile).toHaveBeenCalled();
+      expect(provider.updateProfileAttributes).toHaveBeenCalledWith({ given_name: 'Ada', family_name: 'Lovelace' });
+      expect(component.message()).toEqual({ type: 'success', text: 'Profile updated.' });
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('shows the server error and skips the provider update when the save fails', async () => {
+      const provider = attributeRefusingProvider();
+      externalAuth = provider;
+      authService.updateProfile.mockReturnValue(throwError(() => new Error('Email already in use')));
+      const component = await openAndEditName();
+
+      await component.saveProfile();
+
+      expect(component.message()).toEqual({ type: 'error', text: 'Email already in use' });
+      expect(provider.updateProfileAttributes).not.toHaveBeenCalled();
+    });
   });
 });

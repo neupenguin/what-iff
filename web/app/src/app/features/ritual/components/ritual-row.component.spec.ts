@@ -19,7 +19,6 @@ describe('RitualRowComponent', () => {
     affinityLabel: 'All skills',
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-02T00:00:00Z',
-    isSystem: false,
   };
 
   beforeEach(async () => {
@@ -38,12 +37,5 @@ describe('RitualRowComponent', () => {
     const badge = host.querySelector('[aria-label^="Hotkey"]');
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toContain('Ctrl');
-  });
-
-  it('shows locked state for system rituals', () => {
-    fixture.componentRef.setInput('ritual', { ...vm, isSystem: true });
-    fixture.detectChanges();
-    const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[aria-label="Read-only system skill"]')).not.toBeNull();
   });
 });

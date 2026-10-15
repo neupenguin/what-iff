@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/theimaginaryfoundation/what-iff/ent"
+	"github.com/theimaginaryfoundation/what-iff/ent/userpreference"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 )
 
@@ -127,4 +128,48 @@ func TestUpdateUserPreferences_PopulatedFavoritesAreWritten(t *testing.T) {
 	})
 
 	require.Contains(t, capturedUpdates(captured), "favorite_model_ids")
+}
+
+func TestToUserPreferencesModel_ImageGenerationProviderDefaultsToOpenAI(t *testing.T) {
+	prefs := toUserPreferencesModel(&ent.UserPreference{})
+	require.Equal(t, "openai", prefs.ImageGenerationProvider, "a user who never chose gets the default vendor")
+
+	chosen := userpreference.ImageGenerationProviderGoogle
+	prefs = toUserPreferencesModel(&ent.UserPreference{ImageGenerationProvider: &chosen})
+	require.Equal(t, "google", prefs.ImageGenerationProvider)
+}
+
+func TestUpdateUserPreferences_OmittedImageGenerationProviderIsNotWritten(t *testing.T) {
+	ds, mock, captured, cleanup := newCapturingMockDatastore(t)
+	defer cleanup()
+
+	expectUpdateUserPreferences(mock)
+
+	_, _ = ds.UpdateUserPreferences(context.Background(), uuid.New(), models.UserPreferences{Theme: "dark"})
+
+	require.NotContains(t, capturedUpdates(captured), "image_generation_provider")
+}
+
+func TestUpdateUserPreferences_ImageGenerationProviderIsWritten(t *testing.T) {
+	ds, mock, captured, cleanup := newCapturingMockDatastore(t)
+	defer cleanup()
+
+	expectUpdateUserPreferences(mock)
+
+	_, _ = ds.UpdateUserPreferences(context.Background(), uuid.New(), models.UserPreferences{ImageGenerationProvider: "qwen"})
+
+	require.Contains(t, capturedUpdates(captured), "image_generation_provider")
+}
+
+func TestUpdateUserPreferences_UnknownImageGenerationProviderIsRefused(t *testing.T) {
+	ds, mock, captured, cleanup := newCapturingMockDatastore(t)
+	defer cleanup()
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	_, err := ds.UpdateUserPreferences(context.Background(), uuid.New(), models.UserPreferences{ImageGenerationProvider: "deepseek"})
+
+	require.ErrorIs(t, err, ErrInvalidRequestBody)
+	require.Empty(t, capturedUpdates(captured), "nothing is written when the vendor is refused")
 }

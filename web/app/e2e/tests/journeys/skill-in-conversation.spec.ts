@@ -13,9 +13,8 @@ import { LLM_REPLY_TIMEOUT, UI_REACTION_TIMEOUT } from '../../timeouts';
  * chat-composer.component.ts) had no e2e coverage at all: `skills.spec.ts`
  * covers authoring at `/skills`, and nothing exercised the path that puts an
  * authored skill onto an actual message. It is also a different data source
- * from the Skills page — `getAvailableRituals(chatId)` merged with
- * `listSystemRituals()` — so a skill that lists fine at `/skills` can still be
- * missing here.
+ * from the Skills page — `getAvailableRituals(chatId)` — so a skill that lists
+ * fine at `/skills` can still be missing here.
  */
 
 test('a returning user stages a skill onto a message and sends it @journey', async ({
@@ -36,7 +35,7 @@ test('a returning user stages a skill onto a message and sends it @journey', asy
 
   // Narrow before asserting: the picker lists every skill available to this
   // chat, which on a shared deployed account includes other workers' seeded
-  // skills and the built-in system ones.
+  // skills.
   await chatPage.narrowSkillsTo(skillName);
   await expect(chatPage.skillOption(skillName)).toBeVisible();
 

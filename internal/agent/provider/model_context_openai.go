@@ -57,16 +57,13 @@ func (m *ModelContext) BuildOpenAIResponseParams(opts OpenAIResponseParamsOption
 
 func appendOpenAIResponseInputImages(parts responses.ResponseInputMessageContentListParam, images []UserMessageImage) responses.ResponseInputMessageContentListParam {
 	for _, im := range images {
-		img := &responses.ResponseInputImageParam{
-			Detail: responses.ResponseInputImageDetailAuto,
-		}
-		if strings.TrimSpace(im.FileID) != "" {
-			img.FileID = openai.String(im.FileID)
-		} else if len(im.RawBytes) > 0 {
-			dataURL := fmt.Sprintf("data:%s;base64,%s", normalizeImageMediaType(im.MediaType), base64.StdEncoding.EncodeToString(im.RawBytes))
-			img.ImageURL = openai.String(dataURL)
-		} else {
+		if len(im.RawBytes) == 0 {
 			continue
+		}
+		dataURL := fmt.Sprintf("data:%s;base64,%s", normalizeImageMediaType(im.MediaType), base64.StdEncoding.EncodeToString(im.RawBytes))
+		img := &responses.ResponseInputImageParam{
+			Detail:   responses.ResponseInputImageDetailAuto,
+			ImageURL: openai.String(dataURL),
 		}
 		parts = append(parts, responses.ResponseInputContentUnionParam{OfInputImage: img})
 	}
@@ -86,16 +83,10 @@ var openAISupportedImageMediaTypes = map[string]struct{}{
 
 // openAIAcceptsImage reports whether the OpenAI Responses API will accept this image.
 //
-// Two independent things make OpenAI reject an input image:
-//   - an unsupported media type (e.g. image/heic that rode in on another vendor's turn), and
-//   - a file_id whose *stored* filename extension is not lowercase-supported — OpenAI
-//     validates that case-sensitively, so an uploaded "photo.JPG" is refused even though
-//     JPEG is a supported format.
-//
-// We can inspect the media type here but not the filename behind a file_id, so an image is
-// only accepted when it carries raw bytes to render as a data URL (whose media type we
-// control via normalizeImageMediaType). file_id-only images are treated as unusable for
-// this path; callers that sanitize also clear FileID so survivors render from bytes.
+// OpenAI rejects an input image with an unsupported media type (e.g. image/heic that rode in
+// on another vendor's turn). An image is only accepted when it carries raw bytes to render as
+// a data URL, whose media type we control via normalizeImageMediaType and check against the
+// supported list here.
 func openAIAcceptsImage(im UserMessageImage) bool {
 	if len(im.RawBytes) == 0 {
 		return false
@@ -110,11 +101,9 @@ func openAIAcceptsImage(im UserMessageImage) bool {
 
 // SanitizeImagesForOpenAIInput returns a clone of ctx whose image attachments are safe to
 // send to the OpenAI Responses API. Images OpenAI would reject (see openAIAcceptsImage) are
-// dropped, and FileID is cleared on the survivors so they render as data URLs — sidestepping
-// OpenAI's case-sensitive validation of a file_id's stored filename. A segment left with no
-// images and no text is removed, mirroring StripUserMessageImages, so we never emit an empty
-// turn. Intended for background paths like the checkpoint summarizer, where one bad image
-// must not fail the whole request. Broader upload-time normalization is the longer-term fix.
+// dropped. A segment left with no images and no text is removed, mirroring
+// StripUserMessageImages, so we never emit an empty turn. Intended for background paths like
+// the checkpoint summarizer, where one bad image must not fail the whole request.
 func SanitizeImagesForOpenAIInput(ctx *ModelContext) *ModelContext {
 	if ctx == nil {
 		return nil
@@ -129,7 +118,6 @@ func SanitizeImagesForOpenAIInput(ctx *ModelContext) *ModelContext {
 				if !openAIAcceptsImage(im) {
 					continue
 				}
-				im.FileID = "" // force the data-URL path; do not trust the stored filename
 				kept = append(kept, im)
 			}
 			if len(kept) == 0 {

@@ -4,7 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withXhr } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Router, provideRouter } from '@angular/router';
-import { BehaviorSubject, of } from 'rxjs';
+import { BehaviorSubject, of, throwError } from 'rxjs';
 
 import { AuthService } from '../core/services/auth.service';
 import { ChatService } from '../core/services/chat.service';
@@ -16,6 +16,8 @@ import { AppLayoutComponent } from './app-layout.component';
 import { RightPanelService } from '../core/services/right-panel.service';
 import { GeneratePersonalityModalService } from '../core/services/generate-personality-modal.service';
 import type { PersonalityGenFlow } from '../core/models/personality-gen-flow.model';
+import { ConfirmationService } from '../core/services/confirmation.service';
+import { PersonalityService } from '../core/services/personality.service';
 
 @Component({ selector: 'noop', standalone: true, changeDetection: ChangeDetectionStrategy.Eager,
     template: '' })
@@ -207,6 +209,25 @@ describe('AppLayoutComponent', () => {
         expect(nav.setCollapsed).not.toHaveBeenCalled();
     });
 
+    it('reports a picker selection that cannot start a chat and refreshes personalities (#318)', async () => {
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        fixture.detectChanges();
+        const startUrl = router.url;
+        vi.spyOn(TestBed.inject(ChatService), 'createChat').mockReturnValue(throwError(() => new Error('Personality not found')));
+        const invalidate = vi.spyOn(TestBed.inject(PersonalityService), 'invalidate');
+        const alert = vi.spyOn(TestBed.inject(ConfirmationService), 'alert').mockResolvedValue(undefined);
+
+        await fixture.componentInstance.onPersonaPicked({ id: 'gone', name: 'Imported Card' } as any);
+
+        expect(invalidate).toHaveBeenCalled();
+        expect(alert).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Could not start a chat with Imported Card',
+            message: expect.stringContaining('Personality not found'),
+            type: 'danger',
+        }));
+        expect(router.url).toBe(startUrl);
+    });
 
     describe('Generate Personality modal — phone footer', () => {
         const flowOf = (overrides: Partial<PersonalityGenFlow>): PersonalityGenFlow => ({

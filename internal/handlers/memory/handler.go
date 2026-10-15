@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/embedding"
@@ -41,20 +40,22 @@ var (
 // NewHandler creates a new memory handler instance. httpClient overrides the
 // SDK's default HTTP client when non-nil; under MOCK_LLM the server passes the
 // deny-network client so import and create/edit embeddings cannot reach the
-// provider (they fail, are logged, and the save still succeeds).
-func NewHandler(ds *datastore.Datastore, logger *zap.Logger, openAIKey string, httpClient *http.Client) *Handler {
+// provider (they fail, are logged, and the save still succeeds). openAIConfigured
+// says whether OpenAI can be reached at all; the client is built without a key,
+// and httpClient supplies the right one per request.
+func NewHandler(ds *datastore.Datastore, logger *zap.Logger, openAIConfigured bool, httpClient *http.Client) *Handler {
 	h := &Handler{
 		ds:            ds,
 		store:         ds,
 		logger:        logger,
 		exportLimiter: newExportRateLimiter(exportRateLimit, exportRateWindow),
 	}
-	if strings.TrimSpace(openAIKey) == "" {
+	if !openAIConfigured {
 		logger.Warn("memory import and create/edit embeddings disabled: OpenAI API key is not configured")
 		return h
 	}
 
-	opts := []option.RequestOption{option.WithAPIKey(openAIKey)}
+	var opts []option.RequestOption
 	if httpClient != nil {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
@@ -83,6 +84,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router) {
 	memoryRouter.HandleFunc("/{id}", h.PatchMemory).Methods("PATCH")
 	memoryRouter.HandleFunc("/{id}", h.DeleteMemory).Methods("DELETE")
 	memoryRouter.HandleFunc("/{id}/pin", h.UpdateMemoryPin).Methods("PUT")
+	memoryRouter.HandleFunc("/{id}/scope", h.MoveMemoryScope).Methods("POST")
 }
 
 func (h *Handler) createEmbedding(ctx context.Context, input string) ([]float32, error) {

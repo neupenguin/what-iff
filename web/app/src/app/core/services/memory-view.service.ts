@@ -1,9 +1,13 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { finalize, map, of } from 'rxjs';
+import { catchError, finalize, from, map, mergeMap, Observable, of, toArray } from 'rxjs';
 
-import { Memory, MemoryPatch } from '../models/memory.model';
+import { Memory, MemoryPatch, MemoryScopeMoveInput } from '../models/memory.model';
+import { apiErrorMessage } from '../utils/api-error.helpers';
 import { MemoryService } from './memory.service';
 import { DEFAULT_MEMORY_VIEW_FILTERS, MemoryViewFilters, toApiFilters } from '../../features/memory/helpers/memory-filter.helpers';
+
+/** Scope moves in flight at once; the endpoint takes one memory per request. */
+const SCOPE_MOVE_CONCURRENCY = 4;
 
 @Injectable({ providedIn: 'root' })
 export class MemoryViewService {
@@ -122,6 +126,29 @@ export class MemoryViewService {
     this.mutating.set(true);
     return this.memoryService.patchMemory(memoryId, patch).pipe(
       map(() => void 0),
+      finalize(() => this.mutating.set(false)),
+    );
+  }
+
+  /**
+   * Moves each memory across the thread boundary (POST /memory/{id}/scope), which takes one memory
+   * per request; a few run at a time. Emits the server's reasons for any it refused (the others
+   * have moved), so an empty array means every memory moved.
+   */
+  moveScope(ids: readonly string[], move: MemoryScopeMoveInput): Observable<string[]> {
+    if (ids.length === 0) return of([]);
+    this.mutating.set(true);
+    return from(ids).pipe(
+      mergeMap(
+        id =>
+          this.memoryService.moveMemoryScope(id, move).pipe(
+            map(() => null),
+            catchError(error => of(apiErrorMessage(error, 'Failed to move memory'))),
+          ),
+        SCOPE_MOVE_CONCURRENCY,
+      ),
+      toArray(),
+      map(results => results.filter((reason): reason is string => reason !== null)),
       finalize(() => this.mutating.set(false)),
     );
   }

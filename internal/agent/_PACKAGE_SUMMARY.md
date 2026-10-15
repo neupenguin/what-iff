@@ -6,27 +6,39 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 
 ## Responsibilities
 
-- **`Agent`** (`NewAgent`): central service constructed with datastore, telemetry, OpenAI key, optional Anthropic key, and S3 file store.
+- **`Agent`** (`NewAgent`): central service constructed with datastore, telemetry, S3 file store and an `AgentConfig`.
+  It takes no provider keys: provider clients are built without a credential and `AgentConfig.HTTPClient` supplies one per request, while `AgentConfig.KeyResolver` (`internal/providerkeys`) decides at startup which provider clients are built.
 - **Chat turns:** `HandleUserMessage` and related paths build `provider.ModelContext` via `messageContextBuilder` / `buildModelContextForChatMessage`, attach tools, run the model (`openAIResponseParamsForChat` → `ModelContext.BuildOpenAIResponseParams`), and execute tool rounds (`agentloop`).
 - **Context:** History, carry-over after checkpoints, token budgeting, memories (including **rehydrated** `ChatMessage.additional_context` from prior user turns plus this turn’s prefetch), attachments, personality files, MCP tools, timezone-aware user lines (`[sys:Mon 2006-01-02 15:04:05 -07:00]` via `formatUserMessageWithTime` / `agentMessageTimestampLayout` — weekday + local wall time + offset, not ISO-8601).
-  **`messageContextBuilder`** attaches image **`file_id`**s to the final user segment for OpenAI; **`loadImageBytesForClaude`** fills **`RawBytes`** for Claude multimodal turns when bytes are available (see `internal/agent/provider` package summary).
+  **`messageContextBuilder`** attaches image bytes to the final user segment; **`loadImageBytesForVision`** fills **`RawBytes`** from the object store for every vision-capable provider (see `internal/agent/provider` package summary).
 - **Tools:** Build a shared per-turn tool policy (`tools.go`), derive provider tool lists from the `internal/agent/tools` catalog, dispatch tool calls through a registered handler map, and support delegated subagent calls (`list_models`, `list_personalities`, `run_subagent`).
 - **Mode tools/context:** agent-facing tools `list_modes` + `change_mode` map to internal mood records (`active_mood_id` / `is_auto_mood`), with active-mood resolution/reconciliation and mood prompt text as **`SegmentKindMood`** appended inside **`messageContextBuilder.build`** after merged additional context and before expression continuity and the final user turn (same segment order for OpenAI and Claude).
 - **Remote MCP parity:** Chat/ritual MCP server selection is shared across providers; OpenAI uses Responses MCP tools and Claude uses Anthropic Beta MCP client mood when MCP servers are present.
 - **MCP connector scope:** one in-scope list per turn — thread-attached connectors plus those linked to the active skills (the Mode's skill, a `/skill` call, or an agent job's skills) — built by `resolveChatMCPServers`, cached on `chatContext` by `prepareTurnMCPToolSpecs` (with the skill IDs, `mcpRitualIDs`), and read through `mcpServersInScope`.
-  Tool registration, `list(kind="mcp_servers")`, `load_mcp_tools`, and `dispatchMCPToolUse` all use it, so a skill-only connector is listed, loadable and callable.
+  Tool registration, `list(kind="mcp_servers")`, `load_tools`, and `dispatchMCPToolUse` all use it, so a skill-only connector is listed, loadable and callable.
   Loaded state (`ChatMCPToolState`) is per chat and survives Mode changes; a tool loaded for a connector that has fallen out of scope is neither sent nor callable until its skill is active again.
-  `unload_mcp_tools` is not scope-gated so stale state can still be cleared.
+  `unload_tools` is not scope-gated so stale state can still be cleared.
+- **Loadable tools (`tool_loading.go`, #305):** MCP tools and the built-in tools the catalog marks `Loadable` (web search and `fetch_page`, image generation, sub-agents, agent jobs, and any a build adds such as `shell_exec`) are only sent to the model once loaded in the chat.
+  A chat turn registers them all with its adapter (`turnFunctionToolSpecs`), and before every round `handleAgentLoop` calls the adapter's `provider.ToolScoper.ScopeTools` with `chatContext.loadedToolFilter`, so a tool loaded by `load_tools` is sent from the next round of the same turn and an unloaded one costs no tokens.
+  The built-in tools a turn can load are listed by name and one-line summary in the developer context (`loadableToolsDeveloperContext`); dispatch refuses an unloaded one with a pointer to `load_tools`.
+  `load_tools`/`unload_tools` without `mcp_server_id` act on built-in tools (unload by name also finds MCP tools on any connector); their loaded set is the chat's built-in row in `ChatMCPToolState`.
+  Sub-agent loops are not load-gated: `loadedToolFilter` is nil there, so their skills' MCP tools are all sent.
+- **Checkpoint tool unload (`checkpoint_tool_unload.go`, #304):** after a checkpoint persists its summary, `unloadToolsUnusedInSegment` unloads every loaded tool (MCP or built-in) that no message since the previous checkpoint's window start called (`ChatToolNamesUsedSince` + `RetainChatLoadedTools`), so unused tool definitions are not carried into the next segment.
+  It runs inside the turn, under the chat's turn gate, so no later turn can load a tool mid-prune; the model reloads what it needs with `load_tools`.
 - **Maintenance prompts:** Chat naming, personality generation, conversation summaries, memory extraction, scratchpad summarize/update (often **manual** `ResponseNewParams` — see architecture doc).
   **Archival** checkpoint scratchpad update and memory extraction use fixed small models (`archivalOpenAIModel` / `archivalClaudeModel` in `archival_models.go`); **checkpoint conversation summary always uses `archivalOpenAIModel` (`gpt-5.6-luna`)** for both OpenAI and Claude chats via unified `summarizeConversationForCheckpoint` (OpenAI threads `PreviousResponseID`; Claude renders explicit input items from inference `ModelContext`).
   Persona `archival_model` and custom memory read/write prompts are deprecated and ignored; optional `scratchpad_update_prompt` is still used for checkpoint scratchpad updates.
-- **Background backfills** (started from `internal/server`): `StartSummaryMemoryBackfill` (`message.go`) copies legacy checkpoint summaries into Summary memories once at boot.
-  `StartMemoryEmbeddingBackfill` (`memory_embedding_backfill.go`) embeds active non-Summary memories that have no Embedding row, via `datastore.BackfillMemoryEmbeddings` and the memory tool's batch embeddings call.
+- **Background backfill** (started from `internal/server`): `StartMemoryEmbeddingBackfill` (`memory_embedding_backfill.go`) embeds active non-Summary memories that have no Embedding row, via `datastore.BackfillMemoryEmbeddings` and the memory tool's batch embeddings call.
   It runs once, at startup, on the server lifecycle context, and never on a timer: memories are embedded when they are saved, so it only catches up older rows and any save-time failure since the last restart.
   The pass runs only on the instance that wins the Postgres advisory lock `MemoryEmbeddingBackfillLockKey` (default 80920033); other instances, and databases without advisory locks, skip it quietly.
   It does not start at all under mock/local LLM backends (`nonVendorLLM`), where embeddings have no provider.
   Both backfills are idempotent and only log failures; a pass stops early when the provider is unreachable (e.g. the deny-network client under mock/local backends).
-- **Rituals:** User and system rituals, image ritual flow, registry of built-in system rituals.
+- **Rituals:** User rituals (skills).
+  The code-defined "system rituals" are gone; `retired_rituals.go` drops a retired system-ritual ID (the old image-generation ritual, `…0101`) that an old client may still send, so it is never linked as a ritual row.
+- **Image vendor (`image_generators.go`):** `NewAgent` builds a `provider.ImageGenerator` for each image vendor with a credential.
+  `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool, among the vendors the caller holds a key for (asked per request, since keys can belong to accounts), falling back to the first of those (OpenAI first).
+  The tool records the vendor on each image's usage as `metering.Usage.ImageProvider` (plus `engine`/`provider` metadata) so a metering implementation can price vendors separately.
+  Portrait and expression-grid generation stay on `OpenAIProvider` because they need the edit-with-reference endpoint.
 - **Jobs:** Running scheduled/async agent work (`agentjob_run.go`, `agentjob_schedule.go`) and tools that create jobs.
 - **Thread rehydration (`thread_rehydration.go`):** Lazy summarization of **imported** threads.
   `EnqueueThreadRehydration` (called from the chat handler's `GetChat` the first time an unarchived imported thread is opened, from `POST /chat/{id}/rehydrate`, and from `WaitForThreadRehydration` when a turn arrives for an imported thread with no summary; never when a thread is merely unarchived) atomically claims the thread (`ClaimChatRehydration` sets `Chat.rehydration_state=pending` only for an unarchived imported thread with no summary that is not already in flight), creates a `JobTypeThreadRehydration` job, and runs `summarizeImportedThread` in a detached goroutine: it loads the full transcript, keeps the last `rehydrationKeepTurns` (5) user turns live, and summarizes everything before that — single-pass for normal threads, **map-reduce** chunked (`chunkMessagesByChars`) for very long (100+ turn) ones — via the fixed `archivalOpenAIModel` + `checkpointConversationSummaryInstructions`.
@@ -69,7 +81,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 |--------|--------|
 | `Agent` | Main struct; datastore, clients, file store, logger, telemetry, shared **`tokenCounter`** (segment token estimates). Optional **`testHooks`** (`agent_hooks.go`) is for unit tests only; production paths assert hooks are unset. |
 | `HandleUserMessage` | Primary path from HTTP into a full model turn + persistence. |
-| `messageContextBuilder` | Builds `ModelContext` segments (history, memories, user message, **`userMessageImagesFromAttachments`** for OpenAI `file_id` vision, etc.). |
+| `messageContextBuilder` | Builds `ModelContext` segments (history, memories, user message, **`userMessageImagesFromAttachments`** for inline vision bytes, etc.). |
 | `buildModelContextForChatMessage` | Shared path for chat turns so user-segment handling stays consistent. |
 | `openAIResponseParamsForChat` | Tools + personality file enrichment + `BuildOpenAIResponseParams`. |
 | `HandleAgentLoop` / `ExecuteToolUseWithRecovery` | Multi-round tool execution with panic recovery (`agentloop.go`). |
@@ -92,12 +104,10 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   **`runGeneration`** is the shared draft-buffer → `handleAgentLoop` → tool-call-merge → `saveAgentResponse` pipeline for OpenAI, Claude, Gemini, OpenAI-compatible, mock, and local paths, so their save/stream invariants cannot drift.
   **`assertGenerationProducedOutput`** gates the save: a turn whose model call returned no assistant text and no generated attachments fails instead of persisting a blank assistant message.
   A provider call can succeed at the transport level and still carry no text (stream closed after `message_start`, truncation before any text, a content block shape the extractor does not recognise); persisting that produced a turn that looked answered but was empty, with no error and no retry offered — and because `AppendHistoryTurn` skips empty content, the blank row then vanished from the rebuilt context on the next turn.
-  Attachment-only turns (image rituals) are explicitly allowed.
   The failure is logged with `stop_reason` and `output_tokens`, which distinguish "text was generated and dropped in extraction" from "nothing came back".
   An **output-length truncation** (`stop_reason` `max_tokens` / `max_output_tokens`, via `isTruncationStopReason`) — common on tool-use-heavy GLM/Claude turns that spend the whole `DefaultMaxContentLength` budget on reasoning or a partial tool call before emitting any text — gets its own clearer, actionable user-facing message ("…cut off at the length limit…please try again") instead of the raw diagnostic dump; there is nothing to clip because no text block was produced.
   `LocalProvider` deliberately uses its own real HTTP client while `AgentConfig.HTTPClient` (deny transport) covers every other provider.
   That local client gets `AgentConfig.LLMCallTimeouts` through `provider.WithCallTimeouts`; the server has already applied the same limits to `HTTPClient`.
-  Image rituals persist an embedded fixture PNG (`mock_fixture.go`) through `saveImageRitualResult` under both non-vendor backends.
   Downstream consumers key off `Agent.nonVendorLLM()` (mock **or** local) for deliberate skip/fake behavior — memory enrichment no-ops (`getMemoriesForEnrichment`), chat naming uses `mockChatName`, and checkpoint evaluation (`postMessageProcessing`) plus expression classification (`applyExpressionPhase`) are skipped — so nothing unexpectedly reaches the deny transport.
 - **`saveImageRitualResult`** attaches the created PNG attachment to the returned assistant message (previously discarded, leaving `Attachments` empty on the return value); shared by real and mock ritual paths.
 - **Streamed generation failures:** `runGeneration` persists text deltas on the job as they arrive.
@@ -144,8 +154,8 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   On failure or unknown key, **no** portrait is selected (no default first slot).
   **`generation_expression_reasoning`** is persisted when set; continuity echoes it.
   Minimal standalone prompt when context is nil.
-- **Claude + user images:** Chat turns call **`loadImageBytesForClaude`** before building `ModelContext` so **`UserMessageImage.RawBytes`** can be set; **`renderClaudeContext`** then emits image blocks.
-  OpenAI still uses **`file_id`** for vision.
+- **User images:** Chat turns call **`loadImageBytesForVision`** before building `ModelContext` so **`UserMessageImage.RawBytes`** can be set (current turn and, for vision models, history); every renderer then sends the bytes inline.
+  Uploads are no longer mirrored to OpenAI's Files API, so there is no `file_id` path.
   Details in `provider/_PACKAGE_SUMMARY.md`.
 - **Claude checkpoint context isolation:** `runCheckpointClaude` (`message.go`) runs scratchpad → memory on a **clone** of inference context because `updateScratchpadClaude` / `extractMemoriesWithScratchpadDeltaClaude` **mutate** the context they receive (scratchpad-update / memory-extraction prompt turns).
   **`checkpointArchivalContext`** appends the just-completed assistant reply before cloning (inference `ModelContext` predates that turn; OpenAI gets it via `PreviousResponseID`).
@@ -204,7 +214,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 
 ## Testing
 
-- `agent_hooks.go` — `agentTestHooks` groups test-only seams (memory/history overrides, image ritual fakes).
+- `agent_hooks.go` — `agentTestHooks` groups test-only seams (memory/history overrides, image vendor preference).
   `assertNoTestHooksInProduction` runs under `NewAgent`, `handleUserMessage`, and `HandleAgentJobPrompt` when not inside `go test`.
 - `agentloop_test.go` — tool loop and adapter append behavior.
 - `job_telemetry_test.go` — job outcome mapping (success, quota, cancelled, timeout, failed, panic), media job tracking, bounded tool labels, quota rejections and turn stage labels.
@@ -213,6 +223,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 - `message_context_builder_test.go` — builder ordering; `mergeAdditionalContextItems` dedupe.
 - `expression_generation_test.go` — expression picker JSON / markdown-fence parsing helpers.
 - `expression_grid_generation_test.go` — 3×3 PNG grid splice (`SlicePNGGrid3x3`), key-driven canvas prompt.
+- `no_temperature_test.go` — wire-level check that the expression picker (both branches), grid likeness and chat name requests carry no `temperature`/`top_p`.
 - `message_context_builder_expression_test.go` — prior-turn expression snapshot selection for continuity text.
 - `conversation_summary_test.go`, `scratchpad_test.go`, `memory_test.go`, `postprocessing_policy_test.go` — maintenance prompts and checkpoints.
 - `thread_rehydration_test.go` — imported-thread split at n-5 turns, assistant counting, char-budget chunking, and transcript rendering.
@@ -225,7 +236,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 - `subagent_tools_test.go` — minimal subagent context composition and argument validation behavior.
 - `subagent_providers_test.go` — subagent routing to Chat Completions providers (Qwen et al.) and z.ai against fake endpoints: tool-support gate, text-only rendering, missing-key and provider-error diagnostics.
 - `testsupport_test.go` — shared datastore and agent constructors for unit tests.
-- `rituals_test.go`, `system_rituals_test.go` — ritual registry and system IDs.
+- `rituals_test.go`, `retired_rituals_test.go` — ritual helpers and the retired system-ritual ID.
 - `tools_test.go` — native web-search registration and logical-toggle coverage.
 
 ## Related documentation

@@ -71,15 +71,14 @@ type messageContextBuildRequest struct {
 	IsAutoMood         bool
 	MoodToolsAvailable bool
 	Attachments        []*models.FileAttachment
-	// ImageBytes maps attachment ID → raw image bytes for Claude vision. Nil on the
-	// OpenAI path; the OpenAI renderer uses FileID and ignores RawBytes entirely.
+	// ImageBytes maps attachment ID → raw image bytes for the current turn's vision input.
 	ImageBytes map[uuid.UUID][]byte
 
 	ExpressionsEnabled         bool
 	IncludeAttachmentContext   bool
 	AdditionalDeveloperContext string
 	// LoadHistoryImageBytes controls whether prior-turn image attachments are loaded
-	// as raw bytes for Claude vision. OpenAI uses FileID from attachment records.
+	// as raw bytes for vision (set for every vision-capable model).
 	LoadHistoryImageBytes bool
 }
 
@@ -113,17 +112,12 @@ func (b *messageContextBuilder) build(ctx context.Context, req messageContextBui
 	return modelCtx, nil
 }
 
-// userMessageImagesFromAttachments collects image metadata for vision-capable providers.
-// For OpenAI the FileID is used; for Claude, RawBytes sourced from imageBytes (keyed by
-// attachment ID) are injected. imageBytes may be nil (OpenAI path).
+// userMessageImagesFromAttachments collects the image payloads for vision-capable providers:
+// the bytes in imageBytes (keyed by attachment ID), which every provider sends inline.
 //
-// An attachment is included when it has at least one of:
-//   - a.FileID set   → OpenAI vision can use it
-//   - RawBytes found → Claude vision can use it
-//
-// Attachments with neither (e.g. older generated images on the OpenAI path, or
-// pre-migration uploads where imageBytes is nil) are silently skipped rather than
-// producing an empty image block that could confuse the model.
+// An attachment whose bytes could not be found (imageBytes is nil, or the object is missing from
+// the store) is silently skipped rather than producing an empty image block that could confuse
+// the model.
 func userMessageImagesFromAttachments(attachments []*models.FileAttachment, imageBytes map[uuid.UUID][]byte) []provider.UserMessageImage {
 	var out []provider.UserMessageImage
 	for _, a := range attachments {
@@ -135,17 +129,13 @@ func userMessageImagesFromAttachments(attachments []*models.FileAttachment, imag
 		}
 		rawBytes := imageBytes[a.ID]
 		hasBytes := len(rawBytes) > 0
-		if a.FileID == nil && !hasBytes {
+		if !hasBytes {
 			continue
 		}
-		img := provider.UserMessageImage{
+		out = append(out, provider.UserMessageImage{
 			MediaType: a.FileType,
 			RawBytes:  rawBytes,
-		}
-		if a.FileID != nil {
-			img.FileID = *a.FileID
-		}
-		out = append(out, img)
+		})
 	}
 	return out
 }
@@ -225,9 +215,11 @@ func (b *messageContextBuilder) loadHistoryMessages(ctx context.Context, userID,
 
 // fetchRecentMessages fetches up to pageSize messages from the DB (newest-first),
 // filtering out the excluded message ID and empty-body rows.
-// filters is applied directly to the DB query (e.g. MinDate, MaxDate).
+// filters is applied directly to the DB query (e.g. MinDate, MaxDate). The page's total is never
+// read here, so the count is skipped.
 // logContext is included in the debug log on error.
 func (b *messageContextBuilder) fetchRecentMessages(ctx context.Context, userID, chatID uuid.UUID, excludeMessageID *uuid.UUID, pageSize int, filters models.ChatMessageFilters, logContext string) []*models.ChatMessage {
+	filters.SkipTotal = true
 	resp, err := b.ds.ListChatMessages(ctx, userID, chatID, 1, pageSize, filters)
 	if err != nil {
 		b.telemetry.Logger.Info(logContext+": failed to fetch messages", zap.Error(err),

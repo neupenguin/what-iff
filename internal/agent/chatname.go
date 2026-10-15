@@ -7,11 +7,12 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
+	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
 	"go.uber.org/zap"
 )
 
-const chatNameModel = "gpt-4.1-nano-2025-04-14"
+const chatNameModel = models.UtilityModelName
 
 func (a *Agent) generateChatName(ctx context.Context, userMessage string) (string, error) {
 	// Mock/local mode: deterministic fake — no provider call.
@@ -20,7 +21,6 @@ func (a *Agent) generateChatName(ctx context.Context, userMessage string) (strin
 	}
 	params := responses.ResponseNewParams{
 		Model:           chatNameModel,
-		Temperature:     openai.Float(provider.DefaultTemperature),
 		MaxOutputTokens: openai.Int(provider.DefaultMaxContentLength),
 		Instructions:    openai.String(chatNamePrompt),
 		Input: responses.ResponseNewParamsInputUnion{

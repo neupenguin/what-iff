@@ -20,6 +20,7 @@ source UUIDs for clone-style restore.
   It is a courtesy export for other tools; account import reads `personality.json`, not this file.
 - `files/manifest.json` — inventory of the user's S3 objects (keys/sizes/etags); no bytes.
 - `manifest.json` — schema version, export time, account, per-section counts.
+  The conversation count is what `conversations.json` holds (`ConversationsWriter.Written`): chats with no exportable message are omitted from both.
 
 (Memories are not projected here; the export embeds them as a nested `memories.zip` in the existing
 memory-export format so `ds.ImportMemories` consumes them directly.)
@@ -28,6 +29,8 @@ memory-export format so `ds.ImportMemories` consumes them directly.)
 
 - `Tree` is the sink: `ZipTree` (production, over `archive/zip`) or `MemTree` (tests). The projection
   is pure and unit-tested; conversation output is deterministic (canonical ordering).
+- `ConversationsWriter` streams `conversations.json` one conversation at a time (callers add them in canonical order), and `ZipTree.Create` opens an entry for such streamed content.
+  Its bytes are identical to encoding the whole array at once; `BuildConversationsJSON` sorts and then uses it, and a test pins the equivalence.
 - Orchestration (fetch → project → ZIP → S3 → presign → email; and import) lives in
   `internal/handlers/accountexport`; the datastore fetchers are in `internal/datastore/accountexport.go`.
 

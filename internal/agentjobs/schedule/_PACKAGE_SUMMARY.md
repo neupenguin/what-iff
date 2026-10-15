@@ -19,7 +19,8 @@
 
 ## Testing
 
-- *(No `*_test.go` in this directory yet — add when schedule parsing gains unit-testable pure functions.)*
+- `parse_test.go` — cron minimum-interval validation.
+- `parse_no_temperature_test.go` — `Parse` sends the utility model with no temperature (recording `openAICaller`).
 
 ## Related documentation
 

@@ -109,6 +109,9 @@ func (Chat) Edges() []ent.Edge {
 func (Chat) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("name"),
+		// The owner FK alone: ent puts fields before edge columns, so the composites below
+		// lead with last_message_time / import_hash and can't seek by owner.
+		index.Edges("owner"),
 		index.Edges("owner").Fields("last_message_time"),
 		index.Edges("owner").Fields("import_hash").Unique(),
 	}

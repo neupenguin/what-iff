@@ -9,6 +9,8 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/require"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
+	"github.com/theimaginaryfoundation/what-iff/internal/models"
+	"github.com/theimaginaryfoundation/what-iff/internal/providerkeys"
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
 	"go.uber.org/zap"
 )
@@ -25,12 +27,14 @@ func TestNewAgent_ThreadsDenyClientIntoProviders(t *testing.T) {
 		nil,
 		zap.NewNop(),
 		telemetry.LoggerOnly(zap.NewNop()),
-		"dummy-key",
 		nil,
-		"dummy-anthropic-key",
 		AgentConfig{
 			HTTPClient: provider.DenyNetworkHTTPClient(),
 			LLMBackend: "mock",
+			KeyResolver: providerkeys.NewDeploymentResolver(map[models.ModelProvider]string{
+				models.ModelProviderOpenAI:    "dummy-key",
+				models.ModelProviderAnthropic: "dummy-anthropic-key",
+			}),
 		},
 	)
 

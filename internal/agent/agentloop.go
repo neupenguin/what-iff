@@ -24,6 +24,13 @@ func (a *Agent) handleAgentLoop(
 	var allGeneratedAttachments []*models.FileAttachment
 
 	for round := 0; round < maxToolCallRounds; round++ {
+		// Send only the tools loaded so far: a load_tools call in the previous round shows its
+		// tools in this one (see provider.ToolScoper).
+		if scoper, ok := adapter.(provider.ToolScoper); ok {
+			if hidden := chatCtx.loadedToolFilter(); hidden != nil {
+				scoper.ScopeTools(hidden)
+			}
+		}
 		logInferenceCall(ctx, a.logger, chatCtx, adapter, round)
 		result, toolUses, err := adapter.Call(ctx)
 		if err != nil {
@@ -32,6 +39,7 @@ func (a *Agent) handleAgentLoop(
 		if result != nil && len(toolUses) > 0 {
 			return nil, nil, nil, fmt.Errorf("adapter invariant violated: Call returned both a result and tool uses")
 		}
+		logInferenceResult(a.logger, chatCtx, round, result, toolUses)
 
 		if len(toolUses) == 0 {
 			// Model produced a final answer — no tool calls requested.
@@ -188,12 +196,44 @@ func logInferenceCall(ctx context.Context, logger *zap.Logger, chatCtx *chatCont
 		userID = chatCtx.chat.UserID.String()
 		personalityID = chatCtx.chat.PersonalityID.String()
 	}
-	logger.Info("making inference call",
+	fields := []zap.Field{
 		zap.String("chat_message_id", chatMessageID),
 		zap.String("user_id", userID),
 		zap.String("personality_id", personalityID),
 		zap.String("model", model),
 		zap.Int("memories_count", memoriesCount),
 		zap.Int("round", round),
-	)
+	}
+	if chatCtx != nil && chatCtx.toolsLoadGated {
+		// What this round sends of the loadable built-in tools (see loadedToolFilter).
+		fields = append(fields,
+			zap.Strings("loadable_builtin_tools", sortedSetKeys(chatCtx.loadableTools)),
+			zap.Strings("loaded_builtin_tools", sortedSetKeys(chatCtx.loadedTools)))
+	}
+	logger.Info("making inference call", fields...)
+}
+
+// logInferenceResult records how a round ended: the tools it asked for, or the final answer's
+// stop reason. A turn that announces a tool call in its text but ends without one is otherwise
+// indistinguishable from a model that changed its mind.
+func logInferenceResult(logger *zap.Logger, chatCtx *chatContext, round int, result *provider.GenerateResponse, toolUses []provider.ToolUse) {
+	if logger == nil {
+		return
+	}
+	fields := []zap.Field{zap.Int("round", round)}
+	if chatCtx != nil && chatCtx.chat != nil {
+		fields = append(fields, zap.String("chat_id", chatCtx.chat.ID.String()))
+	}
+	if len(toolUses) > 0 {
+		names := make([]string, 0, len(toolUses))
+		for _, use := range toolUses {
+			names = append(names, use.Name)
+		}
+		logger.Info("inference call requested tools", append(fields, zap.Strings("tools", names))...)
+		return
+	}
+	if result != nil {
+		fields = append(fields, zap.String("stop_reason", result.StopReason), zap.Int("text_length", len(result.Text)))
+	}
+	logger.Info("inference call finished", fields...)
 }

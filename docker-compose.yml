@@ -1,4 +1,14 @@
 services:
+  # Generates this install's JWT and token-encryption secrets on first run, so
+  # `docker compose up` needs no setup. See docker/secrets-init.sh.
+  secrets-init:
+    image: busybox:1.36
+    command: ["sh", "/secrets-init.sh"]
+    volumes:
+      - ./docker/secrets-init.sh:/secrets-init.sh:ro
+      - secrets:/run/whatiff-secrets
+    restart: "no"
+
   local-files-init:
     image: busybox:1.36
     command: sh -c "mkdir -p /tmp/chat-app-files && chown -R 65532:0 /tmp/chat-app-files && chmod -R 775 /tmp/chat-app-files"
@@ -40,7 +50,9 @@ services:
       # validates JWT_SECRET/JWT_REFRESH_SECRET/TOKEN_ENCRYPTION_SECRET at
       # boot and refuses to start on a missing, short, or known-placeholder
       # value — see internal/auth.ValidateSecret and
-      # datastore.ValidateTokenEncryptionSecret.
+      # datastore.ValidateTokenEncryptionSecret. When neither your shell nor .env
+      # sets the three secrets, the API loads the ones secrets-init generated for
+      # this install (above); they are created on your machine, not shipped.
       OPENAI_API_KEY:
       ANTHROPIC_API_KEY:
       # LLM backend selector (ADR 0x018). Empty default preserves the app's
@@ -82,7 +94,12 @@ services:
       # Enable AgentJobsScheduler
       ENABLE_AGENTJOBS_SCHEDULER: ${ENABLE_AGENTJOBS_SCHEDULER:-true}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8081,http://localhost:8082,http://localhost:4200,http://localhost:4201}
+    # Load the generated secrets. The server's env-file loader never overrides
+    # a variable that is already set, so shell and .env values take precedence.
+    command: ["-env", "/run/whatiff-secrets/secrets.env"]
     depends_on:
+      secrets-init:
+        condition: service_completed_successfully
       local-files-init:
         condition: service_completed_successfully
       db:
@@ -92,6 +109,7 @@ services:
     volumes:
       # Persist local file store across container rebuilds (no-op when S3_FILE_BUCKET is set).
       - local-files:/tmp/chat-app-files
+      - secrets:/run/whatiff-secrets:ro
 
   web:
     build:
@@ -127,3 +145,4 @@ services:
 volumes:
   db-data:
   local-files:
+  secrets:

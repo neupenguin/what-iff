@@ -1,7 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { map } from 'rxjs/operators';
 import { environment } from '@environments/environment';
 import { Ritual, CreateRitualRequest, UpdateRitualRequest, RitualFilters, PaginatedRitualResponse } from '../models/ritual.model';
 
@@ -11,13 +10,6 @@ import { Ritual, CreateRitualRequest, UpdateRitualRequest, RitualFilters, Pagina
 export class RitualService {
   private http = inject(HttpClient);
   private apiUrl = `${environment.apiUrl}/ritual`;
-
-  listSystemRituals(): Observable<Ritual[]> {
-    // Backend currently returns a plain array; tolerate both array and paginated shapes.
-    return this.http
-      .get<Ritual[] | PaginatedRitualResponse>(`${this.apiUrl}/system`)
-      .pipe(map((r) => (Array.isArray(r) ? r : r?.results ?? [])));
-  }
 
   listRituals(page: number = 1, limit: number = 10, filters: RitualFilters = {}): Observable<PaginatedRitualResponse> {
     let params = new HttpParams()
@@ -98,17 +90,5 @@ export class RitualService {
     }
 
     return this.http.get<PaginatedRitualResponse>(`${environment.apiUrl}/chat/${chatId}/available-rituals`, { params });
-  }
-
-  assignSystemRitualHotkey(ritualId: string, hotkeys: string): Observable<any> {
-    return this.http.put<any>(`${this.apiUrl}/${ritualId}/binding`, { hotkeys });
-  }
-
-  deleteSystemRitualHotkey(ritualId: string): Observable<void> {
-    return this.http.delete<void>(`${this.apiUrl}/${ritualId}/binding`);
-  }
-
-  getSystemRitualBinding(ritualId: string): Observable<any> {
-    return this.http.get<any>(`${this.apiUrl}/${ritualId}/binding`);
   }
 }

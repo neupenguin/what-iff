@@ -105,7 +105,6 @@ ignore:
   - 'ent/role/**'
   - 'ent/runtime/**'
   - 'ent/safetyviolationevent/**'
-  - 'ent/systemritualbinding/**'
   - 'ent/toolcall/**'
   - 'ent/usageevent/**'
   - 'ent/user/**'

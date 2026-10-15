@@ -101,7 +101,7 @@ export class MemoryDetailPageComponent implements OnInit {
     });
   }
 
-  save(changes: { content: string; level: Memory['level'] }): void {
+  save(changes: { content: string }): void {
     if (!this.memory()) return;
     this.saving.set(true);
     this.memoryService.patchMemory(this.memory()!.id, changes).subscribe({

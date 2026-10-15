@@ -45,6 +45,7 @@ ENV SERVER_HOST=0.0.0.0 \
 EXPOSE 8080
 
 # Note: Docker HEALTHCHECK not included (distroless has no shell/wget)
-# ALB target group performs health checks via HTTP GET /api/health
+# ALB target group performs health checks via HTTP GET /api/health/live (liveness only;
+# /api/health and /api/health/ready also ping the database)
 
 ENTRYPOINT ["/app/api-server"]

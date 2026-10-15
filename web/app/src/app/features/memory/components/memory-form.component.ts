@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 
 import { Memory } from '../../../core/models/memory.model';
 import { PersonalityThumbnailCircle } from '../../../core/models/personality.model';
-import { GLOBAL_SCOPE_LABEL, isUserScopedMemoryLevel, levelDescription } from '../helpers/memory-vm.helpers';
+import { GLOBAL_SCOPE_LABEL, isUserScopedMemoryLevel, levelBadgeText, levelDescription } from '../helpers/memory-vm.helpers';
 
 export interface MemoryPersonalityOption {
   id: string;
@@ -31,31 +31,25 @@ export class MemoryFormComponent {
 
   readonly cancel = output<void>();
   readonly remove = output<void>();
-  readonly save = output<{ content: string; level: Memory['level'] }>();
+  readonly save = output<{ content: string }>();
   readonly pinChange = output<string | null>();
 
   readonly globalScopeLabel = GLOBAL_SCOPE_LABEL;
 
   readonly content = signal('');
-  readonly level = signal<Memory['level']>('thread');
   readonly pinnedPersonalityId = signal<string | null>(null);
 
   readonly canSave = computed(() => this.content().trim().length > 0);
-  readonly levelHint = computed(() => levelDescription(this.level()));
-  readonly showPinControl = computed(() => isUserScopedMemoryLevel(this.level()));
+  // The level is shown, not edited here: moving across the thread boundary is the memory list's
+  // Move (MemoryScopeDialogComponent), and global/personality is the pin below.
+  readonly levelLabel = computed(() => levelBadgeText(this.memory().level));
+  readonly levelHint = computed(() => levelDescription(this.memory().level));
+  readonly showPinControl = computed(() => isUserScopedMemoryLevel(this.memory().level));
 
   ngOnChanges(): void {
     const memory = this.memory();
     this.content.set(memory.content);
-    this.level.set(memory.level);
     this.pinnedPersonalityId.set(memory.pinned_personality_id ?? null);
-  }
-
-  onLevelChange(next: Memory['level']): void {
-    this.level.set(next);
-    if (!isUserScopedMemoryLevel(next)) {
-      this.pinnedPersonalityId.set(null);
-    }
   }
 
   onPinnedPersonalityChange(next: string | null): void {
@@ -65,9 +59,6 @@ export class MemoryFormComponent {
 
   onSubmit(): void {
     if (!this.canSave()) return;
-    this.save.emit({
-      content: this.content().trim(),
-      level: this.level(),
-    });
+    this.save.emit({ content: this.content().trim() });
   }
 }

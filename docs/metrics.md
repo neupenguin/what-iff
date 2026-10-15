@@ -90,7 +90,7 @@ Notes on these metrics:
 
 | Metric | Type | Buckets | Attributes |
 |---|---|---|---|
-| `gen_ai.client.operation.duration` | histogram, s | slow | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.operation.name` (chat, embeddings, generate_image, edit_image, file), `call_path`, `error.type` |
+| `gen_ai.client.operation.duration` | histogram, s | slow | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.operation.name` (chat, embeddings, generate_image, edit_image), `call_path`, `error.type` |
 | `whatiff.gen_ai.time_to_first_token` | histogram, s | slow | provider, model, `call_path` |
 | `gen_ai.client.token.usage` | histogram, {token} | tokens (16–1M) | provider, `gen_ai.token.type`, `call_path` |
 | `whatiff.gen_ai.tokens` | counter, {token} | — | provider, model, `gen_ai.token.type`, `call_path` |
@@ -119,7 +119,7 @@ Notes on these metrics:
 - **Context tokens:** estimated tokens (cl100k) per context segment sent with a turn.
 
 **`call_path` values:** `user_chat`, `agent_job`, `scratchpad`, `memory`, `conversation_summary`,
-`image_ritual`, `chat_name`, `generate_personality`, `expression_grid`, `personality_portrait`,
+`chat_name`, `generate_personality`, `expression_grid`, `personality_portrait`,
 `schedule_parse`, `subagent`, `mode_select`, `expression_pick`, `unknown`. An `unknown` value is a
 labelling gap worth fixing.
 

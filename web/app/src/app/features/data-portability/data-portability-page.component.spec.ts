@@ -5,6 +5,7 @@ import { of } from 'rxjs';
 
 import { ACTIVE_ACCOUNT_IMPORT_JOB_STORAGE_KEY, AccountExportService } from '../../core/services/account-export.service';
 import { ConfirmationService } from '../../core/services/confirmation.service';
+import { PersonalityService } from '../../core/services/personality.service';
 import { AccountArchiveService } from './account-archive.service';
 import { DataPortabilityPageComponent } from './data-portability-page.component';
 import { ExportDeliveryService } from '../../extensions/export-delivery.service';
@@ -12,6 +13,7 @@ import { ExportDeliveryService } from '../../extensions/export-delivery.service'
 describe('DataPortabilityPageComponent', () => {
   let router: { navigate: ReturnType<typeof vi.fn> };
   let confirmation: { confirm: ReturnType<typeof vi.fn> };
+  let personalities: { invalidate: ReturnType<typeof vi.fn> };
   let accountExport: {
     getActivity: ReturnType<typeof vi.fn>;
     getImportStatus: ReturnType<typeof vi.fn>;
@@ -23,6 +25,7 @@ describe('DataPortabilityPageComponent', () => {
     sessionStorage.clear();
     router = { navigate: vi.fn().mockName('Router.navigate') };
     confirmation = { confirm: vi.fn().mockResolvedValue(false) };
+    personalities = { invalidate: vi.fn().mockName('PersonalityService.invalidate') };
     accountExport = {
       getActivity: vi.fn().mockReturnValue(of([])),
       getImportStatus: vi.fn().mockReturnValue(of({ status: 'complete', progress: '{"message":"Import complete."}' })),
@@ -36,6 +39,7 @@ describe('DataPortabilityPageComponent', () => {
         provideZonelessChangeDetection(),
         { provide: Router, useValue: router },
         { provide: ConfirmationService, useValue: confirmation },
+        { provide: PersonalityService, useValue: personalities },
         { provide: AccountArchiveService, useValue: { inspect: vi.fn() } },
         { provide: AccountExportService, useValue: accountExport },
         {
@@ -118,5 +122,7 @@ describe('DataPortabilityPageComponent', () => {
     expect(fixture.componentInstance.importPhase()).toBe('complete');
     expect(fixture.componentInstance.importMessage()).toBe('Import complete.');
     expect(accountExport.clearActiveImport).toHaveBeenCalled();
+    // The restore may have added personalities, so cached pickers must refetch (#318).
+    expect(personalities.invalidate).toHaveBeenCalled();
   });
 });

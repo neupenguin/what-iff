@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
+	"github.com/theimaginaryfoundation/what-iff/internal/metering"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"go.uber.org/zap"
 )
@@ -181,6 +183,29 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 		return out, nil, nil
 	}
 
+	// Quota gate. The images are billed per image once they exist, but the gate runs
+	// first so a user with no credits left does not get free generations. Like the
+	// turn-level gate it is fuzzy; the meter's atomic accounting at Record time is
+	// the precise enforcer. The tool is not told which tier the chat model is, and
+	// the gate ignores it for non-chat actions.
+	var qd metering.Decision
+	if a.meter != nil {
+		qd = a.meter.Check(ctx, chat.UserID, "", models.ActionTypeImageGeneration)
+		if !qd.Allowed {
+			a.logger.Warn("generate_image rejected by quota check", zap.String("user_id", chat.UserID.String()))
+			a.recordQuotaRejection(ctx)
+			out, merr := marshalGenerateImageToolResult(generateImageToolResult{
+				Success: false,
+				Error:   "not enough credits to generate images",
+			})
+			if merr != nil {
+				a.logger.Error("failed to marshal generate_image quota result", zap.Error(merr))
+				return "", nil, merr
+			}
+			return out, nil, nil
+		}
+	}
+
 	prefix := "image"
 	if toolArgs.FilenamePrefix != nil {
 		if trimmed := strings.TrimSpace(*toolArgs.FilenamePrefix); trimmed != "" {
@@ -191,7 +216,12 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 		}
 	}
 
-	b64s := make([]string, count)
+	generator, err := a.imageGeneratorForUser(ctx, chat.UserID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	images := make([]provider.GeneratedImage, count)
 	errs := make([]error, count)
 
 	var wg sync.WaitGroup
@@ -200,12 +230,12 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			b64, err := a.OpenAIProvider.GenerateImagePNGBase64WithOptions(ctx, prompt, quality, aspectRatio)
+			img, err := generator.GenerateImage(ctx, prompt, quality, aspectRatio)
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			b64s[i] = b64
+			images[i] = img
 		}()
 	}
 	wg.Wait()
@@ -221,7 +251,7 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 			}
 			continue
 		}
-		if strings.TrimSpace(b64s[i]) == "" {
+		if strings.TrimSpace(images[i].Base64) == "" {
 			// Treat empty payload as failure (shouldn't happen, but be defensive).
 			failCount++
 			if firstErr == nil {
@@ -233,7 +263,7 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 	}
 
 	if successCount == 0 {
-		if violation, ok := provider.ParseSafetyViolationError(firstErr); ok {
+		if violation, ok := imageSafetyViolationFor(generator, firstErr); ok {
 			eventInput := models.CreateSafetyViolationEventInput{
 				OccurredAt:      time.Now(),
 				Provider:        violation.Provider,
@@ -275,12 +305,25 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 		return "", nil, fmt.Errorf("failed to generate image: %w", firstErr)
 	}
 
-	// Record usage for each successfully generated image (fire-and-forget). The
-	// recorder is nil in builds without a metering implementation (the open-source
-	// build), so nothing is recorded there.
-	if recordImageGenerationUsage != nil {
+	// Record usage for each successfully generated image (fire-and-forget). With no
+	// metering implementation linked (the open-source build) the meter is the no-op
+	// one and nothing is tracked.
+	if a.meter != nil {
 		for i := 0; i < successCount; i++ {
-			recordImageGenerationUsage(ctx, a.ds, chat.UserID, string(quality), provider.ImageEngine, chat.ID.String(), i+1)
+			a.meter.Record(ctx, qd, metering.Usage{
+				UserID:        chat.UserID,
+				ActionType:    models.ActionTypeImageGeneration,
+				ChatID:        chat.ID.String(),
+				ImageQuality:  string(quality),
+				ImageProvider: string(generator.Provider()),
+				Source:        metering.TurnSourceFromContext(ctx),
+				Metadata: map[string]interface{}{
+					"path":        "tool",
+					"engine":      generator.Model(),
+					"provider":    string(generator.Provider()),
+					"image_index": i + 1,
+				},
+			})
 		}
 	}
 
@@ -288,25 +331,26 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 	imagesMeta := make([]generateImageToolImage, 0, successCount)
 	seq := 0
 	for i := 0; i < count; i++ {
-		if errs[i] != nil || strings.TrimSpace(b64s[i]) == "" {
+		if errs[i] != nil || strings.TrimSpace(images[i].Base64) == "" {
 			continue
 		}
 		seq++
-		name := fmt.Sprintf("%s_%s.png", prefix, uuid.NewString())
+		fileType, ext := generatedImageFileType(images[i].MIMEType)
+		name := fmt.Sprintf("%s_%s%s", prefix, uuid.NewString(), ext)
 		if count > 1 {
-			name = fmt.Sprintf("%s_%02d_%s.png", prefix, seq, uuid.NewString())
+			name = fmt.Sprintf("%s_%02d_%s%s", prefix, seq, uuid.NewString(), ext)
 		}
 		attachments = append(attachments, &models.FileAttachment{
 			UserID:      chat.UserID,
 			Name:        name,
-			FileType:    "image/png",
-			FileContent: b64s[i],
+			FileType:    fileType,
+			FileContent: images[i].Base64,
 			Folder:      folder,
 			// ChatMessageID intentionally omitted: it will be set when the assistant message is persisted.
 		})
 		imagesMeta = append(imagesMeta, generateImageToolImage{
 			Name:     name,
-			FileType: "image/png",
+			FileType: fileType,
 		})
 	}
 
@@ -338,4 +382,33 @@ func (a *Agent) generateImageTool(ctx context.Context, chat *models.Chat, args [
 		return "", nil, err
 	}
 	return out, attachments, nil
+}
+
+// imageSafetyViolationFor reports whether err is the generator's vendor refusing
+// the prompt on content grounds, attributed to that vendor.
+func imageSafetyViolationFor(generator provider.ImageGenerator, err error) (*provider.SafetyViolation, bool) {
+	var typed *provider.SafetyViolationError
+	if errors.As(err, &typed) && typed.Violation != nil {
+		return typed.Violation, true
+	}
+	return provider.ParseSafetyViolationErrorFor(imageSafetyProvider(generator.Provider()), err)
+}
+
+// generatedImageFileTypes are the formats image vendors return, with the file
+// extension each is saved under.
+var generatedImageFileTypes = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+}
+
+// generatedImageFileType normalises a generated image's MIME type and returns
+// its extension, treating anything unrecognised as the PNG every vendor
+// defaulted to before images carried a type.
+func generatedImageFileType(mime string) (string, string) {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if ext, ok := generatedImageFileTypes[mime]; ok {
+		return mime, ext
+	}
+	return "image/png", ".png"
 }

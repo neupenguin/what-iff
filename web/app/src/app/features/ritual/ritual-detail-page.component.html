@@ -1,5 +1,5 @@
 <section class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 md:p-6">
-  <header>
+  <header class="max-lg:pl-10">
     <button
       type="button"
       class="rounded-lg border border-border-base px-3 py-2 text-sm text-text-secondary hover:text-text-primary"
@@ -20,7 +20,7 @@
     <div class="grid gap-4 lg:grid-cols-[1fr_300px]">
       <div class="rounded-2xl border border-border-base bg-surface-card p-4">
         <h1 class="mb-4 text-xl font-semibold text-text-primary">
-          {{ creating() ? 'Create skill' : (isSystem() ? 'System skill' : 'Edit skill') }}
+          {{ creating() ? 'Create skill' : 'Edit skill' }}
         </h1>
 
         <app-ritual-form
@@ -30,7 +30,6 @@
           [saving]="saving()"
           [deleting]="deleting()"
           [creating]="creating()"
-          [isSystem]="isSystem()"
           [error]="error()"
           (cancel)="goBack()"
           (save)="save($event)" />

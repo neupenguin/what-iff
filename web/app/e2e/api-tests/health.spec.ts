@@ -8,7 +8,7 @@ import { createApiClient } from '../sdk/client';
  *
  * Ported from the Newman regression suite's "00 Setup / Health" step (that
  * suite's scenario-contract.md, step 1), which asserted only the status
- * code. The body is `text/plain`, not JSON, hence `parseAs`.
+ * code. The body is JSON, but only its presence matters here, hence `parseAs`.
  */
 
 test.describe('health', () => {

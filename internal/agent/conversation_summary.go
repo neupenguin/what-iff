@@ -60,9 +60,8 @@ func buildCheckpointSummaryParams(userID uuid.UUID, existingSummary string, src 
 			OfString: openai.String(updatePrompt),
 		}
 	case src.ModelContext != nil:
-		// Strip images OpenAI won't accept (unsupported media types, and file_ids whose
-		// stored filename extension OpenAI rejects case-sensitively, e.g. ".JPG"). Without
-		// this, a single bad image fails the whole checkpoint summary with a 400.
+		// Strip images OpenAI won't accept (unsupported media types). Without this, a single
+		// bad image fails the whole checkpoint summary with a 400.
 		items := provider.RenderOpenAIInputItems(provider.SanitizeImagesForOpenAIInput(src.ModelContext))
 		if trimmed := strings.TrimSpace(src.AssistantReply); trimmed != "" {
 			items = append(items, responses.ResponseInputItemParamOfMessage(trimmed, provider.RoleAssistant))

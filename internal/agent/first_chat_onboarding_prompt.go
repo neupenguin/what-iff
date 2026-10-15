@@ -5,9 +5,14 @@ import (
 	"strings"
 
 	agenttools "github.com/theimaginaryfoundation/what-iff/internal/agent/tools"
+	"github.com/theimaginaryfoundation/what-iff/internal/models"
 )
 
-const FirstChatGreetingModelName = "claude-haiku-4-5"
+// FirstChatGreetingModelName is the model used to write the welcome message in
+// a brand new chat. It must be a name present in the seeded catalog, because
+// the handler resolves it through the model table to attach a model ID to the
+// greeting; an unseeded name silently falls back to the chat default.
+const FirstChatGreetingModelName = models.UtilityModelName
 
 // BuildFirstChatGreetingPrompt creates the injected first-chat prompt used to
 // produce an in-character welcome message for new users.

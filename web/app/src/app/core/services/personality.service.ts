@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
-import { Observable, of, tap, map } from 'rxjs';
+import { Observable, Subject, of, tap, map } from 'rxjs';
 import { environment } from '@environments/environment';
 import {
   Personality,
@@ -15,6 +15,16 @@ import {
   UpdatePersonalityExpressionRequest
 } from '../models/personality.model';
 
+/**
+ * A change to the user's personality list, published by {@link PersonalityService.changes$}.
+ * `invalidated` means "something changed, but not one record we can name" (an account import,
+ * a create that failed because a cached id no longer exists): refetch.
+ */
+export type PersonalityChange =
+  | { kind: 'created' | 'updated'; personality: Personality }
+  | { kind: 'deleted'; id: string }
+  | { kind: 'invalidated' };
+
 @Injectable({
   providedIn: 'root'
 })
@@ -22,8 +32,27 @@ export class PersonalityService {
   private http = inject(HttpClient);
   private apiUrl = `${environment.apiUrl}/personality`;
 
-  personalities = signal<Personality[]>([]);
   private promptDefaultsSignal = signal<PromptDefaults | null>(null);
+  private readonly changesSubject = new Subject<PersonalityChange>();
+
+  /**
+   * Every create, import, update or delete of a personality, wherever it happened in the app.
+   * Components that hold a personality list for longer than one screen (the sidebar filter, the
+   * chat page) subscribe and refetch, so a new personality shows up without a page reload. The
+   * mutation methods below publish here themselves; flows that create personalities through
+   * another endpoint (generate-flow accept, account import) call {@link notifyChanged}.
+   */
+  readonly changes$: Observable<PersonalityChange> = this.changesSubject.asObservable();
+
+  /** Publishes a personality change made outside this service's own mutation methods. */
+  notifyChanged(change: PersonalityChange): void {
+    this.changesSubject.next(change);
+  }
+
+  /** Tells every cached personality list to refetch. */
+  invalidate(): void {
+    this.notifyChanged({ kind: 'invalidated' });
+  }
 
   listPersonalities(page: number = 1, limit: number = 10, filters?: PersonalityFilters): Observable<PaginatedPersonalityResponse> {
     let params = new HttpParams()
@@ -36,9 +65,7 @@ export class PersonalityService {
     if (filters?.max_date) params = params.set('max_date', filters.max_date);
     if (filters?.personality_ids?.length) params = params.set('personality_ids', filters.personality_ids.join(','));
 
-    return this.http.get<PaginatedPersonalityResponse>(this.apiUrl, { params }).pipe(
-      tap(response => this.personalities.set(response.results))
-    );
+    return this.http.get<PaginatedPersonalityResponse>(this.apiUrl, { params });
   }
 
   getPromptDefaults(): Observable<PromptDefaults> {
@@ -90,7 +117,7 @@ export class PersonalityService {
 
   createPersonality(personality: CreatePersonalityRequest): Observable<Personality> {
     return this.http.post<Personality>(this.apiUrl, personality).pipe(
-      tap(() => this.listPersonalities().subscribe())
+      tap(created => this.notifyChanged({ kind: 'created', personality: created }))
     );
   }
 
@@ -100,7 +127,7 @@ export class PersonalityService {
       .post<PersonalityCardImportResult>(`${this.apiUrl}/import/sillytavern`, card, {
         headers: { 'Content-Type': contentType },
       })
-      .pipe(tap(() => this.listPersonalities().subscribe()));
+      .pipe(tap(result => this.notifyChanged({ kind: 'created', personality: result.personality })));
   }
 
   /** Downloads the personality as a SillyTavern card: a chara_card_v2 JSON document, or the cover image with the card embedded. */
@@ -114,13 +141,13 @@ export class PersonalityService {
 
   updatePersonality(id: string, personality: UpdatePersonalityRequest): Observable<Personality> {
     return this.http.put<Personality>(`${this.apiUrl}/${id}`, personality).pipe(
-      tap(() => this.listPersonalities().subscribe())
+      tap(updated => this.notifyChanged({ kind: 'updated', personality: updated }))
     );
   }
 
   deletePersonality(id: string): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/${id}`).pipe(
-      tap(() => this.listPersonalities().subscribe())
+      tap(() => this.notifyChanged({ kind: 'deleted', id }))
     );
   }
 }

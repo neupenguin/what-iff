@@ -30,13 +30,17 @@
 - **Admin provisioning (ADR 0x018):** `CreateOrPromoteAdmin` (`seed.go`) is the single create/promote/password-reset helper with an explicit `AdminProvisionResult`, called only by `cmd/create-superuser` (interactive, TTY-required, local-DB-only).
   The former `SUPERADMIN_*` boot path (`ensureSuperAdmin`) was **removed** after a security review flagged it — no environment variable can mint an admin in a running deployment.
   CI test users use the public register endpoint.
-- **`vision_support` backfill:** `backfillModelVisionSupport` (run from `EnsureSeedData`) sets the flag on model rows that predate the column (NULL), using the provider/model-id heuristics that gated image input before it was a per-model field.
-  Rows that already have a value are never touched, so admin edits stick; the heuristics exist only for this backfill and can go once every deployment has run it.
+- **Model catalog seeding is switchable:** `EnsureSeedData` seeds the catalog from `models.AvailableModels` only when `SeedModelCatalog()` returns true, which it does by default.
+  A self-hosted install needs the seeded catalog until models are chosen per account.
+  A build whose operator curates the catalog replaces the function in an `init()`, so boot never adds a model the operator did not choose, with whatever pricing and tier the schema defaults give it.
+  It is a function because it is asked when `EnsureSeedData` runs, after configuration has loaded; a package `init()` runs before that.
+  Role seeding and the check that the default model exists run either way.
 
 ## Testing
 
 - *(Typically integration-tested via app startup; add focused tests if connection logic grows.)*
 - `poolmetrics_test.go` — pool gauges against an in-memory sqlite `*sql.DB`.
+- `seed_test.go` — `EnsureSeedData` over sqlmock: with catalog seeding off it issues no catalog query, and with it on the catalog step runs.
 
 ## Related documentation
 

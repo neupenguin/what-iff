@@ -300,19 +300,23 @@ export class MemoriesPage {
     await this.bulkBar.getByRole('button', { name: 'Delete', exact: true }).click();
   }
 
+  /**
+   * Moves the selection to a personality (or Global) from the bulk Move menu. Each memory is its own
+   * POST /memory/{id}/scope; the menu closes once every one has finished, so that is what to wait on.
+   */
   async bulkMove(destination: string): Promise<void> {
-    const patched = this.page.waitForResponse(
-      r => r.request().method() === 'POST' && r.url().includes('/api/memory/batch/patch') && r.ok(),
+    const moved = this.page.waitForResponse(
+      r => r.request().method() === 'POST' && r.url().includes('/api/memory/') && r.url().endsWith('/scope'),
+      { timeout: 15_000 },
     );
     await this.bulkBar.getByRole('button', { name: 'Move', exact: true }).click();
-    await this.page
-      .getByRole('dialog', { name: 'Move memories' })
-      .getByRole('button', {
-        name: destination,
-        exact: true,
-      })
-      .click();
-    await patched;
+    const menu = this.page.getByRole('dialog', { name: 'Move memories' });
+    await menu.getByRole('button', { name: destination, exact: true }).click();
+    const response = await moved;
+    if (!response.ok()) {
+      throw new Error(`bulk move: POST ${response.url()} answered ${response.status()}: ${await response.text()}`);
+    }
+    await menu.waitFor({ state: 'hidden', timeout: 15_000 });
   }
 
   // --- pagination ----------------------------------------------------------

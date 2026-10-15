@@ -971,31 +971,6 @@ func (h *Handler) GetAvailableRituals(w http.ResponseWriter, r *http.Request) {
 		handlerutils.RespondWithError(w, h.logger, http.StatusInternalServerError, handlerutils.CodeNotSet, "Failed to get available rituals", err)
 		return
 	}
-	// If caller requested only hotkey rituals, include system rituals that have user bindings
-	if filters.HasHotkeys != nil && *filters.HasHotkeys {
-		systemR := agent.ListSystemRituals(time.Now().UTC())
-
-		bindings, bErr := h.ds.GetSystemBindingsForUser(r.Context(), userID)
-		if bErr == nil && len(bindings) > 0 {
-			bmap := make(map[uuid.UUID]string, len(bindings))
-			for _, b := range bindings {
-				if b.Hotkeys != "" {
-					bmap[b.RitualID] = b.Hotkeys
-				}
-			}
-			for _, sr := range systemR {
-				if hk, ok := bmap[sr.ID]; ok {
-					rit := sr
-					rit.Hotkeys = hk
-					ritualsPage.Results = append(ritualsPage.Results, rit)
-					ritualsPage.TotalCount++
-				}
-			}
-		} else if bErr != nil {
-			h.logger.Warn("failed to load system ritual bindings", zap.Error(bErr))
-		}
-	}
-
 	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, ritualsPage)
 }
 

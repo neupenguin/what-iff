@@ -26,12 +26,16 @@ describe('MemoryFormComponent', () => {
         fixture.detectChanges();
     });
 
-    it('emits save payload with updated fields', () => {
+    it('emits save payload with updated content only', () => {
         const spy = vi.spyOn(component.save, 'emit').mockReturnValue(undefined);
         component.content.set('updated');
-        component.level.set('summary');
         component.onSubmit();
-        expect(spy).toHaveBeenCalledWith({ content: 'updated', level: 'summary' });
+        expect(spy).toHaveBeenCalledWith({ content: 'updated' });
+    });
+
+    it('shows the level without offering to change it', () => {
+        expect(fixture.nativeElement.querySelector('select[name="memory-level"]')).toBeNull();
+        expect(fixture.nativeElement.textContent).toContain('Thread');
     });
 
     it('emits pinChange when personality pin is updated', () => {

@@ -75,7 +75,6 @@ export class RitualsPageComponent implements OnInit {
   readonly editorSaving = signal(false);
   readonly editorError = signal<string | null>(null);
   readonly editingRitual = signal<Ritual | null>(null);
-  readonly editingSystem = signal(false);
   readonly creating = signal(false);
   readonly personaPickerOpen = signal(false);
   readonly pendingCallRitual = signal<{ id: string; name: string } | null>(null);
@@ -87,39 +86,9 @@ export class RitualsPageComponent implements OnInit {
   private readonly personalityById = computed(
     () => new Map(this.personalityRecords().map(personality => [personality.id, personality])),
   );
-  readonly allRows = computed(() => {
-    const personalRows = this.view.rituals().map(ritual => toRitualRowVm(ritual, this.personalityNameById(), false));
-    const systemRows = this.view.systemRituals().map(ritual => toRitualRowVm(ritual, this.personalityNameById(), true));
-    return [...systemRows, ...personalRows];
-  });
-  private readonly associationMode = computed<'all' | 'global' | 'personality'>(() => {
-    const filters = this.filters();
-    if (filters.globalOnly) return 'global';
-    const selected = filters.personalityIds.length
-      ? filters.personalityIds
-      : (filters.personalityId.trim() ? [filters.personalityId.trim()] : []);
-    return selected.length > 0 ? 'personality' : 'all';
-  });
-  readonly visibleRows = computed(() => {
-    const rows = this.allRows();
-    const mode = this.associationMode();
-    const query = this.filters().query.trim().toLowerCase();
-    if (mode !== 'all') {
-      return rows.filter(row => !row.isSystem);
-    }
-
-    const systemRows = rows.filter(row => row.isSystem);
-    const personalRows = rows.filter(row => !row.isSystem);
-    const visibleSystemRows = query
-      ? systemRows.filter(row =>
-          row.name.toLowerCase().includes(query) ||
-          row.description.toLowerCase().includes(query) ||
-          row.content.toLowerCase().includes(query),
-        )
-      : systemRows;
-
-    return [...visibleSystemRows, ...personalRows];
-  });
+  readonly visibleRows = computed(() =>
+    this.view.rituals().map(ritual => toRitualRowVm(ritual, this.personalityNameById())),
+  );
 
   ngOnInit(): void {
     forkJoin({
@@ -148,7 +117,6 @@ export class RitualsPageComponent implements OnInit {
         void this.router.navigate([], { queryParams: { create: null }, queryParamsHandling: 'merge', replaceUrl: true });
       }
     });
-    this.view.loadSystemRituals();
   }
 
   onFilterChanged(partial: Partial<RitualViewFilters>): void {
@@ -167,7 +135,6 @@ export class RitualsPageComponent implements OnInit {
     if (ritualId === 'new') {
       this.creating.set(true);
       this.editingRitual.set(null);
-      this.editingSystem.set(false);
       this.editorError.set(null);
       this.editorOpen.set(true);
       return;
@@ -176,18 +143,7 @@ export class RitualsPageComponent implements OnInit {
     const personal = this.view.rituals().find(ritual => ritual.id === ritualId);
     if (personal) {
       this.creating.set(false);
-      this.editingSystem.set(false);
       this.editingRitual.set(personal);
-      this.editorError.set(null);
-      this.editorOpen.set(true);
-      return;
-    }
-
-    const system = this.view.systemRituals().find(ritual => ritual.id === ritualId);
-    if (system) {
-      this.creating.set(false);
-      this.editingSystem.set(true);
-      this.editingRitual.set(system);
       this.editorError.set(null);
       this.editorOpen.set(true);
       return;
@@ -196,7 +152,6 @@ export class RitualsPageComponent implements OnInit {
     this.ritualService.getRitual(ritualId).subscribe({
       next: ritual => {
         this.creating.set(false);
-        this.editingSystem.set(false);
         this.editingRitual.set(ritual);
         this.editorError.set(null);
         this.editorOpen.set(true);
@@ -213,7 +168,6 @@ export class RitualsPageComponent implements OnInit {
     this.editorError.set(null);
     this.editingRitual.set(null);
     this.creating.set(false);
-    this.editingSystem.set(false);
   }
 
   /**
@@ -255,7 +209,7 @@ export class RitualsPageComponent implements OnInit {
     }
 
     const ritual = this.editingRitual();
-    if (!ritual || this.editingSystem()) {
+    if (!ritual) {
       this.editorSaving.set(false);
       return;
     }
@@ -322,15 +276,13 @@ export class RitualsPageComponent implements OnInit {
     return personalityAccentSurface(this.rowAccent(row));
   }
 
-  rowPersonaLabel(row: { personalityId: string | null; affinityLabel: string; isSystem: boolean }): string {
-    if (row.isSystem) return 'SYSTEM';
+  rowPersonaLabel(row: { personalityId: string | null; affinityLabel: string }): string {
     if (!this.normalizePersonalityId(row.personalityId)) return 'GLOBAL';
     return row.affinityLabel.trim().toUpperCase();
   }
 
   /** Tooltip for the scope avatar/label on a skill card. */
-  rowScopeHint(row: { personalityId: string | null; isSystem: boolean }): string {
-    if (row.isSystem) return "Built-in skill; it can't be edited or deleted";
+  rowScopeHint(row: { personalityId: string | null }): string {
     if (!this.normalizePersonalityId(row.personalityId)) return 'Global: works in threads with every personality';
     return "Works only in this personality's threads";
   }

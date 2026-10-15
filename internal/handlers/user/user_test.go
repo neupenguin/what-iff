@@ -24,6 +24,8 @@ type mockUserStore struct {
 	deleteUserErr     error
 	deletedUserID     uuid.UUID
 	attachmentRefs    []models.FileAttachment
+	prefs             *models.UserPreferences
+	updatePrefsErr    error
 }
 
 func (m *mockUserStore) CreateUser(_ context.Context, req models.UserRegisterRequest) (*models.UserResponse, *models.TokenPair, error) {
@@ -81,11 +83,11 @@ func (m *mockUserStore) RefreshUserToken(context.Context, string) (*models.Token
 }
 
 func (m *mockUserStore) GetUserPreferences(context.Context, uuid.UUID) (*models.UserPreferences, error) {
-	return nil, nil
+	return m.prefs, nil
 }
 
 func (m *mockUserStore) UpdateUserPreferences(context.Context, uuid.UUID, models.UserPreferences) (*models.UserPreferences, error) {
-	return nil, nil
+	return m.prefs, m.updatePrefsErr
 }
 
 func (m *mockUserStore) GetUsageStats(context.Context, time.Time, time.Time, uuid.UUID) (*models.UsageStats, error) {

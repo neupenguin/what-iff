@@ -196,19 +196,18 @@ describe('MemoryCardComponent', () => {
     expect(starSpy).toHaveBeenCalledWith({ id: 'm-1', starred: false });
   });
 
-  it('hides Move for thread memories and refuses a direct move request', () => {
+  it('offers Move for thread memories, to promote them beyond the thread', () => {
     const moveSpy = vi.spyOn(component.move, 'emit');
     const menuButton = fixture.nativeElement.querySelector('.memory-card__menu-btn') as HTMLButtonElement;
     menuButton.click();
     fixture.detectChanges();
 
-    const menuItems = Array.from(
+    const moveItem = Array.from(
       fixture.nativeElement.querySelectorAll('.memory-card__menu button[role="menuitem"]') as NodeListOf<HTMLButtonElement>,
-    );
-    expect(menuItems.some(button => button.textContent?.trim() === 'Move')).toBe(false);
-    component.onMove();
+    ).find(button => button.textContent?.trim() === 'Move');
+    moveItem!.click();
 
-    expect(moveSpy).not.toHaveBeenCalled();
+    expect(moveSpy).toHaveBeenCalledWith('m-1');
     expect(component.menuOpen()).toBe(false);
   });
 

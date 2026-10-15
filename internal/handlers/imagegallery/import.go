@@ -27,7 +27,7 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileAttachment, tempFilePath, err := handlerutils.UploadFileAttachment(w, r, h.logger, h.agent.OpenAIProvider, userID, nil)
+	fileAttachment, tempFilePath, err := handlerutils.UploadFileAttachment(w, r, h.logger, userID)
 	if err != nil {
 		return
 	}
@@ -40,7 +40,7 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 	if rawFolder := r.FormValue("folder"); strings.TrimSpace(rawFolder) != "" {
 		folder, folderErr := models.NormalizeFolder(rawFolder)
 		if folderErr != nil {
-			handlerutils.AbandonFileAttachmentUpload(r.Context(), h.logger, h.agent.OpenAIProvider, fileAttachment, tempFilePath)
+			handlerutils.AbandonFileAttachmentUpload(r.Context(), fileAttachment, tempFilePath)
 			handlerutils.RespondWithError(w, h.logger, http.StatusBadRequest, handlerutils.CodeNotSet, folderErrorMessage(folderErr), folderErr)
 			return
 		}
@@ -49,7 +49,7 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 
 	createdAttachment, err := h.ds.CreateFileAttachment(r.Context(), userID, fileAttachment)
 	if err != nil {
-		handlerutils.AbandonFileAttachmentUpload(r.Context(), h.logger, h.agent.OpenAIProvider, fileAttachment, tempFilePath)
+		handlerutils.AbandonFileAttachmentUpload(r.Context(), fileAttachment, tempFilePath)
 		handlerutils.RespondWithError(w, h.logger, http.StatusInternalServerError, handlerutils.CodeNotSet, "Error creating image", err)
 		return
 	}
@@ -60,7 +60,6 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 			zap.Error(err),
 			zap.String("file_attachment_id", createdAttachment.ID.String()))
 		_ = h.ds.DeleteFileAttachment(r.Context(), userID, createdAttachment.ID)
-		handlerutils.DeleteProviderFile(r.Context(), h.logger, h.agent.OpenAIProvider, fileAttachment.FileID)
 		_ = os.Remove(tempFilePath)
 		handlerutils.RespondWithError(w, h.logger, http.StatusInternalServerError, handlerutils.CodeNotSet, "Error saving image — please retry", err)
 		return
@@ -75,6 +74,7 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 	handlerutils.UploadThumbnailFromPath(r.Context(), h.fileStore, h.logger, userID, createdAttachment.ID, tempFilePath)
 	handlerutils.TriggerAsyncFileChunking(
 		h.logger,
+		userID,
 		h.agent.ChunkPipeline(),
 		createdAttachment.ID,
 		tempFilePath,

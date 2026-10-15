@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"slices"
 	"strings"
 
@@ -96,6 +97,7 @@ func sanitizeClaudeSchemaValue(v interface{}) interface{} {
 type ClaudeAdapter struct {
 	provider   *ClaudeProvider
 	params     anthropic.MessageNewParams
+	tools      scopedToolList[anthropic.ToolUnionParam]
 	useBetaMCP bool
 	betaParams anthropic.BetaMessageNewParams
 	initErr    error
@@ -140,6 +142,7 @@ func NewClaudeAdapter(provider *ClaudeProvider, params anthropic.MessageNewParam
 	adapter := &ClaudeAdapter{
 		provider: provider,
 		params:   params,
+		tools:    claudeScopedTools(params.Tools),
 	}
 	if mcpConfig == nil || len(mcpConfig.Servers) == 0 {
 		return adapter
@@ -193,6 +196,18 @@ func (a *ClaudeAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUse,
 
 	toolUses := extractClaudeToolUses(msg)
 	if len(toolUses) == 0 {
+		if msg != nil && msg.StopReason == anthropic.StopReasonToolUse {
+			// The model ended to call a tool but no tool_use block survived: the call is lost.
+			// It is still returned as the final answer rather than failing the turn (the text is
+			// the best reply there is); its StopReason stays "tool_use", which is the flag callers
+			// and the agent loop's per-round log see.
+			types := make([]string, 0, len(msg.Content))
+			for _, block := range msg.Content {
+				types = append(types, block.Type)
+			}
+			a.provider.zapLog().Warn("response stopped for tool use but carried no tool call",
+				zap.String("model", string(msg.Model)), zap.Strings("block_types", types))
+		}
 		return a.toGenerateResponse(msg), nil, nil
 	}
 
@@ -549,13 +564,12 @@ func BuildClaudeBetaMCPParams(params anthropic.MessageNewParams, mcpConfig *Clau
 }
 
 func buildClaudeBetaMCPParams(params anthropic.MessageNewParams, mcpConfig *ClaudeMCPConfig) (anthropic.BetaMessageNewParams, error) {
+	// Sampling knobs (temperature, top_k, top_p) are deliberately not carried over: requests
+	// never set them (see docs/ARCHITECTURE_SUMMARY.md, "No sampling knobs").
 	out := anthropic.BetaMessageNewParams{
 		MaxTokens:     params.MaxTokens,
 		Model:         params.Model,
 		InferenceGeo:  params.InferenceGeo,
-		Temperature:   params.Temperature,
-		TopK:          params.TopK,
-		TopP:          params.TopP,
 		StopSequences: append([]string(nil), params.StopSequences...),
 	}
 
@@ -757,4 +771,13 @@ func copyViaJSONIfPresent[S any, D any](field string, src S, dst *D) error {
 		return fmt.Errorf("unmarshal %s: %w", field, err)
 	}
 	return nil
+}
+
+// ScopeTools implements ToolScoper. The beta MCP path builds its tool list once from the scoped
+// set at construction and is left as is.
+func (a *ClaudeAdapter) ScopeTools(hidden func(name string) bool) {
+	if a.useBetaMCP {
+		return
+	}
+	a.params.Tools = a.tools.scope(hidden)
 }

@@ -42,14 +42,12 @@ const (
 	SegmentKindToolDefinitions ModelContextSegmentKind = "tool_definitions"
 )
 
-// UserMessageImage is one image payload for multimodal turns. FileID is the OpenAI Files
-// API id (Responses input_image). RawBytes is used for Claude vision and OpenAI data-URL
-// fallback when FileID is absent.
+// UserMessageImage is one image payload for multimodal turns: the raw bytes, which each
+// provider's renderer sends inline (a base64 block or data URL).
 //
 // Anthropic: image blocks may only appear on user turns — never attach UserImages to an
 // assistant history segment without splitting (see package doc above).
 type UserMessageImage struct {
-	FileID    string
 	MediaType string
 	RawBytes  []byte
 }

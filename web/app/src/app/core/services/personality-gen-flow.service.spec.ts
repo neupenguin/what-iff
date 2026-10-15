@@ -4,6 +4,8 @@ import { provideHttpClient, withXhr } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { environment } from '@environments/environment';
 import { PersonalityGenFlowService } from './personality-gen-flow.service';
+import { PersonalityChange, PersonalityService } from './personality.service';
+import { makeTestPersonality } from '../models/personality.test-fixtures';
 
 describe('PersonalityGenFlowService', () => {
     let service: PersonalityGenFlowService;
@@ -122,5 +124,16 @@ describe('PersonalityGenFlowService', () => {
             created_at: '2026-06-05T00:00:00Z',
             updated_at: '2026-06-05T00:00:00Z',
         });
+    });
+
+    it('tells cached personality lists when an accepted flow creates a personality (#318)', () => {
+        const changes: PersonalityChange[] = [];
+        TestBed.inject(PersonalityService).changes$.subscribe(change => changes.push(change));
+        const created = makeTestPersonality({ id: 'p-generated', name: 'Generated' });
+
+        service.acceptFlow('flow-1', { name: 'Generated' }).subscribe();
+        httpMock.expectOne(`${environment.apiUrl}/personality/generate/flow-1/accept`).flush(created);
+
+        expect(changes).toEqual([{ kind: 'created', personality: created }]);
     });
 });

@@ -90,6 +90,7 @@ export const ALLOWED_UPLOAD_EXTENSIONS = [
   '.tgz',
   '.ts',
   '.txt',
+  '.webp',
   '.xlsx',
   '.xml',
   '.zip'

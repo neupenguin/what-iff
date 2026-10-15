@@ -26,21 +26,70 @@ security:
   - bearerAuth: []
 
 paths:
-  # Health Check
+  # Health Checks
   /health:
     get:
-      summary: Health check endpoint
-      description: Returns the health status of the API
+      summary: Health check endpoint (legacy)
+      description: >
+        Pings the database and returns 503 if the ping fails; identical to
+        /health/ready. Kept for existing callers. Load
+        balancer health checks should use /health/live instead: a
+        database-backed check fails on every instance at once during a
+        database blip, so the load balancer would replace them all together.
       tags: [System]
       security: []
       responses:
         '200':
-          description: API is running
+          description: API and database are reachable
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: "API is running"
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database ping failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/live:
+    get:
+      summary: Liveness check
+      description: >
+        Process liveness only. Returns 200 whenever the HTTP server can answer
+        and never touches the database or other dependencies. This is the
+        endpoint for load balancer (ALB) target-group health checks.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      summary: Readiness check
+      description: >
+        Pings the database (short timeout) and returns 503 if the ping fails.
+        For dashboards and humans; not for load balancer health checks.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: API and database are reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database ping failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
 
   # Build provenance
   /version:
@@ -802,6 +851,113 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           description: Webhook token not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /provider-keys:
+    get:
+      summary: List the account's provider keys
+      description: Describes the model-provider API keys this account has stored. Keys are write-only; only the provider and the key's last four characters are returned. The provider-key routes are served only when the server takes keys from accounts; a deployment that supplies its own keys does not serve them.
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stored keys, in provider order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderKeySummary'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /provider-keys/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: The model provider
+        schema:
+          $ref: '#/components/schemas/ModelProvider'
+    put:
+      summary: Store the account's key for a provider
+      description: Stores the key, encrypted at rest, replacing any key already stored for this provider. The key is never returned.
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProviderKeyRequest'
+      responses:
+        '200':
+          description: Key stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderKeySummary'
+        '400':
+          description: Invalid request body, or a key that is not 8 to 512 characters without spaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Remove the account's key for a provider
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Key removed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No key stored for this provider
           content:
             application/json:
               schema:
@@ -3262,6 +3418,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /memory/{id}/scope:
+    post:
+      summary: Move memory to another scope
+      description: |
+        Moves one memory to global, to any of the user's personalities, or to any of their
+        threads, whatever level it is at now (thread to another thread included). The record itself moves (same id,
+        content and embedding), so no duplicate is created and nothing is re-embedded; retrieval
+        follows the new scope. A promoted memory keeps the thread it came from as `chat_id`
+        (provenance), which the memory manager preselects when moving it back.
+
+        The one destination refused is a sandboxed thread the memory was not made in: moving an
+        account memory there would expose it to the people in that thread. Each move is
+        written to the audit log.
+      tags: [Memory Management]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Memory ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryScopeMoveRequest'
+      responses:
+        '200':
+          description: Memory moved (or already there)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '400':
+          description: Malformed move (unknown level, or a field the level does not take)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Memory, destination thread or personality not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            The move is not allowed: a summary, a sandboxed thread the memory was not made in,
+            a missing destination thread, or a personality move with no personality to use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /memory/export:
     get:
       summary: Export all memories
@@ -3696,27 +3914,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /ritual/system:
-    get:
-      summary: List system rituals
-      description: Returns a list of built-in, read-only system rituals available to all users.
-      tags: [Ritual Management]
-      responses:
-        '200':
-          description: System rituals retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Ritual'
         '401':
           description: Unauthorized
           content:
@@ -4845,6 +5042,15 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: include_total
+          in: query
+          description: >-
+            Set to `false` to skip counting every matching message in the chat; `total_count` is
+            then 0 and the client pages on `next_cursor`, which is absent once nothing older
+            remains. Omitted or any other value returns the exact `total_count` as before.
+          schema:
+            type: boolean
+            default: true
       responses:
         '200':
           description: Messages retrieved successfully
@@ -6811,6 +7017,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /image-gallery/delete:
+    post:
+      summary: Delete many gallery files
+      description: >-
+        Deletes the given files (images, documents or any other upload), each with the cleanup its
+        own route does: an image as `DELETE /image-gallery/{id}` (its stored image and thumbnail),
+        any other file as `DELETE /file-attachment/{id}` (its stored objects, unless a chat-reuse copy
+        still references them). One failure does not stop the
+        rest. Ids that are not the caller's files, or do not exist, are reported in `failed` as
+        "not found" rather than failing the request. Duplicate ids are deleted once.
+      tags: [Image Gallery]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: string
+                    format: uuid
+              required: [ids]
+      responses:
+        '200':
+          description: Which files were deleted and which failed, and why
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GalleryDeleteResult'
+        '400':
+          description: Not JSON, an id that is not a UUID, no ids, or more than 500 ids
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /image-gallery/folders/move:
     post:
       summary: Rename or move a gallery folder
@@ -7033,6 +7285,25 @@ components:
       description: Static webhook API token created via /webhook-tokens. Webhook calls act as the user who created the token, limited to the scopes the token was created with (`messages:write`, `chat:read`); a route that needs a scope the token lacks returns 403.
 
   schemas:
+
+    # Health Check Schemas
+    HealthResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        checks:
+          type: object
+          description: Per-dependency results (e.g. `database`); empty for /health/live.
+          additionalProperties:
+            type: string
+            enum: [ok, error]
+      example:
+        status: healthy
+        checks:
+          database: ok
 
     # User Management Schemas
     UserRegisterRequest:
@@ -7348,6 +7619,18 @@ components:
             an empty array means no favorites. Entries are not re-validated on read, so an
             ID may reference a model that has since been removed — clients should ignore
             IDs that do not match an available model rather than treating them as an error.
+        image_generation_provider:
+          $ref: '#/components/schemas/ImageGenerationProvider'
+        image_generation_providers:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/ImageGenerationProvider'
+          description: |
+            The image vendors the caller holds a key for (the deployment's, or the account's
+            own where accounts supply keys), in the order a settings UI should offer them. Read-only; ignored on update. When the stored
+            `image_generation_provider` is not in this list, image generation uses the first
+            entry instead.
       required:
         - id
         - user_id
@@ -7355,6 +7638,7 @@ components:
         - default_personality_id
         - theme
         - favorite_model_ids
+        - image_generation_provider
       example:
         id: "123e4567-e89b-12d3-a456-426614174000"
         user_id: "123e4567-e89b-12d3-a456-426614174001"
@@ -7364,6 +7648,16 @@ components:
         favorite_model_ids:
           - "123e4567-e89b-12d3-a456-426614174002"
           - "123e4567-e89b-12d3-a456-426614174004"
+        image_generation_provider: "openai"
+        image_generation_providers: ["openai", "google"]
+
+    ImageGenerationProvider:
+      type: string
+      enum: [openai, google, zai, qwen]
+      description: |
+        The vendor the generate_image tool and the image ritual call: OpenAI (GPT Image),
+        Google (Gemini image), z.ai (GLM-Image) or Qwen (Qwen-Image). Defaults to `openai`
+        for a user who never chose.
 
     UserPreferencesUpdateRequest:
       type: object
@@ -7411,6 +7705,14 @@ components:
             UUID, or that it resolves to a model the account can use. `format: uuid`
             describes the values the client is expected to send, not a constraint the API
             enforces. Unresolvable entries are inert — see the response schema.
+        image_generation_provider:
+          allOf:
+            - $ref: '#/components/schemas/ImageGenerationProvider'
+          description: |
+            The image vendor to use. Preserved when absent: omitting the field (or sending an
+            empty string) leaves the stored choice unchanged. Any value outside the enum is
+            rejected with 400. A vendor the caller has no key for is stored but
+            not used; see `image_generation_providers` on the response.
       required:
         - default_model_id
       example:
@@ -8446,6 +8748,34 @@ components:
           format: uuid
           description: The user turn this job answers. Set by GET /chat/{chatId}/active-job.
 
+    ModelProvider:
+      type: string
+      description: A model provider.
+      enum: [openai, anthropic, zai, google, mistral, deepseek, qwen, xiaomi]
+    ProviderKeySummary:
+      type: object
+      description: A stored provider key, without the key.
+      required: [provider, hint, updated_at]
+      properties:
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        hint:
+          type: string
+          description: The key's last four characters.
+        updated_at:
+          type: string
+          format: date-time
+    SetProviderKeyRequest:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+          writeOnly: true
+          # The server trims surrounding whitespace, then requires 8 to 512
+          # characters with no whitespace; this pattern says the same.
+          pattern: '^\s*\S{8,512}\s*$'
+          description: The provider API key, 8 to 512 characters. Leading and trailing whitespace is trimmed; whitespace inside the key is rejected.
     WebhookToken:
       type: object
       properties:
@@ -8686,6 +9016,37 @@ components:
       example:
         path: "charts/oura"
         count: 12
+    GalleryDeleteResult:
+      type: object
+      properties:
+        deleted:
+          type: array
+          description: Ids that were deleted, in request order
+          items:
+            type: string
+            format: uuid
+        failed:
+          type: array
+          description: Ids that were not deleted, in request order
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              error:
+                type: string
+                description: >-
+                  Why, safe to show the user. One of "not found", "could not read the file",
+                  "could not delete the stored image", "could not delete the provider's copy" or
+                  "could not delete the file".
+            required: [id, error]
+      required: [deleted, failed]
+      example:
+        deleted: ["123e4567-e89b-12d3-a456-426614174000"]
+        failed:
+          - id: "123e4567-e89b-12d3-a456-426614174001"
+            error: "not found"
     GalleryMoveResult:
       type: object
       properties:
@@ -8708,7 +9069,11 @@ components:
           description: ID of the user who owns this file attachment
         file_id:
           type: string
-          description: External file ID from the file storage system (e.g., OpenAI file ID)
+          deprecated: true
+          description: >-
+            Deprecated. The OpenAI Files API id of a file uploaded before uploads stopped being
+            mirrored there. Never set for new files and not used for anything; the file's bytes live
+            in the object store.
         name:
           type: string
           description: Original filename of the uploaded file
@@ -8765,7 +9130,6 @@ components:
       example:
         id: "123e4567-e89b-12d3-a456-426614174000"
         user_id: "123e4567-e89b-12d3-a456-426614174001"
-        file_id: "file-abc123xyz"
         name: "research_document.pdf"
         file_type: "application/pdf"
         description: "Quarterly research report excerpt"
@@ -9336,7 +9700,9 @@ components:
         chat_id:
           type: string
           format: uuid
-          description: ID of the chat this memory belongs to (optional for User-scoped memories)
+          description: >
+            The thread of a thread memory. For a global or personality memory, the thread it was
+            created in or promoted from (provenance), absent when it has none or that thread was deleted
         chat_name:
           type: string
           description: Name of the chat this memory belongs to (if applicable)
@@ -9818,6 +10184,25 @@ components:
           enum: [low, medium, high]
         provenance:
           $ref: '#/components/schemas/MemoryProvenance'
+
+    MemoryScopeMoveRequest:
+      type: object
+      required: [level]
+      properties:
+        level:
+          type: string
+          enum: [global, personality, thread]
+          description: The level to move the memory to
+        chat_id:
+          type: string
+          format: uuid
+          description: Destination thread; required for `thread`, never defaulted
+        personality_id:
+          type: string
+          format: uuid
+          description: >
+            Personality to pin to for `personality`. Omitted, a thread memory is pinned to its
+            thread's personality.
 
     MemoryMergeEvent:
       type: object
@@ -10415,6 +10800,8 @@ components:
 tags:
   - name: System
     description: System health and status endpoints
+  - name: Provider Keys
+    description: An account's own model-provider API keys. Served only when the server takes keys from accounts.
   - name: Authentication
     description: User authentication and token management
   - name: User Management

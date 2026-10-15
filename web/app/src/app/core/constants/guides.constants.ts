@@ -1,7 +1,7 @@
 import { environment } from '@environments/environment';
 
 /**
- * Product guides on the docs site (whatiffchat-web), linked from in-app help hints and the
+ * Product guides on the docs site, linked from in-app help hints and the
  * new-user welcome. Paths resolve against `environment.docsUrl`, so a deployment that points
  * docsUrl elsewhere (or blanks it) moves or hides every guide link at once.
  */
@@ -10,7 +10,7 @@ export type GuideKey = 'docs' | 'gettingStarted' | 'context' | 'continuity' | 'e
 const GUIDE_PATHS: Record<Exclude<GuideKey, 'docs'>, string> = {
   gettingStarted: 'guides/getting-started.html',
   context: 'guides/how-context-works.html',
-  continuity: 'guides/building-continuity.html',
+  continuity: 'guides/memory-and-context.html',
   expressions: 'guides/expressions.html',
   advanced: 'guides/advanced-features.html',
   webhooks: 'guides/webhooks.html',

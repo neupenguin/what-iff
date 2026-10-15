@@ -93,6 +93,17 @@ type Usage struct {
 	// vendor-native searches, which cost the operator very different amounts, so an
 	// implementation can price them separately.
 	WebSearchFirstParty bool
+	// ImageQuality is the quality tier ("low"|"medium"|"high") of one image the
+	// generate_image tool produced, so an implementation can price it. Only
+	// meaningful when ActionType is models.ActionTypeImageGeneration; empty means the
+	// turn itself is an image-generation ritual, which the implementation prices as a
+	// fixed low-quality image.
+	ImageQuality string
+	// ImageProvider is the vendor (a models.ModelProvider) the generate_image tool
+	// made the image with, so an implementation can price vendors separately. Only meaningful when ActionType is
+	// models.ActionTypeImageGeneration; empty means OpenAI, the only vendor before
+	// users could choose one.
+	ImageProvider string
 }
 
 // New constructs the production Meter. It is nil in builds that do not link a

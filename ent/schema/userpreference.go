@@ -40,6 +40,11 @@ func (UserPreference) Fields() []ent.Field {
 			Default([]string{}).
 			Comment("Model IDs the user has starred in the model picker, user-global (not per-personality).").
 			Annotations(entsql.Default("[]")),
+		field.Enum("image_generation_provider").
+			Values("openai", "google", "zai", "qwen").
+			Optional().
+			Nillable().
+			Comment("Vendor the generate_image tool and image ritual call; unset means OpenAI. Values match models.ModelProvider."),
 	}
 }
 

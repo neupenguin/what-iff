@@ -8,7 +8,7 @@ import { fromEvent } from 'rxjs';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
-import { MemoryMergeEvent, MemorySort } from '../../core/models/memory.model';
+import { Memory, MemoryMergeEvent, MemoryScopeMoveInput, MemorySort } from '../../core/models/memory.model';
 import { GLOBAL_SCOPE_LABEL, toMemoryCardVm } from './helpers/memory-vm.helpers';
 import {
   parseQueryParams,
@@ -22,6 +22,7 @@ import {
 import { MemoryPersonalityOption } from './components/memory-form.component';
 import { MemoryCardGridComponent } from './components/memory-card-grid.component';
 import { MemoryFocusPanelComponent } from './components/memory-focus-panel.component';
+import { MemoryScopeDialogComponent } from './components/memory-scope-dialog.component';
 import { DeleteMemoryModalComponent } from './components/delete-memory-modal.component';
 import { ModalComponent } from '../../shared/ui/modal/modal.component';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
@@ -37,6 +38,7 @@ const DESKTOP_FOCUS_QUERY = '(min-width: 961px)';
     FormsModule,
     MemoryCardGridComponent,
     MemoryFocusPanelComponent,
+    MemoryScopeDialogComponent,
     DeleteMemoryModalComponent,
     ModalComponent,
     CalendarIconComponent,
@@ -62,6 +64,10 @@ export class MemoriesListTabComponent implements OnInit {
   readonly deleteTargetIds = signal<string[]>([]);
   readonly moveMenuOpen = signal(false);
   readonly moveTargetIds = signal<string[]>([]);
+  /** Reasons the server gave for moves it refused; the other memories moved. */
+  readonly moveErrors = signal<string[]>([]);
+  /** The memories being moved into a thread (MemoryScopeDialogComponent). */
+  readonly threadDialogMemories = signal<Memory[] | null>(null);
   readonly searchDraft = signal('');
   readonly pinUpdatingId = signal<string | null>(null);
   readonly focusedId = signal<string | null>(null);
@@ -394,14 +400,22 @@ export class MemoriesListTabComponent implements OnInit {
     });
   }
 
+  /**
+   * The one Move menu, for the bulk bar on every tab and for a single card or the focus panel:
+   * global, any personality, or a thread. Every level can go anywhere (the server refuses only a
+   * sandboxed thread the memory was not made in); summaries stay with their thread.
+   */
   openMoveMenu(ids: string[]): void {
     const memoriesByID = new Map(this.view.memories().map(memory => [memory.id, memory]));
-    const eligibleIDs = ids.filter(id => memoriesByID.get(id)?.level !== 'thread');
-    // A stale or mixed selection must not repeatedly retry an invalid thread move.
+    const eligibleIDs = ids.filter(id => {
+      const level = memoriesByID.get(id)?.level;
+      return level !== undefined && level !== 'summary';
+    });
     if (eligibleIDs.length !== ids.length) {
       this.view.setSelectedIds(eligibleIDs);
     }
     if (eligibleIDs.length === 0) return;
+    this.moveErrors.set([]);
     this.moveTargetIds.set(eligibleIDs);
     this.moveMenuOpen.set(true);
   }
@@ -409,39 +423,56 @@ export class MemoriesListTabComponent implements OnInit {
   closeMoveMenu(): void {
     this.moveMenuOpen.set(false);
     this.moveTargetIds.set([]);
+    this.moveErrors.set([]);
   }
 
+  /** Moves the menu's memories to global (null) or to a personality, through the scope endpoint. */
   moveToPersonality(personalityId: string | null): void {
     const ids = this.moveTargetIds();
     if (ids.length === 0) return;
-    const patch =
-      personalityId === null
-        ? { level: 'global' as const, pinned_personality_id: null }
-        : { level: 'personality' as const, pinned_personality_id: personalityId };
-
-    const request$ =
-      ids.length === 1
-        ? this.view.patchOne(ids[0], patch)
-        : (() => {
-            this.view.setSelectedIds(ids);
-            return this.view.patchSelected(patch);
-          })();
-
-    request$.subscribe({
-      next: () => {
-        this.closeMoveMenu();
+    const move: MemoryScopeMoveInput =
+      personalityId === null ? { level: 'global' } : { level: 'personality', personality_id: personalityId };
+    this.moveErrors.set([]);
+    this.view.moveScope(ids, move).subscribe({
+      next: reasons => {
         this.view.load(this.currentPage());
+        if (reasons.length === 0) {
+          this.closeMoveMenu();
+          return;
+        }
+        // The rest have moved; the menu stays open to say which could not.
+        this.moveErrors.set(reasons);
       },
-      error: () => this.closeMoveMenu(),
+      // moveScope reports each refusal as a reason; this is only for a failure outside the requests.
+      error: () => {
+        this.view.load(this.currentPage());
+        this.moveErrors.set(['Failed to move memories']);
+      },
     });
+  }
+
+  /** From the Move menu: pick a thread for the menu's memories. */
+  moveToThread(): void {
+    const ids = new Set(this.moveTargetIds());
+    const memories = this.view.memories().filter(memory => ids.has(memory.id));
+    this.closeMoveMenu();
+    if (memories.length > 0) this.threadDialogMemories.set(memories);
   }
 
   onMoveOne(memoryId: string): void {
     this.openMoveMenu([memoryId]);
   }
 
+  closeThreadDialog(): void {
+    this.threadDialogMemories.set(null);
+  }
+
+  onThreadMoved(): void {
+    this.threadDialogMemories.set(null);
+    this.view.load(this.currentPage());
+  }
+
   onMoveSelected(): void {
-    if (this.isThreadView()) return;
     this.openMoveMenu([...this.selectedIds()]);
   }
 }

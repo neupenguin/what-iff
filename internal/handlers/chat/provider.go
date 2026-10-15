@@ -37,7 +37,6 @@ type Store interface {
 	DeleteFileAttachment(ctx context.Context, userID, id uuid.UUID) error
 	SetFileAttachmentS3Key(ctx context.Context, userID, id uuid.UUID, s3Key string) error
 	GetAvailableRituals(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, filters models.RitualFilters) (*models.PaginatedResponse, error)
-	GetSystemBindingsForUser(ctx context.Context, userID uuid.UUID) ([]*models.SystemRitualBinding, error)
 	ListChatMCPServers(ctx context.Context, userID, chatID uuid.UUID) ([]*models.MCPServer, error)
 	ListAvailableChatMCPServers(ctx context.Context, userID, chatID uuid.UUID, pageNum, pageSize int, filters models.MCPServerFilters) (*models.PaginatedResponse, error)
 	AddMCPServerToChat(ctx context.Context, userID, chatID, mcpServerID uuid.UUID) error

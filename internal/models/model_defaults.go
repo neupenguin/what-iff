@@ -6,8 +6,18 @@ const (
 	// DefaultModelName specifies which model from AvailableModels to use as the default
 	DefaultModelName = "gpt-5.1"
 
-	// LegacyFineTunedModelName is the old fine-tuned model that will be migrated
-	LegacyFineTunedModelName = "ft:gpt-4.1-2025-04-14:sotherden-io:personal-agent:CFNpAx1S"
+	// UtilityModelName is the model for short background work that is not the
+	// assistant talking: naming a chat, picking an expression, selecting a mood,
+	// answering a memory query, parsing a job schedule, and the first-chat
+	// greeting.
+	//
+	// Keeping them on one constant makes retiring a model a single edit, and
+	// keeps the greeting on the same provider as the rest of the default
+	// experience rather than on one the install may have no key for.
+	//
+	// Assistant-facing generation does not use this. Personality generation, the
+	// summarizer and image work each pick their own model for quality reasons.
+	UtilityModelName = "gpt-5.6-luna"
 )
 
 // ModelProvider identifies which API backend a model is routed through.
@@ -72,6 +82,14 @@ var AvailableModels = []ModelConfig{
 		Provider:      ModelProviderOpenAI,
 	},
 	{
+		Name:          "gpt-5.6-luna",
+		DisplayName:   "GPT-5.6 Luna",
+		Description:   "Fast, low-cost model from the GPT-5.6 family. Suited to short, high-volume work where latency matters more than depth.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderOpenAI,
+	},
+	{
 		Name:          "gpt-4o",
 		DisplayName:   "GPT-4o",
 		Description:   "OpenAI's flagship multimodal model with vision capabilities. Matches GPT-4 Turbo performance in text/coding with superior non-English and vision tasks.",
@@ -111,14 +129,6 @@ var AvailableModels = []ModelConfig{
 		VisionSupport: true,
 		Provider:      ModelProviderOpenAI,
 	},
-	{
-		Name:          "gpt-5.1-nano",
-		DisplayName:   "GPT-5.1 Nano",
-		Description:   "Ultra-fast, lightweight GPT-5.1 variant for high-throughput applications. Best price-performance ratio.",
-		ToolSupport:   true,
-		VisionSupport: true,
-		Provider:      ModelProviderOpenAI,
-	},
 
 	// Anthropic Claude models
 	/*
@@ -132,6 +142,22 @@ var AvailableModels = []ModelConfig{
 					Provider:    ModelProviderAnthropic,
 				},
 	*/
+	{
+		Name:          "claude-opus-5",
+		DisplayName:   "Claude Opus 5",
+		Description:   "Anthropic's most capable Opus-tier model. Adaptive thinking, strong at complex analysis and coding, with a 1M token context window.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderAnthropic,
+	},
+	{
+		Name:          "claude-sonnet-5",
+		DisplayName:   "Claude Sonnet 5",
+		Description:   "Anthropic's balanced model for everyday work. Adaptive thinking with a 1M token context window.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderAnthropic,
+	},
 	{
 		Name:          "claude-sonnet-4-6",
 		DisplayName:   "Claude Sonnet 4.6",
@@ -151,6 +177,14 @@ var AvailableModels = []ModelConfig{
 
 	// z.ai GLM models (routed through z.ai's Anthropic-compatible Messages API).
 	{
+		Name:          "glm-5.3",
+		DisplayName:   "GLM-5.3",
+		Description:   "z.ai's flagship GLM model. Natively multimodal with a 1M token context window.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderZAI,
+	},
+	{
 		Name:          "glm-5.2",
 		DisplayName:   "GLM-5.2",
 		Description:   "z.ai's flagship GLM model. A strong, low-cost general-purpose model routed through z.ai's Anthropic-compatible API.",
@@ -160,6 +194,14 @@ var AvailableModels = []ModelConfig{
 	},
 
 	// Google Gemini models (routed through Google's OpenAI-compatible Chat Completions API).
+	{
+		Name:          "gemini-3.8-flash",
+		DisplayName:   "Gemini 3.8 Flash",
+		Description:   "Google's most capable Flash model. Built for long-horizon agentic work and complex workflows.",
+		ToolSupport:   true,
+		VisionSupport: true,
+		Provider:      ModelProviderGoogle,
+	},
 	{
 		Name:          "gemini-3.5-flash",
 		DisplayName:   "Gemini 3.5 Flash",

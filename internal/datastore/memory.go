@@ -851,44 +851,6 @@ func (d *Datastore) GetChatSummaryMemory(ctx context.Context, userID, chatID uui
 	return toMemoryModel(entMemory), nil
 }
 
-// ListChatsMissingSummaryMemory returns chats whose legacy checkpoint summary
-// still needs an internal Summary memory.
-func (d *Datastore) ListChatsMissingSummaryMemory(ctx context.Context, limit int) ([]models.ChatSummaryBackfillCandidate, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-
-	chats, err := d.dbClient.Chat.Query().
-		Where(
-			entchat.CheckpointSummaryNotNil(),
-			entchat.CheckpointSummaryNEQ(""),
-			entchat.Not(entchat.HasMemoriesWith(memory.ScopeEQ(memory.ScopeSummary))),
-		).
-		WithOwner().
-		Order(ent.Asc(entchat.FieldUpdatedAt), ent.Asc(entchat.FieldID)).
-		Limit(limit).
-		All(ctx)
-	if err != nil {
-		d.logger.Error(i18n.T1("list.failed", "Entity", "summary backfill candidates"), zap.Error(err))
-		return nil, err
-	}
-
-	candidates := make([]models.ChatSummaryBackfillCandidate, 0, len(chats))
-	for _, chat := range chats {
-		if chat.Edges.Owner == nil {
-			d.logger.Warn(i18n.T1("chat.owner_missing", "ChatID", chat.ID.String()))
-			continue
-		}
-		candidates = append(candidates, models.ChatSummaryBackfillCandidate{
-			UserID:  chat.Edges.Owner.ID,
-			ChatID:  chat.ID,
-			Summary: chat.CheckpointSummary,
-		})
-	}
-
-	return candidates, nil
-}
-
 // truncateString truncates a string to the specified length and adds "..." if truncated
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -2409,35 +2371,7 @@ func (d *Datastore) GetRelatedMemories(ctx context.Context, userId, chatId uuid.
 	// Format vector as PostgreSQL array literal to avoid parameter binding issues
 	vectorStr := embVec.String()
 
-	// Chat-scoped memories
-	chatScopedPredicate := memory.And(
-		memory.ScopeEQ(memory.ScopeChat),
-		memory.HasChatWith(entchat.ID(chatId)),
-	)
-
-	// User-scoped memories with pinning logic
-	var userScopedPredicate func(*sql.Selector)
-	if activePersonalityID != uuid.Nil {
-		// Include unpinned OR pinned to active personality
-		userScopedPredicate = memory.And(
-			memory.ScopeEQ(memory.ScopeUser),
-			memory.Or(
-				memory.PinnedPersonalityIDIsNil(),
-				memory.PinnedPersonalityIDEQ(activePersonalityID),
-			),
-		)
-	} else {
-		// include unpinned User-scoped memories
-		userScopedPredicate = memory.And(
-			memory.ScopeEQ(memory.ScopeUser),
-			memory.PinnedPersonalityIDIsNil(),
-		)
-	}
-
-	readable := memory.Or(chatScopedPredicate, userScopedPredicate)
-	if sandboxed {
-		readable = chatScopedPredicate
-	}
+	readable := relatedMemoryReadable(chatId, activePersonalityID, sandboxed)
 	dbEmbeddings, err := tx.Embedding.Query().
 		Where(
 			embedding.HasMemoryWith(
@@ -2488,6 +2422,30 @@ func (d *Datastore) GetRelatedMemories(ctx context.Context, userId, chatId uuid.
 	// Retrieved memory logging removed
 
 	return memories, nil
+}
+
+// relatedMemoryReadable is the scope filter GetRelatedMemories retrieves through: the chat's own
+// Chat-scoped memories and, outside a sandbox, the account's User-scoped ones that are unpinned or
+// pinned to the active personality. Scope, pin and chat edge are all it reads, so a memory moved to
+// another scope (MoveMemoryScope) is retrieved under its new scope with its existing embedding.
+// A change to what counts as readable here must keep TestMoveMemoryScope_RetrievalFollowsTheNewScope
+// passing, and may need matching rules in MoveMemoryScope.
+func relatedMemoryReadable(chatID, activePersonalityID uuid.UUID, sandboxed bool) predicate.Memory {
+	chatScoped := memory.And(
+		memory.ScopeEQ(memory.ScopeChat),
+		memory.HasChatWith(entchat.ID(chatID)),
+	)
+	if sandboxed {
+		return chatScoped
+	}
+	pinned := memory.PinnedPersonalityIDIsNil()
+	if activePersonalityID != uuid.Nil {
+		pinned = memory.Or(
+			memory.PinnedPersonalityIDIsNil(),
+			memory.PinnedPersonalityIDEQ(activePersonalityID),
+		)
+	}
+	return memory.Or(chatScoped, memory.And(memory.ScopeEQ(memory.ScopeUser), pinned))
 }
 
 // GetRelatedSummaryMemories returns Summary-scope memories (per-chat checkpoint summaries) ranked

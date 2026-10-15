@@ -15,7 +15,9 @@ import { DraftMessageService } from '../../core/services/draft-message.service';
 import { JobService } from '../../core/services/job.service';
 import { MessageService } from '../../core/services/message.service';
 import { ModelService } from '../../core/services/model.service';
-import { PersonalityService } from '../../core/services/personality.service';
+import { PersonalityChange, PersonalityService } from '../../core/services/personality.service';
+import { ConfirmationService } from '../../core/services/confirmation.service';
+import { makeTestPersonality } from '../../core/models/personality.test-fixtures';
 import { Chat } from '../../core/models/chat.model';
 import { FileAttachment } from '../../core/models/file-attachment.model';
 import { RightPanelService } from '../../core/services/right-panel.service';
@@ -38,6 +40,11 @@ describe('ChatPageComponent', () => {
     let fileAttachmentService: FileAttachmentServiceMock;
     let messageService: MessageServiceMock;
     let router: RouterMock;
+    let personalityService: {
+        listPersonalities: ReturnType<typeof vi.fn>;
+        invalidate: ReturnType<typeof vi.fn>;
+        changes$: Subject<PersonalityChange>;
+    };
 
     const chat: Chat = {
         id: 'chat-1',
@@ -99,8 +106,10 @@ describe('ChatPageComponent', () => {
             getModels: vi.fn().mockName("ModelService.getModels"),
             models$: new BehaviorSubject([]).asObservable()
         };
-        const personalityService = {
-            listPersonalities: vi.fn().mockName("PersonalityService.listPersonalities")
+        personalityService = {
+            listPersonalities: vi.fn().mockName("PersonalityService.listPersonalities"),
+            invalidate: vi.fn().mockName("PersonalityService.invalidate"),
+            changes$: new Subject<PersonalityChange>(),
         };
         personalityService.listPersonalities.mockReturnValue(of({ results: [], total_count: 0, page: 1 }));
         fileAttachmentService = {
@@ -331,6 +340,35 @@ describe('ChatPageComponent', () => {
         const modal = fixture.nativeElement.querySelector('.chat-page__summary-modal') as HTMLElement | null;
         expect(modal).not.toBeNull();
         expect(modal?.textContent).toContain('Heaven\'s Gate recruited through escalating commitment.');
+    });
+
+    describe('personality picker (#318)', () => {
+        it('reports a failed new-thread pick instead of silently doing nothing, and refreshes personalities', async () => {
+            fixture.detectChanges();
+            const alert = vi.spyOn(TestBed.inject(ConfirmationService), 'alert').mockResolvedValue(undefined);
+            chatService.createChat.mockReturnValue(throwError(() => new Error('Personality not found')));
+            router.navigate.mockClear();
+
+            fixture.componentInstance.openPersonaPicker('new-thread');
+            await fixture.componentInstance.onPersonaPicked(makeTestPersonality({ id: 'gone', name: 'Imported Card' }));
+
+            expect(personalityService.invalidate).toHaveBeenCalled();
+            expect(alert).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'danger',
+                title: 'Could not start a chat with Imported Card',
+                message: expect.stringContaining('Personality not found'),
+            }));
+            expect(router.navigate).not.toHaveBeenCalled();
+        });
+
+        it('reloads its personality list when a personality changes elsewhere', () => {
+            fixture.detectChanges();
+            const before = personalityService.listPersonalities.mock.calls.length;
+
+            personalityService.changes$.next({ kind: 'created', personality: makeTestPersonality({ id: 'new' }) });
+
+            expect(personalityService.listPersonalities.mock.calls.length).toBe(before + 1);
+        });
     });
 
     it('closes the active thread and returns to the thread manager', async () => {

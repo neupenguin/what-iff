@@ -12,8 +12,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Health check endpoint
-         * @description Returns the health status of the API
+         * Health check endpoint (legacy)
+         * @description Pings the database and returns 503 if the ping fails; identical to /health/ready. Kept for existing callers. Load balancer health checks should use /health/live instead: a database-backed check fails on every instance at once during a database blip, so the load balancer would replace them all together.
          */
         get: {
             parameters: {
@@ -24,13 +24,109 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description API is running */
+                /** @description API and database are reachable */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": string;
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+                /** @description Database ping failed */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liveness check
+         * @description Process liveness only. Returns 200 whenever the HTTP server can answer and never touches the database or other dependencies. This is the endpoint for load balancer (ALB) target-group health checks.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Process is alive */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness check
+         * @description Pings the database (short timeout) and returns 503 if the ping fails. For dashboards and humans; not for load balancer health checks.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description API and database are reachable */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
+                    };
+                };
+                /** @description Database ping failed */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthResponse"];
                     };
                 };
             };
@@ -1435,6 +1531,196 @@ export interface paths {
                     };
                 };
                 /** @description Webhook token not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Internal server error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/provider-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the account's provider keys
+         * @description Describes the model-provider API keys this account has stored. Keys are write-only; only the provider and the key's last four characters are returned. The provider-key routes are served only when the server takes keys from accounts; a deployment that supplies its own keys does not serve them.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Stored keys, in provider order */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderKeySummary"][];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Internal server error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/provider-keys/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The model provider */
+                provider: components["schemas"]["ModelProvider"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store the account's key for a provider
+         * @description Stores the key, encrypted at rest, replacing any key already stored for this provider. The key is never returned.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description The model provider */
+                    provider: components["schemas"]["ModelProvider"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetProviderKeyRequest"];
+                };
+            };
+            responses: {
+                /** @description Key stored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderKeySummary"];
+                    };
+                };
+                /** @description Invalid request body, or a key that is not 8 to 512 characters without spaces */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown provider */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Internal server error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Remove the account's key for a provider */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description The model provider */
+                    provider: components["schemas"]["ModelProvider"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Key removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No key stored for this provider */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -5052,6 +5338,96 @@ export interface paths {
         };
         trace?: never;
     };
+    "/memory/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move memory to another scope
+         * @description Moves one memory to global, to any of the user's personalities, or to any of their
+         *     threads, whatever level it is at now (thread to another thread included). The record itself moves (same id,
+         *     content and embedding), so no duplicate is created and nothing is re-embedded; retrieval
+         *     follows the new scope. A promoted memory keeps the thread it came from as `chat_id`
+         *     (provenance), which the memory manager preselects when moving it back.
+         *
+         *     The one destination refused is a sandboxed thread the memory was not made in: moving an
+         *     account memory there would expose it to the people in that thread. Each move is
+         *     written to the audit log.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Memory ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryScopeMoveRequest"];
+                };
+            };
+            responses: {
+                /** @description Memory moved (or already there) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Memory"];
+                    };
+                };
+                /** @description Malformed move (unknown level, or a field the level does not take) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Memory, destination thread or personality not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The move is not allowed: a summary, a sandboxed thread the memory was not made in, a missing destination thread, or a personality move with no personality to use */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/memory/export": {
         parameters: {
             query?: never;
@@ -5659,54 +6035,6 @@ export interface paths {
                 };
             };
         };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ritual/system": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List system rituals
-         * @description Returns a list of built-in, read-only system rituals available to all users.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description System rituals retrieved successfully */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Ritual"][];
-                    };
-                };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7205,6 +7533,8 @@ export interface paths {
                     min_date?: string;
                     /** @description Filter messages sent before this date */
                     max_date?: string;
+                    /** @description Set to `false` to skip counting every matching message in the chat; `total_count` is then 0 and the client pages on `next_cursor`, which is absent once nothing older remains. Omitted or any other value returns the exact `total_count` as before. */
+                    include_total?: boolean;
                 };
                 header?: never;
                 path: {
@@ -9873,6 +10203,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/image-gallery/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete many gallery files
+         * @description Deletes the given files (images, documents or any other upload), each with the cleanup its own route does: an image as `DELETE /image-gallery/{id}` (its stored image and thumbnail), any other file as `DELETE /file-attachment/{id}` (its stored objects, unless a chat-reuse copy still references them). One failure does not stop the rest. Ids that are not the caller's files, or do not exist, are reported in `failed` as "not found" rather than failing the request. Duplicate ids are deleted once.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        ids: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description Which files were deleted and which failed, and why */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GalleryDeleteResult"];
+                    };
+                };
+                /** @description Not JSON, an id that is not a UUID, no ids, or more than 500 ids */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/image-gallery/folders/move": {
         parameters: {
             query?: never;
@@ -10110,6 +10503,22 @@ export interface components {
     schemas: {
         /**
          * @example {
+         *       "status": "healthy",
+         *       "checks": {
+         *         "database": "ok"
+         *       }
+         *     }
+         */
+        HealthResponse: {
+            /** @enum {string} */
+            status: "healthy" | "unhealthy";
+            /** @description Per-dependency results (e.g. `database`); empty for /health/live. */
+            checks: {
+                [key: string]: "ok" | "error";
+            };
+        };
+        /**
+         * @example {
          *       "username": "johndoe",
          *       "email": "john@example.com",
          *       "password": "securepassword123",
@@ -10317,6 +10726,11 @@ export interface components {
          *       "favorite_model_ids": [
          *         "123e4567-e89b-12d3-a456-426614174002",
          *         "123e4567-e89b-12d3-a456-426614174004"
+         *       ],
+         *       "image_generation_provider": "openai",
+         *       "image_generation_providers": [
+         *         "openai",
+         *         "google"
          *       ]
          *     }
          */
@@ -10355,7 +10769,22 @@ export interface components {
              *     IDs that do not match an available model rather than treating them as an error.
              */
             favorite_model_ids: string[];
+            image_generation_provider: components["schemas"]["ImageGenerationProvider"];
+            /**
+             * @description The image vendors the caller holds a key for (the deployment's, or the account's
+             *     own where accounts supply keys), in the order a settings UI should offer them. Read-only; ignored on update. When the stored
+             *     `image_generation_provider` is not in this list, image generation uses the first
+             *     entry instead.
+             */
+            readonly image_generation_providers?: components["schemas"]["ImageGenerationProvider"][];
         };
+        /**
+         * @description The vendor the generate_image tool and the image ritual call: OpenAI (GPT Image),
+         *     Google (Gemini image), z.ai (GLM-Image) or Qwen (Qwen-Image). Defaults to `openai`
+         *     for a user who never chose.
+         * @enum {string}
+         */
+        ImageGenerationProvider: "openai" | "google" | "zai" | "qwen";
         /**
          * @description The writable subset of user preferences.
          *
@@ -10407,6 +10836,13 @@ export interface components {
              *     enforces. Unresolvable entries are inert — see the response schema.
              */
             favorite_model_ids?: string[];
+            /**
+             * @description The image vendor to use. Preserved when absent: omitting the field (or sending an
+             *     empty string) leaves the stored choice unchanged. Any value outside the enum is
+             *     rejected with 400. A vendor the caller has no key for is stored but
+             *     not used; see `image_generation_providers` on the response.
+             */
+            image_generation_provider?: components["schemas"]["ImageGenerationProvider"];
         };
         /**
          * @example {
@@ -11024,6 +11460,23 @@ export interface components {
              */
             message_id?: string;
         };
+        /**
+         * @description A model provider.
+         * @enum {string}
+         */
+        ModelProvider: "openai" | "anthropic" | "zai" | "google" | "mistral" | "deepseek" | "qwen" | "xiaomi";
+        /** @description A stored provider key, without the key. */
+        ProviderKeySummary: {
+            provider: components["schemas"]["ModelProvider"];
+            /** @description The key's last four characters. */
+            hint: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SetProviderKeyRequest: {
+            /** @description The provider API key, 8 to 512 characters. Leading and trailing whitespace is trimmed; whitespace inside the key is rejected. */
+            key: string;
+        };
         WebhookToken: {
             /** Format: uuid */
             id: string;
@@ -11152,6 +11605,30 @@ export interface components {
         };
         /**
          * @example {
+         *       "deleted": [
+         *         "123e4567-e89b-12d3-a456-426614174000"
+         *       ],
+         *       "failed": [
+         *         {
+         *           "id": "123e4567-e89b-12d3-a456-426614174001",
+         *           "error": "not found"
+         *         }
+         *       ]
+         *     }
+         */
+        GalleryDeleteResult: {
+            /** @description Ids that were deleted, in request order */
+            deleted: string[];
+            /** @description Ids that were not deleted, in request order */
+            failed: {
+                /** Format: uuid */
+                id: string;
+                /** @description Why, safe to show the user. One of "not found", "could not read the file", "could not delete the stored image", "could not delete the provider's copy" or "could not delete the file". */
+                error: string;
+            }[];
+        };
+        /**
+         * @example {
          *       "moved": 7
          *     }
          */
@@ -11163,7 +11640,6 @@ export interface components {
          * @example {
          *       "id": "123e4567-e89b-12d3-a456-426614174000",
          *       "user_id": "123e4567-e89b-12d3-a456-426614174001",
-         *       "file_id": "file-abc123xyz",
          *       "name": "research_document.pdf",
          *       "file_type": "application/pdf",
          *       "description": "Quarterly research report excerpt",
@@ -11188,7 +11664,10 @@ export interface components {
              * @description ID of the user who owns this file attachment
              */
             user_id: string;
-            /** @description External file ID from the file storage system (e.g., OpenAI file ID) */
+            /**
+             * @deprecated
+             * @description Deprecated. The OpenAI Files API id of a file uploaded before uploads stopped being mirrored there. Never set for new files and not used for anything; the file's bytes live in the object store.
+             */
             file_id?: string;
             /** @description Original filename of the uploaded file */
             name: string;
@@ -11562,7 +12041,7 @@ export interface components {
             id: string;
             /**
              * Format: uuid
-             * @description ID of the chat this memory belongs to (optional for User-scoped memories)
+             * @description The thread of a thread memory. For a global or personality memory, the thread it was created in or promoted from (provenance), absent when it has none or that thread was deleted
              */
             chat_id?: string;
             /** @description Name of the chat this memory belongs to (if applicable) */
@@ -11811,6 +12290,23 @@ export interface components {
             /** @enum {string} */
             confidence?: "low" | "medium" | "high";
             provenance?: components["schemas"]["MemoryProvenance"];
+        };
+        MemoryScopeMoveRequest: {
+            /**
+             * @description The level to move the memory to
+             * @enum {string}
+             */
+            level: "global" | "personality" | "thread";
+            /**
+             * Format: uuid
+             * @description Destination thread; required for `thread`, never defaulted
+             */
+            chat_id?: string;
+            /**
+             * Format: uuid
+             * @description Personality to pin to for `personality`. Omitted, a thread memory is pinned to its thread's personality.
+             */
+            personality_id?: string;
         };
         MemoryMergeEvent: {
             /** Format: uuid */

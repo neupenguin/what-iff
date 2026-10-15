@@ -14,6 +14,10 @@
     Best effort: failures are logged and counted, never returned.
   - `PurgeUserObjects` removes the whole `users/{id}/` prefix and the account's export bundles under `exports/{id}/` (`UserExportPrefix`; `accountexport` writes there via `ExportBundleRoot`) after account deletion.
     It falls back to releasing the known rows when the store cannot list `users/{id}/`.
+- **Streaming upload** (`stream.go`): `StreamUploader` and the `UploadStream` helper store an object read from an `io.Reader` without holding it whole.
+  S3 uploads it in 8 MiB multipart parts (one part's buffer in memory; a single-part object is a plain `PutObject`) and aborts the multipart upload on any failure, on its own context so a timed-out job still cleans up.
+  The local store writes a temp file and renames it into place.
+  Like `ObjectLister`, it is an optional interface so `FileStore` mocks stay unchanged; `UploadStream` falls back to `io.ReadAll` + `UploadFile` for them.
 - **`Instrument`** (`instrumented.go`): decorator recording `whatiff.dependency.duration` (dependency `s3` or `local_fs`, operation `put_object`/`get_object`/`delete_object`/`list_objects`) through `telemetry.Global()`; `internal/server` wraps the store at construction.
 
 ## Dependencies
@@ -24,12 +28,12 @@
 ## Non-obvious decisions
 
 - Bucket and region come from `internal/server` `Config` (`S3FileBucket`, `AWSRegion`).
-- **S3 is never used by the OpenAI vision path.**
-  OpenAI resolves images via its own Files API (the `FileID` stored on `FileAttachment`).
-  Our S3 keys are used solely by Claude (raw bytes for vision) and the image gallery.
-  This means image uploads only need to write to `FileKeyForImage`; a chat-scoped `FileKeyForChat` copy is not required.
+- **The object store is the only copy of an uploaded file.**
+  Uploads are not mirrored to any provider (OpenAI's Files API was dropped), so every vision provider gets its image bytes from here at inference time, as well as the image gallery.
+  Image uploads only need to write to `FileKeyForImage`; a chat-scoped `FileKeyForChat` copy is not required.
 - **Key layout:** `users/{id}/images/…` for gallery/Claude; `users/{id}/images/thumbs/…` for thumbnails; `users/{id}/chats/{chatId}/…` for non-image file-search assets; `users/{id}/personalities/…` for personality attachments.
 - **Instrumented store keeps the optional interfaces:** `Instrument` returns a type that implements `ObjectLister`/`Presigner` exactly when the wrapped store does, so the account export's type assertions still work.
+  It always implements `StreamUploader` (timed as `put_object`), streaming through when the wrapped store can.
   Presigning is local signing with no network call, so it is not timed; a missing object is still `(nil, nil)` and counts as a successful `get_object`.
 - **Local fallback:** when `S3_FILE_BUCKET` is unset, `NewFileStore` returns a `localFileStore` backed by `$TMPDIR/chat-app-files/` (or `LOCAL_FILE_STORE_DIR`).
   Not suitable for multi-instance deployments.
@@ -37,6 +41,7 @@
 ## Testing
 
 - `filestore_test.go` — behavior with mocks or localstack-style setups (see file).
+- `stream_test.go` — multipart part splitting, abort on reader/part failure (even after the caller's context ends), and the local and fallback paths.
 - `instrumented_test.go` — dependency metrics, the not-found contract, and optional-interface preservation.
 - `attachment_cleanup_test.go` — release reference counting and legacy keys, account purge, against the local store.
 

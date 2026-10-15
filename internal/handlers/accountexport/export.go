@@ -2,10 +2,11 @@ package accountexport
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path"
 	"runtime/debug"
 	"time"
@@ -20,9 +21,10 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
 )
 
-// runAccountExport builds the export ZIP, uploads it, presigns a link, and emails it. All failures
-// are recorded on the job and swallowed so a panic never takes down the request path. The download
-// link is emailed and never written to the job (email-only delivery is the security control).
+// runAccountExport streams the export ZIP into storage as it is built, presigns a link, and emails
+// it. All failures are recorded on the job and swallowed so a panic never takes down the request
+// path. The download link is emailed and never written to the job (email-only delivery is the
+// security control).
 // The run is tracked as an account_export job, with build/email stage timings, the archive size
 // and per-section counts on the file metrics.
 func (h *Handler) runAccountExport(ctx context.Context, userID, jobID uuid.UUID) {
@@ -55,24 +57,26 @@ func (h *Handler) runAccountExport(ctx context.Context, userID, jobID uuid.UUID)
 		return
 	}
 
+	// The archive streams into the upload as it is built, so build_zip covers the upload too (the
+	// two interleave). Size and item counts are recorded, and the uploading phase set, once the
+	// archive is complete and only its final part is still in flight.
+	key := path.Join(bundlePrefix, userID.String(), fmt.Sprintf("account-export-%s.zip", time.Now().UTC().Format("20060102-150405")))
 	doneBuild := metrics.TimeFileStage(ctx, telemetry.FileOpAccountExport, telemetry.FileStageBuildZip)
-	zipBytes, counts, err := h.buildAccountZip(ctx, userID, userEmail, username)
-	doneBuild(err)
-	if err != nil {
-		fail(err)
-		h.logger.Error("account export: build failed", zap.String("job_id", jobID.String()), zap.Error(err))
+	counts, buildErr, uploadErr := h.streamAccountZip(ctx, h.ds, key, userID, userEmail, username, func(size int64, counts map[string]int) {
+		metrics.RecordFileSize(ctx, telemetry.FileOpAccountExport, telemetry.FileKind("application/zip"), size)
+		recordAccountExportItems(ctx, metrics, counts)
+		h.setProgress(ctx, userID, jobID, models.AccountExportProgress{Phase: models.AccountExportPhaseUploading, Counts: counts})
+	})
+	doneBuild(buildErr)
+	if buildErr != nil {
+		fail(buildErr)
+		h.logger.Error("account export: build failed", zap.String("job_id", jobID.String()), zap.Error(buildErr))
 		h.failExport(ctx, userID, jobID, "Failed to build export")
 		return
 	}
-
-	metrics.RecordFileSize(ctx, telemetry.FileOpAccountExport, telemetry.FileKind("application/zip"), int64(len(zipBytes)))
-	recordAccountExportItems(ctx, metrics, counts)
-	h.setProgress(ctx, userID, jobID, models.AccountExportProgress{Phase: models.AccountExportPhaseUploading, Counts: counts})
-
-	key := path.Join(bundlePrefix, userID.String(), fmt.Sprintf("account-export-%s.zip", time.Now().UTC().Format("20060102-150405")))
-	if err := h.fileStore.UploadFile(ctx, key, zipBytes, "application/zip"); err != nil {
-		h.logger.Error("account export: upload failed", zap.String("job_id", jobID.String()), zap.Error(err))
-		fail(err)
+	if uploadErr != nil {
+		h.logger.Error("account export: upload failed", zap.String("job_id", jobID.String()), zap.Error(uploadErr))
+		fail(uploadErr)
 		h.failExport(ctx, userID, jobID, "Failed to store export")
 		return
 	}
@@ -136,53 +140,124 @@ func recordAccountExportItems(ctx context.Context, metrics *telemetry.Metrics, c
 	}
 }
 
-// buildAccountZip assembles the in-memory export archive and returns it with section counts. The
+// accountExportSource is the account data the export reads. *datastore.Datastore satisfies it;
+// tests substitute a fake.
+type accountExportSource interface {
+	ForEachExportConversation(ctx context.Context, userID uuid.UUID, fn func(exporter.ConversationInput) error) error
+	ExportPersonalityInputs(ctx context.Context, userID uuid.UUID) ([]exporter.PersonalityInput, error)
+	ExportMemories(ctx context.Context, userID uuid.UUID, w io.Writer) error
+}
+
+// errExportUploadStopped is what the archive writer sees when the upload stops reading early (it
+// failed); the upload's own error is the one reported.
+var errExportUploadStopped = errors.New("account export upload stopped")
+
+// streamAccountZip builds the export archive straight into a streaming upload of key: the zip
+// writer feeds one end of a pipe and storage.UploadStream reads the other, so memory stays at about
+// one upload part plus compressor state whatever the account's size. built runs once the archive is
+// complete, with its size and section counts, while the upload's final part is still in flight.
+// A failed build or upload leaves nothing at key (the store aborts the partial upload).
+func (h *Handler) streamAccountZip(ctx context.Context, src accountExportSource, key string, userID uuid.UUID, userEmail, username string, built func(size int64, counts map[string]int)) (counts map[string]int, buildErr, uploadErr error) {
+	pr, pw := io.Pipe()
+	uploaded := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			if v := recover(); v != nil {
+				err = fmt.Errorf("upload panicked: %v", v)
+			}
+			// Unblocks the archive writer if the upload stopped before EOF; a no-op after it.
+			pr.CloseWithError(errExportUploadStopped)
+			uploaded <- err
+		}()
+		err = storage.UploadStream(ctx, h.fileStore, key, pr, "application/zip")
+	}()
+	// If the build panics before the explicit close below, end the stream so the upload aborts
+	// instead of waiting forever. Only that path closes here: once the build has returned, the
+	// upload must see its real result (EOF or the build error), never this placeholder.
+	pipeClosed := false
+	defer func() {
+		if !pipeClosed {
+			pw.CloseWithError(errors.New("account export build aborted"))
+		}
+	}()
+
+	cw := &countingWriter{w: pw}
+	counts, buildErr = h.writeAccountZip(ctx, src, cw, userID, userEmail, username)
+	// A nil buildErr ends the stream at EOF, so the upload completes; otherwise the upload reads
+	// buildErr and aborts.
+	pw.CloseWithError(buildErr)
+	pipeClosed = true
+	if buildErr == nil {
+		built(cw.n, counts)
+	}
+	uploadErr = <-uploaded
+	switch {
+	case buildErr == nil:
+		return counts, nil, uploadErr
+	case uploadErr != nil && !errors.Is(uploadErr, buildErr):
+		// The upload failed first and the build only saw the closed pipe; a build that fails first
+		// reaches the upload through the pipe, so its error is wrapped in uploadErr.
+		return nil, nil, uploadErr
+	default:
+		return nil, buildErr, nil
+	}
+}
+
+// writeAccountZip writes the export archive to w and returns its section counts. Conversations
+// stream one at a time and memories stream into their nested archive, so neither is held whole. The
 // account identity is passed in (already loaded by the caller) to stamp the manifest.
-func (h *Handler) buildAccountZip(ctx context.Context, userID uuid.UUID, userEmail, username string) ([]byte, map[string]int, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+func (h *Handler) writeAccountZip(ctx context.Context, src accountExportSource, w io.Writer, userID uuid.UUID, userEmail, username string) (map[string]int, error) {
+	zw := zip.NewWriter(w)
 	tree := exporter.NewZipTree(zw)
 
-	convs, err := h.ds.ExportConversationInputs(ctx, userID)
+	// The datastore yields chats in (created_at, id) order, the order conversations.json is sorted in.
+	convWriter, err := tree.Create(exporter.ConversationsFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("conversations: %w", err)
+		return nil, err
 	}
-	if err := exporter.WriteConversations(tree, convs); err != nil {
-		return nil, nil, err
+	conversations := exporter.NewConversationsWriter(convWriter)
+	if err := src.ForEachExportConversation(ctx, userID, conversations.Add); err != nil {
+		return nil, fmt.Errorf("conversations: %w", err)
+	}
+	if err := conversations.Close(); err != nil {
+		return nil, err
 	}
 
-	personas, err := h.ds.ExportPersonalityInputs(ctx, userID)
+	personas, err := src.ExportPersonalityInputs(ctx, userID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("personalities: %w", err)
+		return nil, fmt.Errorf("personalities: %w", err)
 	}
 	if err := exporter.WritePersonalities(tree, personas); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := exporter.WriteSillyTavernCards(tree, personas, username); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Memories ride as a nested memories.zip in the existing memory-export format, so they re-import
-	// through the same ds.ImportMemories path (embedding regeneration included).
-	var memBuf bytes.Buffer
-	if err := h.ds.ExportMemories(ctx, userID, &memBuf); err != nil {
-		return nil, nil, fmt.Errorf("memories: %w", err)
+	// through the same ds.ImportMemories path (embedding regeneration included). ExportMemories
+	// streams its archive straight into the entry.
+	memWriter, err := tree.Create("memories.zip")
+	if err != nil {
+		return nil, err
 	}
-	if err := tree.Write("memories.zip", memBuf.Bytes()); err != nil {
-		return nil, nil, err
+	if err := src.ExportMemories(ctx, userID, memWriter); err != nil {
+		return nil, fmt.Errorf("memories: %w", err)
 	}
 
 	filesPrefix := path.Join("users", userID.String()) + "/"
 	fileObjs, err := h.listUserFiles(ctx, filesPrefix)
 	if err != nil {
-		return nil, nil, fmt.Errorf("files: %w", err)
+		return nil, fmt.Errorf("files: %w", err)
 	}
 	if err := exporter.WriteFilesManifest(tree, filesPrefix, fileObjs); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	counts := map[string]int{
-		"conversations": len(convs),
+		// What conversations.json holds: chats with no exportable message are omitted from it.
+		"conversations": conversations.Written(),
 		"personalities": len(personas),
 		"files":         len(fileObjs),
 	}
@@ -191,13 +266,25 @@ func (h *Handler) buildAccountZip(ctx context.Context, userID uuid.UUID, userEma
 		Account:    exporter.ManifestAccount{UserID: userID.String(), Email: userEmail, Username: username},
 		Counts:     counts,
 	}); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if err := zw.Close(); err != nil {
-		return nil, nil, fmt.Errorf("finalize zip: %w", err)
+		return nil, fmt.Errorf("finalize zip: %w", err)
 	}
-	return buf.Bytes(), counts, nil
+	return counts, nil
+}
+
+// countingWriter counts the bytes written through it (the streamed archive's size).
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // listUserFiles enumerates the user's raw file objects when the store supports listing.

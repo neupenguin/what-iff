@@ -156,20 +156,23 @@
   color: var(--color-danger, #ef4444);
 }
 
-.memories-list__sort-wrap {
+.memories-list__sort-wrap,
+.memories-list__source-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;
 }
 
-.memories-list__sort-wrap ui-chev-down-icon {
+.memories-list__sort-wrap ui-chev-down-icon,
+.memories-list__source-wrap ui-chev-down-icon {
   position: absolute;
   right: 0.5rem;
   pointer-events: none;
   color: var(--color-text-muted);
 }
 
-.memories-list__sort-wrap select {
+.memories-list__sort-wrap select,
+.memories-list__source-wrap select {
   appearance: none;
   padding-right: 1.5rem;
 }
@@ -372,6 +375,21 @@
   cursor: pointer;
 }
 
+.memories-list__move-thread {
+  margin-top: 0.35rem;
+}
+
+.memories-list__move-error,
+.memories-list__move-loading {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.memories-list__move-error {
+  color: var(--color-danger);
+}
+
 .memories-list__move-cancel {
   margin-top: 0.35rem;
   color: var(--color-text-muted) !important;
@@ -396,7 +414,8 @@
   .memories-list__date-wrap,
   .memories-list__filter-field select,
   .memories-list__filter-field input,
-  .memories-list__sort-wrap {
+  .memories-list__sort-wrap,
+  .memories-list__source-wrap {
     width: 100%;
     min-width: 0;
   }

@@ -11,6 +11,9 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 - **OpenAI:** `RenderOpenAIInputItems`, `ModelContext.BuildOpenAIResponseParams`, `OpenAIProvider`, `OpenAIAdapter`, `ProcessResponseOutput` (assistant text extraction / dedup), `BuildOpenAITools`, image generation helpers, file-attachment upload helpers.
   **`SegmentKindUserMessage` with `RoleDeveloper` and images** (expression continuity portrait) is rendered as **two** input items—developer text plus a **user** message carrying `input_image`, because the Responses API allows images only under the user role for message parts.
 - **Claude:** `BuildClaudeParams`, `ClaudeProvider`, `ClaudeAdapter`, `ClaudeFunctionTool`, `ExtractClaudeText`, `ExtractClaudeBetaText`, `UnmarshalClaudeTextJSON`.
+- **Per-round tool scoping (`tool_scope.go`):** every agent adapter implements the optional `ToolScoper` (`ScopeTools(hidden)`).
+  It keeps the full tool list it was built with and, before each call, sends only the function tools `hidden` does not exclude; non-function tools such as a vendor's native web search are always kept.
+  The agent uses it to send only loaded MCP and loadable built-in tools (see `internal/agent` package summary).
   **`renderClaudeContext`** splits **developer continuity + portrait** like OpenAI: text turn includes `ExpressionPortraitContinuityPointerNote`; the next user message carries caption + image blocks.
   **Prompt caching:** the last block of the leading **contiguous `Cacheable` segment prefix** gets Anthropic **`cache_control` `ephemeral`** with **5m TTL** (see `model_context_claude.go`).
 - **z.ai GLM (Anthropic-compatible):** GLM models (`provider = "zai"`) reuse the **entire Claude path** via `NewClaudeProviderWithBaseURL` pointed at z.ai's Anthropic-compatible endpoint (`DefaultZAIBaseURL`).
@@ -35,9 +38,8 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
   Whenever an outbound **assistant** turn carries the placeholder (`geminiMessagesCarryToolCallPlaceholder`), the adapter wraps the text-delta handler in `geminiToolCallEchoFilter` and strips the final `Text` via `stripGeminiToolCallEcho`; both remove only **leading** echoes of the placeholder.
   User-authored text never arms the filter and is never rewritten.
 - **User-attached images (chat):** `ModelContextSegment.UserImages` + `AppendUserMessage`.
-  OpenAI Responses gets `input_image` with the OpenAI **`file_id`** from upload.
-  **Claude** uses **`UserMessageImage.RawBytes`** when set (see **`loadImageBytesForClaude`**); otherwise **`renderClaudeContext`** falls back to **text-only** for that turn.
-  **`HydrateUserMessageImages`** can prefetch bytes from storage for reuse.
+  Every renderer sends **`UserMessageImage.RawBytes`** inline: OpenAI Responses as an `input_image` data URL, Claude as a base64 block, the Chat Completions vendors as a data URL (the chat path fills the bytes via **`loadImageBytesForVision`**).
+  An image without bytes is left out; **`renderClaudeContext`** keeps that turn text-only.
 - **Xiaomi MiMo (Chat Completions):** `XiaomiAdapter` always reasons, streams it as the non-standard `reasoning_content`, and honors **neither** `budget_tokens` nor `reasoning_effort` — only `thinking: {"type":"disabled"}`.
   The adapter raises `MaxCompletionTokens` to `ReasoningMaxOutputTokens`, and when a call finishes with `finish_reason: "length"` and no reply text it is discarded and re-issued once with thinking disabled (which then stays off for the rest of the turn).
   `GenerateResponse.StopReason` carries `finish_reason`.
@@ -81,11 +83,16 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 | `BuildClaudeParams` | Anthropic `MessageNewParams`. |
 | `OpenAIAdapter` / `ClaudeAdapter` | Implements `AgentAdapter` for `agentloop`. |
 | `ClaudeFunctionTool` | Converts provider-neutral function specs into Anthropic tool params; selection stays in `internal/agent`. |
+| `ImageGenerator` / `GeneratedImage` | Vendor-neutral text-to-image: `GenerateImage(ctx, prompt, quality, aspect)` returns base64 plus the image's real MIME type (Gemini answers JPEG). |
+| `OpenAIProvider.ImageGenerator` / `GeminiImageGenerator` / `ZAIImageGenerator` / `QwenImageGenerator` | One adapter per vendor in `ImageGenerationProviders` (OpenAI first, the default).
+  OpenAI wraps the Images API path; Gemini calls native `generateContent` (`GeminiNativeBaseURL`); z.ai (`ZAIPaaSBaseURL`) and Qwen (`QwenNativeBaseURL`, DashScope sync) answer with a URL that is downloaded at once (https only) because it expires.
+  Each maps quality/aspect to its own sizes, retries 429/503 with a short backoff (`imageRetryDelays`), and turns its vendor's content refusal into a `SafetyViolationError`. |
 | `BuildOpenAITools` | Merges function tools; image tool when model supports it. |
 | `NewOpenAIProvider` / `NewClaudeProvider` | SDK clients; optional `*telemetry.Telemetry` (metrics + logger). All provider constructors take an optional `*http.Client` (nil = SDK default) so mock mode can inject the deny transport. |
 | `MockAdapter` / `NewMockAdapter` | In-process `AgentAdapter` fake for `LLM_BACKEND=mock` (echo/fixed/scripted modes, whitespace-preserving word-delta streaming, ctx cancellation). Built per request. |
 | `LocalProvider` / `LocalAdapter` | Real `AgentAdapter` for `LLM_BACKEND=local`: an OpenAI-compatible Chat Completions client pointed at a local server (Ollama default via `DefaultLocalBaseURL`; any compatible server via `LOCAL_LLM_BASE_URL`). Placeholder API key; non-streaming, mirrors the Mistral/DeepSeek adapter shape. |
 | `WithCallTimeouts` / `CallTimeouts` / `CallTimeoutError` | Wraps an `http.Client` so every provider HTTP attempt is bounded: `Request` until headers (and a non-streamed body), then `Stream` total and `StreamIdle` between bytes once a `text/event-stream` response starts. A fired limit surfaces as `CallTimeoutError`, which matches `context.DeadlineExceeded` (error.type `timeout`, not retried by `retryLLMCall`) and never `context.Canceled`, which the streaming paths read as a user stop. Defaults and their rationale are on `DefaultCallTimeouts`. |
+| `CredentialHTTPClient` / `CredentialRule` | Wraps an `http.Client` so each request carries its provider's credential, chosen by request host (from the base URL each client is built with) and set as `Authorization: Bearer`, `x-api-key` or `x-goog-api-key` (`GoogleAPIKey`); a `PathScoped` rule claims only requests under its base URL's path (whole segments, longest first) and the host's unscoped rule covers the rest, which is how Gemini's native image API and its OpenAI-compatible chat API share a host; the credential comes from a resolver function per request, it removes any `Authorization`, `x-api-key` or `x-goog-api-key` already on the request before setting its own, so an empty credential sends none, unknown hosts pass through untouched, and the base transport is preserved. |
 | `DenyNetworkHTTPClient` / `ErrNetworkDenied` | `http.Client` whose transport fails every request before egress; injected into all provider clients under mock mode ("no provider egress" guarantee). |
 
 ## Dependencies
@@ -95,9 +102,9 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 
 ## Non-obvious decisions
 
-- **Claude vs OpenAI for user images:** OpenAI uses **`file_id`** from upload.
-  Claude needs **`RawBytes`** on each `UserMessageImage`; the chat path fills them via **`loadImageBytesForClaude`** before **`buildModelContextForChatMessage`**.
-  Without bytes, `renderClaudeContext` keeps the user message text-only for that attachment.
+- **User images are always inline.**
+  No provider keeps a copy of an uploaded file (uploads are no longer mirrored to OpenAI's Files API), so each `UserMessageImage` needs **`RawBytes`**; the chat path fills them via **`loadImageBytesForVision`** before **`buildModelContextForChatMessage`**.
+  Without bytes the image is dropped, and `renderClaudeContext` keeps the user message text-only for that attachment.
 - **Claude rendering:** Developer/system vs user ordering is covered in tests (`RenderClaudeContext_DeveloperBeforeUser`).
 - **Consecutive same-role Claude turns are normal.**
   Segments render independently and nothing merges adjacent messages that share a role, so a request routinely carries several `user` messages in a row (history turn, `[CONTEXT]` memory turn, developer context, then the current user message).
@@ -148,6 +155,7 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
   `streamChatCompletion` therefore captures the usage from the **last chunk that carries any** (`chunkCarriesUsage`) and overwrites `acc.ChatCompletion.Usage` with it before returning, so `chatCompletionTokenUsage` (telemetry + `GenerateResponse.InputTokens`) reports the true totals for every OpenAI-compatible provider (Gemini, Mistral, DeepSeek, Qwen, Xiaomi).
   Pinned by `TestStreamChatCompletion_DoesNotSumRepeatedUsage`.
 - **Subagent call path:** Delegated `run_subagent` calls are labeled `call_path=subagent` so telemetry can separate orchestrator traffic from normal chat turns and scheduled jobs.
+- **No sampling knobs:** requests never set `temperature`/`top_p`/`top_k` (see the architecture summary); `buildClaudeBetaMCPParams` drops them when converting to Beta params, and there is no temperature constant to reach for.
 
 ## Testing
 
@@ -157,9 +165,11 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 - `model_context_test.go`, `model_context_hydrate_test.go`, `model_context_openai_test.go` — segment assembly, hydration helpers, OpenAI/Claude rendering (including Claude text fallback when image bytes absent).
 - `model_context_breakdown_test.go` — `SegmentBreakdown` aggregation, first-appearance ordering, cacheable-any / image counting, and nil-receiver/nil-counter guards.
 - `openai_test.go`, `openai_tools_test.go`, `claude_test.go`, `claude_adapter_test.go`, `claude_adapter_more_test.go` — output shape and tool compatibility (including Beta MCP adapter mode).
+- `no_sampling_params_test.go` — source scan failing on any `Temperature`/`TopP`/`TopK` set in non-test `internal/` code; Beta MCP conversion drops sampling params.
 - `token_counter_test.go` — counting and carry-over selection.
 - `inference_metrics_test.go` — nil-safe usage recording.
 - `fileattachment_test.go`, `images_test.go` — helpers.
+- `image_generator_test.go` — each image adapter against a fake vendor (request shape, MIME, download, refusals), base-URL derivation, and the 429 retry.
 
 ## Related documentation
 

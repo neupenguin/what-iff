@@ -1,7 +1,7 @@
 import { AsyncPipe, DOCUMENT, NgComponentOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, inject, output, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
-import { Subscription } from 'rxjs';
+import { Subscription, catchError, map, of, startWith, switchMap } from 'rxjs';
 
 import { ConfirmationService } from '../../core/services/confirmation.service';
 import { CommandPaletteService } from '../../core/services/command-palette.service';
@@ -418,11 +418,23 @@ export class AppSidebarComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.syncThreadListPersonalityFilter();
     void this.threads.refresh();
+    // Load once, then again whenever a personality is created, imported, edited or deleted anywhere
+    // in the app, so the filter never offers a stale list (#318). switchMap lets the newest fetch win.
     this.subscriptions.add(
-      this.personalityService.listPersonalities(1, 100).subscribe({
-        next: response => this.personalityCatalog.set(response.results ?? []),
-        error: () => this.personalityCatalog.set([]),
-      }),
+      this.personalityService.changes$
+        .pipe(
+          startWith(null),
+          switchMap(() =>
+            this.personalityService.listPersonalities(1, 100).pipe(
+              map(response => response.results ?? []),
+              catchError(() => of(null)),
+            ),
+          ),
+        )
+        .subscribe(results => {
+          // A failed refresh keeps the last good list; only a failed first load leaves it empty.
+          if (results) this.personalityCatalog.set(results);
+        }),
     );
   }
 

@@ -80,16 +80,17 @@ The fastest way to run the full stack locally is Docker Compose.
 **Prerequisites:** Docker, and at least one model provider API key (e.g. OpenAI).
 
 ```bash
-# 1. Set the required secrets. docker-compose.yml ships no fallbacks — the server
-#    refuses to boot on a missing, short (<32 char), or default-looking value.
+# 1. Set your model provider key.
 export OPENAI_API_KEY="your-api-key-here"
-export JWT_SECRET="$(openssl rand -hex 32)"
-export JWT_REFRESH_SECRET="$(openssl rand -hex 32)"
-export TOKEN_ENCRYPTION_SECRET="$(openssl rand -hex 32)"
 
-# 2. Start the stack (runs migrations and seeds a default model automatically)
+# 2. Start the stack. On first run it generates this install's secrets, runs
+#    migrations, and seeds the model catalog.
 docker compose up --build
 ```
+
+The JWT and token-encryption secrets are generated once per install and kept in a
+Docker volume; nothing is shipped in the repository. Values you set in your shell or
+`.env` take precedence. `docker compose down -v` deletes them along with the database.
 
 | Service | URL |
 |---------|-----|
@@ -126,8 +127,8 @@ Configuration is via environment variables. The essentials:
 | Variable | Purpose |
 |----------|---------|
 | `OPENAI_API_KEY` | Model provider key (required for AI features; add other providers' keys as needed) |
-| `JWT_SECRET`, `JWT_REFRESH_SECRET` | JWT access/refresh token signing (≥32 chars) |
-| `TOKEN_ENCRYPTION_SECRET` | Encryption key for at-rest secrets (≥32 chars) |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | JWT access/refresh token signing (≥32 chars). Generated automatically under Docker Compose |
+| `TOKEN_ENCRYPTION_SECRET` | Encryption key for at-rest secrets (≥32 chars). Generated automatically under Docker Compose |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | PostgreSQL connection |
 | `SERVER_HOST`, `SERVER_PORT` | API bind address (default `localhost:8080`) |
 | `ENVIRONMENT` | `development` \| `staging` \| `production` |

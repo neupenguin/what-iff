@@ -200,12 +200,17 @@ type MemoryPatch struct {
 	Provenance *MemoryProvenance `json:"provenance,omitempty"`
 }
 
-// ChatSummaryBackfillCandidate identifies a legacy checkpoint summary that has
-// not yet been copied into its singleton Summary memory.
-type ChatSummaryBackfillCandidate struct {
-	UserID  uuid.UUID
-	ChatID  uuid.UUID
-	Summary string
+// MemoryScopeMove moves one memory to another level (POST /memory/{id}/scope): a thread memory
+// up to global or personality, or a global/personality memory back to a thread. The record
+// itself moves; see datastore.MoveMemoryScope for the rules.
+type MemoryScopeMove struct {
+	Level MemoryLevel `json:"level"`
+	// ChatID is the destination of a move to thread level, and is required there: the caller
+	// always names the thread (the memory manager preselects the one the memory came from).
+	ChatID *uuid.UUID `json:"chat_id,omitempty"`
+	// PersonalityID is the personality a move to personality level pins to. For a thread memory
+	// it defaults to, and must be, the thread's own personality.
+	PersonalityID *uuid.UUID `json:"personality_id,omitempty"`
 }
 
 // MemoryEmbeddingCandidate identifies a memory that has no Embedding row and

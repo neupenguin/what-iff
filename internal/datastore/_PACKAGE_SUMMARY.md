@@ -12,7 +12,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
     **`ListChats`** defaults to `archived=false`; set `ChatFilters.Archived` to `true` for the archive view or `IncludeArchived` for agent discovery spanning both states; **`ChatFilters.HasMessages`** excludes empty shells (`last_message_time IS NOT NULL`); **`UpdateChat`** persists `archived` from the loaded model (including PATCH).
   - Conversation import & rehydration: `chat_import.go` (**`ImportChats`** — one tx per conversation, dedups on `(owner_id, import_hash)`, sets `source`, optional progress callback) and `chat_rehydration.go` (**`GetChatMessagesForSummary`** lean chronological transcript; **`GetChatRehydrationState`**; **`GetChatPersonalityID`** (cheap lookup of the thread's personality for memory seeding); **`SetChatRehydrationState`**; **`SetImportedThreadRehydrated`** — writes checkpoint summary + count + window pointer `last_checkpoint_at` and flips `rehydration_state=ready` in one update).
 - Account backup: `accountbackup.go` imports versioned admin ZIP archives into an existing target user with UUID-based idempotency.
-- **Audit trail:** `auditlog.go` appends rows to Ent `AuditLog` for admin model CRUD, quota bucket **consume** / lazy **refill**, account backup import, user account export/import, and profile **memory ZIP** export/import (best-effort writes; failures only log).
+- **Audit trail:** `auditlog.go` appends rows to Ent `AuditLog` for admin model CRUD, quota bucket **consume** / lazy **refill**, account backup import, user account export/import, profile **memory ZIP** export/import, and memory scope moves (`memory` / `scope_move`, ids and levels only, never content) (best-effort writes; failures only log).
   - Memory & embeddings: `memory.go` (CRUD, vector search, **`DeleteMemoriesBatch`** / **`PatchMemoriesBatch`** for bulk UI actions), ZIP export, and UUID-deduped import with embedding regeneration.
     `UpsertChatSummaryMemory` maintains the singleton `Scope=Summary` checkpoint index (including immediately resumable account-imported summaries).
     **`GetMemory`** permits an owner to inspect inactive (archived/merge-retired) rows for Memory Manager detail/history, while `GetMemoryByIDPrefix` resolves only active rows by an 8–32 digit hex UUID prefix (used by `find_context` `related`/`origin` short `memory:df3e519d` hops), translating it into an indexed UUID range rather than formatting every row.
@@ -32,13 +32,15 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
     `toFileAttachmentModel` derives **`Source`** (`generated`/`imported`, empty when the chat-message edge was not loaded): linked message origin decides (Assistant ⇒ generated, User ⇒ imported); unlinked rows are generated only for the pipelines' fixed names (`expression-*.png`, `personality-portrait.png`).
     `fileattachment_objects.go` backs object-store cleanup: `List{Chat,Personality,User}FileAttachmentObjectRefs` read the rows a cascade is about to delete, `ReferencedFileAttachmentKeys` reports which keys any remaining row (of any owner) still uses, and `FileAttachmentProviderFileShared` guards the provider file reference copies share.
     **`FileAttachmentFilters.ExcludeReferenceCopies`** (image gallery) drops `CreateFileAttachmentReference` clones in SQL — keeps the earliest row per `(owner, s3_key)`, backed by an `(s3_key, owner)` index — so counts/pagination and classification follow the original row.
-  - Personalities & rituals: `personality.go`, `personality_gen_flow.go`, `ritual.go`, `system_ritual_binding.go`.
+  - Personalities & rituals: `personality.go`, `personality_gen_flow.go`, `ritual.go`.
     `personality_card.go` holds the imported SillyTavern card blob in its own `PersonalityCard` table (`GetPersonalityCard`); it is deliberately not loaded by `GetPersonality`/`ListPersonalities`, which sit on hot paths, and `CreatePersonality` writes it in the same transaction from `models.Personality.CharacterCard`.
   - Jobs: `job.go` (CRUD + **`UpdateJobProgress`** — a single scoped UPDATE for the opaque `progress` JSON, safe to call frequently from long-running jobs; **`FindLatestActiveChatJob`** finds a chat's running turn by matching recent non-terminal `chat_message` job references against that chat's messages, and **`FindLatestActiveChatMessageJob`** uses `First` so a stranded duplicate job never makes the lookup fail), `agentjob.go`, `scheduler_lock.go` (distributed scheduler lock).
   - Usage: `usagestats.go`.
     Quota-bucket types live in `internal/models` (`billing.go`, `quotabucket.go`); the quota-enforcement logic itself (free-tier limits, trial grants, subscription reconciliation) is in a private extension, not this tree.
   - Users & access: `user.go`, `userpreferences.go`, `role.go`, `admin.go`.
   - MCP: `mcpserver.go`.
+    Per-chat loaded tools live in `chat_mcp_tool_states`: one row per connector, plus the built-in tools' row under the nil connector ID (`ListChatLoadedBuiltinTools` / `SetChatLoadedBuiltinTools`), which `ListChatMCPLoadedTools` leaves out.
+    `RetainChatLoadedTools` prunes every row of a chat to a kept set in one transaction (the checkpoint's unload step), and `ChatToolNamesUsedSince` (`toolcall.go`) lists the tools a chat's messages called since a time.
   - Models: `model.go`.
   - Safety violations: `safety_violation_event.go`.
   - Tool call persistence: `toolcall.go`.
@@ -72,13 +74,17 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   Because it is user-facing via the `limit` query param, it clamps the batch size to `[1, maxMessagePageSize]` (500, matching the OpenAPI max) rather than erroring on an oversized request.
   `ListChatMessagesAfter` is the forward-only retrieval path for agent thread walks; it orders by `(sent_at, id)` ascending and accepts that same keyset cursor to avoid unstable ties and offset drift.
   The opaque cursor token is minted/parsed by `models.EncodeMessageCursor`/`DecodeMessageCursor` (URL-safe base64 of `sent_at|id`), so the datastore and the HTTP handler share one contract.
+  The descending views fetch one row past the page so `NextCursor` is set only when older rows remain (an empty cursor means the end).
+  The exact `TotalCount` costs a pass over every message in the chat, so callers that only need the page set `ChatMessageFilters.SkipTotal` (the agent's context build, mood and recall scans, and the web UI via `include_total=false`).
+  `ChatHasMessages` is the `EXISTS` form of `GetChatMessageCount` for "is there any?" checks.
+- **FK-first indexes:** ent orders an index's plain fields before its edge columns, so `index.Edges("chat").Fields("sent_at")` is `(sent_at, chat_messages)` and cannot seek by chat.
+  `chat_messages`, `chats` and `memories` therefore also carry a single-column index on their parent FK (`index.Edges(...)` alone); add one wherever queries filter by an edge without its leading field.
 - **Context X-ray column:** `chat_message.context_breakdown` is a typed **`jsonb`** column (`field.JSON` over `*models.ContextBreakdown`); ent handles (un)marshalling, so `toChatMessageModel` just surfaces it (guarding empty snapshots) and `SetChatMessageContextBreakdown` sets the pointer (assistant rows only; best-effort).
   It is a scalar column rather than a `ChatMessageContextItem` row on purpose — context items are re-fed into the model context, and this snapshot must not be.
   It's a value object (write-once, read-with-parent, never queried by field), so no child table; `jsonb` (not text) keeps DB-side JSON queries open and the embedded `version` guards shape evolution.
 - **DB metric semantics:** one sample per logical ent call as the caller sees it (scanning included).
   Eager-loaded edges are folded into their parent query, and a `CreateBulk` is one `create` sample: ent re-enters every builder's hooks with the caller's own context, so nested creates on the same context are skipped (two concurrent creates sharing one context can fold into one sample, a deliberate undercount).
   ent NotFound from `First`/`Only` is produced after the query returns, so an empty result is a successful `query`; NotFound from `UpdateOne`/`DeleteOne` is `error.type=not_found`, and constraint violations are `client_error`.
-  The startup-only `RepairImportedMessageOrder` SQL is not timed: a one-shot statement would add permanently exported series for no dashboard value.
 - **Job metrics:** `CreateJob` counts `whatiff.jobs.enqueued` by `job_type`.
   Status writers (`UpdateJob`, `UpdateJobStatus`, `SetJobResult`, the partial-response finalizers and `MarkChatJobCancelled`) record `whatiff.job.age_at_status` (time since creation) by `job_type` and `status`, only when the status actually changes, so a repeated write of the same status never counts twice.
   To tell, the writers read the prior status in place of the old existence check (no extra round trip); `MarkChatJobCancelled` does one extra `created_at` read only when it cancelled something.
@@ -120,7 +126,8 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   It is **not one transaction**; partial restores are intentional, and operators can rerun the same archive after fixing the failure.
   JSONL sections are loaded one at a time under the admin upload cap; broader/non-internal use should switch this to streaming batch processing.
   **Audit:** one `account_backup` / `import` row summarizes all sections (including memory counts); the inner memory ZIP import does **not** also write `memory_pack` rows (avoids duplicate audit entries).
-- **User account export:** `ExportConversationInputs` walks each chat's messages by the ordered `(sent_at, id)` cursor, rather than `OFFSET`, so very long conversations preserve stable ordering without progressively slower page scans.
+- **User account export:** `ForEachExportConversation` hands chats to a callback one at a time, paging chats by the ordered `(created_at, id)` cursor and each chat's messages by `(sent_at, id)`, rather than `OFFSET`, so very long conversations preserve stable ordering without progressively slower page scans.
+  Only one page of chat rows and one conversation's messages are in memory at once; `ExportConversationInputs` collects the same walk into a slice.
 - **Batched embedding imports:** imported embeddings use the deterministic memory UUID as their primary key and conflict on that primary key.
   This preserves retry safety for legacy PostgreSQL databases that lack the Ent-declared unique constraint on `embedding_memory`.
 - **Personality auto-pin:** `autoPinPersonalityIDTx` (`memory.go`) is the one rule for every memory created while a personality is active: `CreateMemory` (the `create_memory` tool), `PersistMemoryMergeGroup` new-only folds and `PersistMemoryLinkGroup` new members.
@@ -139,6 +146,11 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   Their embeddings were hard-deleted by the old fold, so undo logs that they need a re-embed backfill.
 - **Memory scope versus source chat:** `Memory.Scope` controls retrieval scope (`User`, `Chat`, or `Summary`); the optional `chat` edge records a memory's source conversation and is valid for User-scoped Global and Personality memories too.
   Moves preserve that provenance edge.
+  **`MoveMemoryScope`** (`memory_scope_move.go`) moves one memory to global, any of the user's personalities, or any of their threads, from any level (thread to thread included).
+  The record moves (same id, content, embedding), so nothing is duplicated or re-embedded; `relatedMemoryReadable` is the scope filter `GetRelatedMemories` retrieves through, so retrieval follows the new scope.
+  A promoted memory keeps its chat edge as its source thread; the destination thread is always named by the caller (never defaulted).
+  Personalities may be crossed; a personality move without an id pins a thread memory to its thread's personality.
+  The one refused destination is a sandboxed thread the memory was not made in (moving in would expose it to that thread's people); refusals wrap `ErrMemoryScopeMove`.
   `PatchMemoriesBatch` rejects changes to actual Chat-scoped Thread memories before individual updates begin, preventing a mixed bulk Move from partially moving User memories.
   In partial (`all_or_none=false`) mode, only `ErrMemoryNotFound` is skipped; other errors abort the batch so operators are not told a row was merely "missing" when the datastore failed.
 - **Account-activity audit projection:** audit rows use distinct `account_export`, `account_import`, and `chat_import` categories.
@@ -175,6 +187,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   `UpsertChatSummaryMemory` marks a Discord relay thread's summary external, and it stays so.
   `ListMemories` filters by `MemoryFilters.Provenance`, `UpdateMemory` accepts a provenance patch (the owner confirming a memory), and memory export/import carry both fields (the `user` default is not written).
 - **Discord relay (`discord.go`):** bots (token encrypted with the MCP token helper), bindings, message links and pending posts.
+- **`EncryptToken` / `DecryptToken`** expose the token helper to packages that keep their own tables but share the one key (`internal/accountkeys`).
   Methods taking a userID are owner-scoped; the relay's own (`FindDiscordBindingTarget`, `GetDiscordBindingTarget`, `ListActiveDiscordBotCredentials`, link and pending-post bookkeeping) act for the owner recorded on the bot.
   `IsExternalRelayChat` (any chat bound by one of the user's bots) and `ExternalSpeakerForMessage` (the Discord author of a saved message) back memory provenance in the agent.
   `CreateChat` honours `Chat.DisabledTools`, so a server-created relay thread never exists with its default-off tools on (the app's create route drops the field).
@@ -188,6 +201,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
 - `compaction_event_test.go`, `memory_merge_test.go`, `memory_merge_fold_test.go` — SQLite harness mirrors ent FK semantics (`memory_merge_events.compaction_event_id` → `compaction_events` ON DELETE SET NULL); compaction tests cover content-addressed snapshots, merge grouping, page-size cap, and FK null-on-delete.
   `memory_merge_fold_test.go` covers the fold rewrite rule (same content, rewrite, starred) and exact fold undo, including legacy events.
   `TestAutoPin_AppliesToEveryMemoryCreationPath` covers the auto-pin rule on each creation path.
+- `memory_scope_move_test.go` — scope moves: record moved not copied, source thread and embedding kept, audit row, moves across personalities and threads, the sandbox rule, ownership, and that `relatedMemoryReadable` follows each move.
 - `accountbackup_test.go` — backup JSONL parsing edge cases such as large records and optional sections.
 - `accountexport_test.go` — conversation export’s timestamp/ID cursor covers a batch boundary where all messages share a timestamp.
 - `token_crypto_test.go` — round-trip encryption.

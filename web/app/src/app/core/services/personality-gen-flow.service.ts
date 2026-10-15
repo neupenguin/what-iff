@@ -1,17 +1,19 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { map, tap } from 'rxjs/operators';
 import { environment } from '@environments/environment';
 import { AcceptFlowRequest, PersonalityGenFlow, UpdateFlowRequest } from '../models/personality-gen-flow.model';
 import { Personality } from '../models/personality.model';
 import { ActivePersonalityMediaJob, PersonalityMediaJobResponse } from '../models/personality-media-job.model';
+import { PersonalityService } from './personality.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class PersonalityGenFlowService {
   private http = inject(HttpClient);
+  private personalityService = inject(PersonalityService);
   private apiUrl = `${environment.apiUrl}/personality/generate`;
 
   /** Returns the user's active flow (in_progress or generated), creating one if none exists. */
@@ -57,9 +59,11 @@ export class PersonalityGenFlowService {
       );
   }
 
-  /** Creates a real personality from the flow and returns it. */
+  /** Creates a real personality from the flow and returns it (and tells cached personality lists). */
   acceptFlow(flowId: string, req: AcceptFlowRequest): Observable<Personality> {
-    return this.http.post<Personality>(`${this.apiUrl}/${flowId}/accept`, req);
+    return this.http.post<Personality>(`${this.apiUrl}/${flowId}/accept`, req).pipe(
+      tap(personality => this.personalityService.notifyChanged({ kind: 'created', personality })),
+    );
   }
 
   private isActiveGenerationJobResponse(body: unknown): body is ActivePersonalityMediaJob {

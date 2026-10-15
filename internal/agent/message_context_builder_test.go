@@ -155,23 +155,24 @@ func TestMessageContextBuilder_Build_MemoriesAttachmentsAndUserOrder(t *testing.
 	require.Equal(t, provider.SegmentKindUserMessage, last.Kind)
 	require.Equal(t, "final user text", last.Content)
 
-	imgID := "file-img-1"
+	imgAttID := uuid.New()
 	attsWithImage := []*models.FileAttachment{
 		{Name: "a.pdf", FileID: &fid},
-		{Name: "shot.png", FileID: &imgID, FileType: "image/png"},
+		{ID: imgAttID, Name: "shot.png", FileType: "image/png"},
 	}
 	mc2, err := b.build(ctx, messageContextBuildRequest{
 		UserID:                   userID,
 		Chat:                     chat,
 		UserPrompt:               "final user text",
 		Attachments:              attsWithImage,
+		ImageBytes:               map[uuid.UUID][]byte{imgAttID: []byte("png-bytes")},
 		ExpressionsEnabled:       true,
 		IncludeAttachmentContext: true,
 	})
 	require.NoError(t, err)
 	last2 := mc2.Segments[len(mc2.Segments)-1]
 	require.Len(t, last2.UserImages, 1)
-	require.Equal(t, imgID, last2.UserImages[0].FileID)
+	require.Equal(t, []byte("png-bytes"), last2.UserImages[0].RawBytes)
 	require.Equal(t, "image/png", last2.UserImages[0].MediaType)
 
 	var memSeg *provider.ModelContextSegment
