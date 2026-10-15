@@ -12,7 +12,6 @@
         class="ritual-form__input"
         placeholder="e.g., Source Analysis"
         [attr.aria-describedby]="hintId('name')"
-        [disabled]="isSystem()"
         [ngModel]="name()"
         (ngModelChange)="name.set($event)" />
     </label>
@@ -26,7 +25,6 @@
         class="ritual-form__input"
         placeholder="Brief description of what this skill does"
         [attr.aria-describedby]="hintId('description')"
-        [disabled]="isSystem()"
         [ngModel]="description()"
         (ngModelChange)="description.set($event)" />
     </label>
@@ -41,7 +39,6 @@
         class="ritual-form__textarea"
         placeholder="The prompt text that will be inserted into chat when this skill is called..."
         [attr.aria-describedby]="hintId('content')"
-        [disabled]="isSystem()"
         [ngModel]="content()"
         (ngModelChange)="content.set($event)"></textarea>
     </label>
@@ -54,7 +51,6 @@
       <select
         class="ritual-form__input"
         [attr.aria-describedby]="hintId('personality')"
-        [disabled]="isSystem()"
         [ngModel]="personalityId()"
         (ngModelChange)="personalityId.set($event)">
         <option value="">Global (every personality)</option>
@@ -77,7 +73,6 @@
             <input
               type="checkbox"
               [checked]="isMcpSelected(server.id)"
-              [disabled]="isSystem()"
               (change)="toggleMcp(server.id, $any($event.target).checked)" />
             <span>{{ server.label }}</span>
           </label>
@@ -97,7 +92,6 @@
       Hotkey (optional)
       <app-hotkey-input
         [placeholder]="'e.g., Ctrl+Shift+1'"
-        [disabled]="isSystem()"
         [showHelp]="false"
         [ngModel]="hotkeys()"
         (ngModelChange)="hotkeys.set($event)" />
@@ -116,7 +110,7 @@
     <button
       type="button"
       class="ritual-form__button ritual-form__button--primary"
-      [disabled]="saving() || deleting() || !canSave() || isSystem()"
+      [disabled]="saving() || deleting() || !canSave()"
       (click)="submit()">
       {{ creating() ? 'Create Skill' : 'Save Changes' }}
     </button>

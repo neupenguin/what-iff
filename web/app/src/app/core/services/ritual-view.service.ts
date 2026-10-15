@@ -15,7 +15,6 @@ export class RitualViewService {
 
   readonly pageSize = 24;
   readonly rituals = signal<Ritual[]>([]);
-  readonly systemRituals = signal<Ritual[]>([]);
   readonly totalCount = signal(0);
   readonly currentPage = signal(1);
   readonly loading = signal(false);
@@ -49,16 +48,8 @@ export class RitualViewService {
       });
   }
 
-  loadSystemRituals(): void {
-    this.ritualService.listSystemRituals().subscribe({
-      next: rituals => this.systemRituals.set(rituals ?? []),
-      error: () => this.systemRituals.set([]),
-    });
-  }
-
   refresh(): void {
     this.load(this.currentPage());
-    this.loadSystemRituals();
   }
 
   setFilters(partial: Partial<RitualViewFilters>): void {

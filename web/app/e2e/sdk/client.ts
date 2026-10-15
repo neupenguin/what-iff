@@ -796,15 +796,6 @@ export async function listRituals(client: ApiClient): Promise<Ritual[]> {
   return data.results ?? [];
 }
 
-/** Lists the built-in system rituals (not user-owned, not deletable). */
-export async function listSystemRituals(client: ApiClient): Promise<Ritual[]> {
-  const { data, error, response } = await client.GET('/ritual/system', {});
-  if (error || !data) {
-    fail('list system rituals', response.status, error);
-  }
-  return data;
-}
-
 /** Deletes a ritual by ID. */
 export async function deleteRitual(client: ApiClient, id: string): Promise<void> {
   const { error, response } = await client.DELETE('/ritual/{id}', { params: { path: { id } } });

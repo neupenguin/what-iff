@@ -23,7 +23,6 @@ describe('ritual-vm.helpers', () => {
         const vm = toRitualRowVm(ritual({ personality_id: 'p-1', hotkeys: 'ctrl+m' }), personalityMap);
         expect(vm.affinityLabel).toBe('Planner');
         expect(vm.hasHotkey).toBe(true);
-        expect(vm.isSystem).toBe(false);
     });
 
     it('groups rituals by affinity with all-skills last', () => {

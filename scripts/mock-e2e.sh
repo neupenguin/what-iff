@@ -12,7 +12,7 @@
 #     (bounded timeout — the save is NOT assumed done when the request returns)
 #   * asserts the mock echo reply, that the job did not fail, and that the
 #     message persists on re-fetch
-#   * sends an image-ritual message and asserts a genuine PNG attachment
+#   * imports a PNG into the gallery and asserts the gallery serves it back
 #
 # Requires: docker (compose v2), go, curl, jq, openssl.
 set -euo pipefail
@@ -260,21 +260,16 @@ refetch_count="$(jq --arg m "$MSG" '[.results[] | select(.origin == "Assistant" 
 [ "$refetch_count" -ge 1 ] || { echo "❌ assistant reply missing on re-fetch"; exit 1; }
 echo "echo reply persisted"
 
-# ── Image ritual: fixture PNG persisted through the real save path ───────────
-step "sending image-ritual message"
-img_resp="$(curl -fsS -X POST "${BASE}/api/chat/${CHAT_ID}/chat-message" "${AUTH[@]}" \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Please draw a fox","origin":"User","rituals":[{"id":"00000000-0000-0000-0000-000000000101","name":"Generate Image"}]}')"
-IMG_JOB_ID="$(jq -r '.job_id // empty' <<<"$img_resp" 2>/dev/null)" || IMG_JOB_ID=""
-[ -n "$IMG_JOB_ID" ] || { echo "❌ image message did not return a job id: $img_resp"; exit 1; }
+# ── Gallery image: a PNG stored through the real save path ─────────────────────
+step "importing a PNG into the gallery"
+upload="${WORKDIR}/upload.png"
+# A 1x1 PNG, so the bytes served back can be checked against a known signature.
+base64 -d > "$upload" <<<'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+attachment="$(curl -fsS -X POST "${BASE}/api/image-gallery/import" "${AUTH[@]}" \
+  -F "attachment=@${upload};type=image/png" -F "title=mock-e2e")" \
+  || { echo "❌ gallery import failed"; exit 1; }
 
-step "polling image job ${IMG_JOB_ID} to completion"
-poll_job "$IMG_JOB_ID"
-
-step "asserting persisted PNG attachment"
-messages="$(curl -fsS "${BASE}/api/chat/${CHAT_ID}/chat-message?limit=50" "${AUTH[@]}")"
-attachment="$(jq -r '[.results[] | select(.origin == "Assistant" and .message == "Generated image.")][0].attachments[0] // empty' <<<"$messages" 2>/dev/null)" || attachment=""
-[ -n "$attachment" ] || { echo "❌ image-ritual assistant message has no attachment; messages: $messages"; exit 1; }
+step "asserting the stored PNG attachment"
 # This block deliberately does not use the file's usual `2>/dev/null` fallback.
 # It is the assertion that failed opaquely for weeks, so a parse failure and an
 # absent field are kept distinguishable here even though the surrounding script

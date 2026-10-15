@@ -37,7 +37,6 @@ export class RitualDetailPageComponent implements OnInit {
   readonly saving = signal(false);
   readonly deleting = signal(false);
   readonly error = signal<string | null>(null);
-  readonly isSystem = signal(false);
   readonly personalities = signal<RitualSelectOption[]>([]);
   readonly mcpServers = signal<RitualSelectOption[]>([]);
   readonly chats = signal<RitualSelectOption[]>([]);
@@ -85,19 +84,13 @@ export class RitualDetailPageComponent implements OnInit {
   private loadRitual(id: string, fromCopy: boolean): void {
     this.loading.set(true);
     this.error.set(null);
-    forkJoin({
-      ritual: this.ritualService.getRitual(id).pipe(catchError(() => of(null))),
-      system: this.ritualService.listSystemRituals().pipe(catchError(() => of([]))),
-    }).subscribe({
-      next: result => {
-        const fallback = (result.system ?? []).find(item => item.id === id) ?? null;
-        const found = result.ritual ?? fallback;
+    this.ritualService.getRitual(id).pipe(catchError(() => of(null))).subscribe({
+      next: found => {
         if (!found) {
           this.error.set('Skill not found.');
           this.loading.set(false);
           return;
         }
-        this.isSystem.set((result.system ?? []).some(item => item.id === found.id) && !fromCopy);
         this.ritual.set(fromCopy ? { ...found, id: '' } : found);
         this.loading.set(false);
       },
@@ -169,45 +162,5 @@ export class RitualDetailPageComponent implements OnInit {
         this.error.set(error instanceof Error ? error.message : 'Failed to delete skill');
       },
     });
-  }
-
-  assignSystemHotkey(hotkeys: string): void {
-    const ritual = this.ritual();
-    if (!ritual) return;
-    this.saving.set(true);
-    this.ritualService.assignSystemRitualHotkey(ritual.id, hotkeys).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.loadRitual(ritual.id, false);
-      },
-      error: error => {
-        this.saving.set(false);
-        this.error.set(error instanceof Error ? error.message : 'Failed to assign hotkey');
-      },
-    });
-  }
-
-  copyToPersonal(): void {
-    const ritual = this.ritual();
-    if (!ritual) return;
-    this.saving.set(true);
-    this.ritualService
-      .createRitual({
-        name: ritual.name,
-        description: ritual.description,
-        content: ritual.content,
-        hotkeys: ritual.hotkeys || undefined,
-        personality_id: ritual.personality_id,
-      })
-      .subscribe({
-        next: created => {
-          this.saving.set(false);
-          void this.router.navigate(['/skills', created.id]);
-        },
-        error: error => {
-          this.saving.set(false);
-          this.error.set(error instanceof Error ? error.message : 'Failed to copy skill');
-        },
-      });
   }
 }

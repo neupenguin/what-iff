@@ -33,7 +33,6 @@ export class RitualFormComponent {
   readonly mcpServers = input<RitualSelectOption[]>([]);
   readonly saving = input(false);
   readonly deleting = input(false);
-  readonly isSystem = input(false);
   readonly creating = input(false);
   readonly error = input<string | null>(null);
 

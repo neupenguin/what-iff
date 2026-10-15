@@ -11,7 +11,6 @@ export interface RitualRowVm {
   affinityLabel: string;
   createdAt: string;
   updatedAt: string;
-  isSystem: boolean;
 }
 
 export interface RitualAffinityGroupVm {
@@ -23,7 +22,6 @@ export interface RitualAffinityGroupVm {
 export function toRitualRowVm(
   ritual: Ritual,
   personalityNameById: ReadonlyMap<string, string>,
-  isSystem: boolean = false,
 ): RitualRowVm {
   const affinityLabel = ritual.personality_id
     ? (personalityNameById.get(ritual.personality_id) ?? 'Unknown personality')
@@ -40,7 +38,6 @@ export function toRitualRowVm(
     affinityLabel,
     createdAt: ritual.created_at,
     updatedAt: ritual.updated_at,
-    isSystem,
   };
 }
 
@@ -50,7 +47,7 @@ export function groupByAffinity(
 ): RitualAffinityGroupVm[] {
   const byGroup = new Map<string, RitualRowVm[]>();
   for (const ritual of rituals) {
-    const vm = toRitualRowVm(ritual, personalityNameById, false);
+    const vm = toRitualRowVm(ritual, personalityNameById);
     const key = vm.personalityId ?? 'all-skills';
     byGroup.set(key, [...(byGroup.get(key) ?? []), vm]);
   }

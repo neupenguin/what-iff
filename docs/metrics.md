@@ -119,7 +119,7 @@ Notes on these metrics:
 - **Context tokens:** estimated tokens (cl100k) per context segment sent with a turn.
 
 **`call_path` values:** `user_chat`, `agent_job`, `scratchpad`, `memory`, `conversation_summary`,
-`image_ritual`, `chat_name`, `generate_personality`, `expression_grid`, `personality_portrait`,
+`chat_name`, `generate_personality`, `expression_grid`, `personality_portrait`,
 `schedule_parse`, `subagent`, `mode_select`, `expression_pick`, `unknown`. An `unknown` value is a
 labelling gap worth fixing.
 

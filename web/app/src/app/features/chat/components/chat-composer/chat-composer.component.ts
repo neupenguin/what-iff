@@ -15,7 +15,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { Subject, forkJoin, of } from 'rxjs';
+import { Subject, of } from 'rxjs';
 import { catchError, finalize, map, switchMap } from 'rxjs/operators';
 
 import { EmojiSearch, PickerComponent } from '@ctrl/ngx-emoji-mart';
@@ -1896,17 +1896,15 @@ export class ChatComposerComponent {
     }
     this.skillLoading.set(true);
     this.skillLoadError.set(null);
-    forkJoin({
-      chat: this.ritualService.getAvailableRituals(cid, 1, 100),
-      system: this.ritualService.listSystemRituals(),
-    })
+    this.ritualService
+      .getAvailableRituals(cid, 1, 100)
       .pipe(
         takeUntilDestroyed(this.destroyRef),
         finalize(() => this.skillLoading.set(false)),
       )
       .subscribe({
-        next: ({ chat, system }) => {
-          this.skillOptions.set(mergeRitualOptions(chat.results ?? [], system));
+        next: (chat) => {
+          this.skillOptions.set(sortRitualOptions(chat.results ?? []));
           this.skillLoadError.set(null);
         },
         error: () => {
@@ -2457,15 +2455,8 @@ export class ChatComposerComponent {
   }
 }
 
-function mergeRitualOptions(chatResults: Ritual[], system: Ritual[]): Ritual[] {
-  const map = new Map<string, Ritual>();
-  for (const r of chatResults) {
-    map.set(r.id, r);
-  }
-  for (const r of system) {
-    map.set(r.id, r);
-  }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+function sortRitualOptions(rituals: Ritual[]): Ritual[] {
+  return [...rituals].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function isAllowedFile(file: File): boolean {
