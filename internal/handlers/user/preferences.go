@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -25,7 +26,7 @@ func (h *Handler) GetUserPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(prefs))
+	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(r.Context(), prefs))
 }
 
 func (h *Handler) UpdateUserPreferences(w http.ResponseWriter, r *http.Request) {
@@ -58,14 +59,14 @@ func (h *Handler) UpdateUserPreferences(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(prefs))
+	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(r.Context(), prefs))
 }
 
-// withImageGenerationProviders adds the deployment's image vendors, which the
-// settings UI offers as the choices for image_generation_provider.
-func (h *Handler) withImageGenerationProviders(prefs *models.UserPreferences) *models.UserPreferences {
-	if prefs != nil && len(h.imageGenerationProviders) > 0 {
-		prefs.ImageGenerationProviders = append([]string(nil), h.imageGenerationProviders...)
+// withImageGenerationProviders adds the image vendors the caller holds a key
+// for, which the settings UI offers as the choices for image_generation_provider.
+func (h *Handler) withImageGenerationProviders(ctx context.Context, prefs *models.UserPreferences) *models.UserPreferences {
+	if prefs != nil && h.imageGenerationProviders != nil {
+		prefs.ImageGenerationProviders = h.imageGenerationProviders(ctx)
 	}
 	return prefs
 }

@@ -315,7 +315,7 @@ func (s *Server) setupRoutes() {
 	// Create handlers
 	userHandler := user.NewHandler(dataStore, s.logger, s.config.AllowedEmails, s.config.Environment).
 		WithFileStore(fileStore).
-		WithImageGenerationProviders(imageGenerationProviders(keyResolver))
+		WithImageGenerationProviders(func(ctx context.Context) []string { return imageGenerationProviders(ctx, keyResolver) })
 	jobHandler := job.NewHandlerWithCanceller(dataStore, agent, s.logger)
 	memoryHandler := memory.NewHandler(dataStore, s.logger, keyResolver.Configured(models.ModelProviderOpenAI), providerHTTPClient)
 	// Account export: async export runs in-process here in the main app; the bundle lands in the

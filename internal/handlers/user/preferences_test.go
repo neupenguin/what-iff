@@ -24,7 +24,7 @@ func preferencesRequest(method, body string) *http.Request {
 
 func TestPreferences_ReportTheDeploymentsImageVendors(t *testing.T) {
 	store := &mockUserStore{prefs: &models.UserPreferences{Theme: "dark", ImageGenerationProvider: "google"}}
-	h := NewHandler(store, zap.NewNop(), nil, "test").WithImageGenerationProviders([]string{"openai", "google"})
+	h := NewHandler(store, zap.NewNop(), nil, "test").WithImageGenerationProviders(func(context.Context) []string { return []string{"openai", "google"} })
 
 	for _, tc := range []struct {
 		name string

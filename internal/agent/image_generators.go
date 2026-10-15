@@ -38,14 +38,15 @@ func buildImageGenerators(cfg AgentConfig, a *Agent) map[models.ModelProvider]pr
 // imageGeneratorForUser returns the image generator for the vendor the user
 // picked (UserPreference image_generation_provider).
 //
-// A pick this deployment cannot serve (its key was removed since) falls back to
-// the first configured vendor, OpenAI when it is, rather than failing the
-// user's request; the fallback is logged. An Agent built without NewAgent has
-// no registry and always uses OpenAIProvider.
+// A pick the caller holds no key for (removed since, or never added) falls back
+// to the first usable vendor, OpenAI when it is, rather than failing the user's
+// request; the fallback is logged. An Agent built without NewAgent has no
+// registry and always uses OpenAIProvider.
 func (a *Agent) imageGeneratorForUser(ctx context.Context, userID uuid.UUID) (provider.ImageGenerator, error) {
+	usable := a.usableImageGenerators(ctx)
 	want := models.DefaultImageGenerationProvider
-	// With one vendor configured there is nothing to choose, so skip the read.
-	if len(a.imageGenerators) > 1 {
+	// With one vendor usable there is nothing to choose, so skip the read.
+	if len(usable) > 1 {
 		chosen, err := a.imageGenerationPreference(ctx, userID)
 		if err != nil {
 			a.logger.Warn("could not read image generation preference; using the default vendor",
@@ -54,24 +55,42 @@ func (a *Agent) imageGeneratorForUser(ctx context.Context, userID uuid.UUID) (pr
 			want = chosen
 		}
 	}
-	if gen, ok := a.imageGenerators[want]; ok {
-		return gen, nil
-	}
-	// Fall back in the settings UI's order, OpenAI first, so a deployment with
-	// only (say) a Gemini key still generates images for users who never chose.
-	for _, p := range provider.ImageGenerationProviders {
-		if gen, ok := a.imageGenerators[p]; ok {
-			if want != models.DefaultImageGenerationProvider {
-				a.logger.Warn("chosen image generation vendor is not configured; using another",
-					zap.String("user_id", userID.String()), zap.String("provider", string(want)), zap.String("using", string(p)))
-			}
+	for _, gen := range usable {
+		if gen.Provider() == want {
 			return gen, nil
 		}
 	}
-	if a.OpenAIProvider != nil {
+	// Fall back in the settings UI's order, OpenAI first, so a caller with only
+	// (say) a Gemini key still gets images, chosen or not.
+	if len(usable) > 0 {
+		if want != models.DefaultImageGenerationProvider {
+			a.logger.Warn("chosen image generation vendor has no key for this caller; using another",
+				zap.String("user_id", userID.String()), zap.String("provider", string(want)), zap.String("using", string(usable[0].Provider())))
+		}
+		return usable[0], nil
+	}
+	if a.imageGenerators == nil && a.OpenAIProvider != nil {
 		return a.OpenAIProvider.ImageGenerator(), nil
 	}
-	return nil, fmt.Errorf("no image generation provider is configured")
+	return nil, fmt.Errorf("no image generation provider is available")
+}
+
+// usableImageGenerators lists, in the settings UI's order, the generators this
+// caller holds a key for. Keys can belong to accounts (providerkeys), so this
+// is asked per request rather than settled when the registry is built.
+func (a *Agent) usableImageGenerators(ctx context.Context) []provider.ImageGenerator {
+	var usable []provider.ImageGenerator
+	for _, p := range provider.ImageGenerationProviders {
+		gen, ok := a.imageGenerators[p]
+		if !ok {
+			continue
+		}
+		if a.keyResolver != nil && a.keyResolver.Key(ctx, p) == "" {
+			continue
+		}
+		usable = append(usable, gen)
+	}
+	return usable
 }
 
 // imageGenerationPreference reads the user's image_generation_provider.

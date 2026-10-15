@@ -76,5 +76,5 @@ func TestImageGenerationProviders_ListsOnlyConfiguredVendorsInOrder(t *testing.T
 		appmodels.ModelProviderOpenAI:   "o",
 		appmodels.ModelProviderDeepSeek: "d", // no image API
 	})
-	require.Equal(t, []string{"openai", "qwen"}, imageGenerationProviders(resolver))
+	require.Equal(t, []string{"openai", "qwen"}, imageGenerationProviders(context.Background(), resolver))
 }

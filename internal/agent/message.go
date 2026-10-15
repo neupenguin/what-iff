@@ -139,6 +139,9 @@ type Agent struct {
 	// imageGenerators are the image vendors this deployment can call, keyed by
 	// vendor; the user's preference picks one (imageGeneratorForUser).
 	imageGenerators map[models.ModelProvider]provider.ImageGenerator
+	// keyResolver answers which vendors the caller holds a key for; nil (an Agent
+	// built without NewAgent) treats every registered image generator as usable.
+	keyResolver providerkeys.Resolver
 	// pushEnabled is true when a real push implementation was wired (a non-nil
 	// PushNotifier). It lets the completion hook skip spawning a detached
 	// goroutine when push is off (the open-source default).
@@ -373,6 +376,7 @@ func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Teleme
 	}
 
 	a.imageGenerators = buildImageGenerators(cfg, a)
+	a.keyResolver = cfg.KeyResolver
 
 	if a.localLLM {
 		// LocalProvider deliberately does NOT use cfg.HTTPClient: under

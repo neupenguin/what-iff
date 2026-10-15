@@ -165,3 +165,51 @@ func TestGeneratedImageFileType(t *testing.T) {
 		require.Equal(t, want, [2]string{mime, ext}, in)
 	}
 }
+
+// perCallerKeys is a providerkeys.Resolver whose answer depends on the caller, like one
+// backed by account keys: Configured says yes to everything, Key decides.
+type perCallerKeys struct {
+	keys map[models.ModelProvider]string
+}
+
+func (r perCallerKeys) Key(_ context.Context, p models.ModelProvider) string { return r.keys[p] }
+func (perCallerKeys) Configured(models.ModelProvider) bool                   { return true }
+func (perCallerKeys) AccountsSupplyKeys() bool                               { return true }
+
+func TestImageGeneratorForUser_OnlyVendorsTheCallerHasAKeyFor(t *testing.T) {
+	t.Parallel()
+	openAI := &fakeImageGenerator{provider: models.ModelProviderOpenAI}
+	gemini := &fakeImageGenerator{provider: models.ModelProviderGoogle}
+	qwen := &fakeImageGenerator{provider: models.ModelProviderQwen}
+	registry := map[models.ModelProvider]provider.ImageGenerator{
+		models.ModelProviderOpenAI: openAI,
+		models.ModelProviderGoogle: gemini,
+		models.ModelProviderQwen:   qwen,
+	}
+
+	t.Run("a pick without a key falls back to a vendor with one", func(t *testing.T) {
+		a := &Agent{logger: zap.NewNop(), imageGenerators: registry, keyResolver: perCallerKeys{keys: map[models.ModelProvider]string{
+			models.ModelProviderGoogle: "g", models.ModelProviderQwen: "q",
+		}}}
+		a.testHooks.ImageGenerationPreference = preferring(models.ModelProviderOpenAI)
+		gen, err := a.imageGeneratorForUser(context.Background(), uuid.New())
+		require.NoError(t, err)
+		require.Same(t, gemini, gen, "OpenAI is registered but this caller has no key for it")
+	})
+
+	t.Run("a pick with a key is used", func(t *testing.T) {
+		a := &Agent{logger: zap.NewNop(), imageGenerators: registry, keyResolver: perCallerKeys{keys: map[models.ModelProvider]string{
+			models.ModelProviderGoogle: "g", models.ModelProviderQwen: "q",
+		}}}
+		a.testHooks.ImageGenerationPreference = preferring(models.ModelProviderQwen)
+		gen, err := a.imageGeneratorForUser(context.Background(), uuid.New())
+		require.NoError(t, err)
+		require.Same(t, qwen, gen)
+	})
+
+	t.Run("no keys at all is an error, not a doomed call", func(t *testing.T) {
+		a := &Agent{logger: zap.NewNop(), imageGenerators: registry, keyResolver: perCallerKeys{}}
+		_, err := a.imageGeneratorForUser(context.Background(), uuid.New())
+		require.ErrorContains(t, err, "no image generation provider is available")
+	})
+}

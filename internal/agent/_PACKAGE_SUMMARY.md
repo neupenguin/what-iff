@@ -35,7 +35,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
   Both backfills are idempotent and only log failures; a pass stops early when the provider is unreachable (e.g. the deny-network client under mock/local backends).
 - **Rituals:** User and system rituals, image ritual flow, registry of built-in system rituals.
 - **Image vendor (`image_generators.go`):** `NewAgent` builds a `provider.ImageGenerator` for each image vendor with a credential.
-  `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool and the image ritual, falling back to the first configured vendor (OpenAI first).
+  `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool and the image ritual, among the vendors the caller holds a key for (asked per request, since keys can belong to accounts), falling back to the first of those (OpenAI first).
   Portrait and expression-grid generation stay on `OpenAIProvider` because they need the edit-with-reference endpoint.
 - **Jobs:** Running scheduled/async agent work (`agentjob_run.go`, `agentjob_schedule.go`) and tools that create jobs.
 - **Thread rehydration (`thread_rehydration.go`):** Lazy summarization of **imported** threads.

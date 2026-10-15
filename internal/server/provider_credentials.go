@@ -79,12 +79,13 @@ func credentialRules(endpoints []providerEndpoint, resolver providerkeys.Resolve
 	return rules
 }
 
-// imageGenerationProviders lists the image vendors this deployment has a
-// credential for, in the settings UI's order.
-func imageGenerationProviders(resolver providerkeys.Resolver) []string {
+// imageGenerationProviders lists the image vendors the caller holds a key for,
+// in the settings UI's order. Keys may belong to accounts, so it is asked per
+// request; under the deployment resolver every caller gets the same list.
+func imageGenerationProviders(ctx context.Context, resolver providerkeys.Resolver) []string {
 	var out []string
 	for _, p := range provider.ImageGenerationProviders {
-		if resolver.Configured(p) {
+		if resolver.Key(ctx, p) != "" {
 			out = append(out, string(p))
 		}
 	}

@@ -10729,8 +10729,8 @@ export interface components {
             favorite_model_ids: string[];
             image_generation_provider: components["schemas"]["ImageGenerationProvider"];
             /**
-             * @description The image vendors this deployment has credentials for, in the order a settings UI
-             *     should offer them. Read-only; ignored on update. When the stored
+             * @description The image vendors the caller holds a key for (the deployment's, or the account's
+             *     own where accounts supply keys), in the order a settings UI should offer them. Read-only; ignored on update. When the stored
              *     `image_generation_provider` is not in this list, image generation uses the first
              *     entry instead.
              */
@@ -10797,7 +10797,7 @@ export interface components {
             /**
              * @description The image vendor to use. Preserved when absent: omitting the field (or sending an
              *     empty string) leaves the stored choice unchanged. Any value outside the enum is
-             *     rejected with 400. A vendor this deployment has no credential for is stored but
+             *     rejected with 400. A vendor the caller has no key for is stored but
              *     not used; see `image_generation_providers` on the response.
              */
             image_generation_provider?: components["schemas"]["ImageGenerationProvider"];
