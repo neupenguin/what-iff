@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 )
@@ -80,6 +82,8 @@ const maxDownloadedImageBytes = 32 << 20
 // for vendors that answer with a URL, a download of the result.
 type imageHTTPClient struct {
 	client *http.Client
+	// retryDelays overrides defaultImageRetryDelays (tests).
+	retryDelays []time.Duration
 }
 
 func (c imageHTTPClient) httpClient() *http.Client {
@@ -89,17 +93,76 @@ func (c imageHTTPClient) httpClient() *http.Client {
 	return http.DefaultClient
 }
 
-// postJSON POSTs body to url and decodes a 2xx response into out. A non-2xx
+// defaultImageRetryDelays are the waits before each retry of a rate-limited or
+// overloaded image request. Image endpoints allow little concurrency (Qwen
+// answers 429 to a handful of parallel requests), and generate_image sends up
+// to four at once, so a short backoff turns most 429s into images.
+var defaultImageRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second}
+
+// maxImageRetryAfter caps a server-requested Retry-After.
+const maxImageRetryAfter = 15 * time.Second
+
+// imageResponse is one raw answer from an image endpoint.
+type imageResponse struct {
+	body   []byte
+	status int
+	// retryAfter is the server's Retry-After in whole seconds; HTTP-date values
+	// are ignored and the default backoff applies.
+	retryAfter time.Duration
+}
+
+func (c imageHTTPClient) delays() []time.Duration {
+	if c.retryDelays != nil {
+		return c.retryDelays
+	}
+	return defaultImageRetryDelays
+}
+
+// postJSON POSTs body to endpoint and decodes a 2xx response into out,
+// retrying 429 and 503 after each of the client's retry delays. A non-2xx
 // response is returned as *imageAPIError carrying the body, so adapters can
-// recognise their vendor's content-policy refusals.
+// recognise their vendor's content-policy refusals. Cancellation during a wait
+// returns the context's error.
 func (c imageHTTPClient) postJSON(ctx context.Context, endpoint string, headers map[string]string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encode image request: %w", err)
 	}
+	delays := c.delays()
+	for attempt := 0; ; attempt++ {
+		resp, err := c.postOnce(ctx, endpoint, headers, payload)
+		if err != nil {
+			return err
+		}
+		if resp.status >= 200 && resp.status <= 299 {
+			if err := json.Unmarshal(resp.body, out); err != nil {
+				return fmt.Errorf("decode image response: %w", err)
+			}
+			return nil
+		}
+		apiErr := &imageAPIError{Status: resp.status, Body: string(resp.body)}
+		retryable := resp.status == http.StatusTooManyRequests || resp.status == http.StatusServiceUnavailable
+		if !retryable || attempt >= len(delays) {
+			return apiErr
+		}
+		wait := delays[attempt]
+		if resp.retryAfter > 0 {
+			wait = min(resp.retryAfter, maxImageRetryAfter)
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("image request cancelled while retrying after %w: %w", apiErr, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (c imageHTTPClient) postOnce(ctx context.Context, endpoint string, headers map[string]string, payload []byte) (imageResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("build image request: %w", err)
+		return imageResponse{}, fmt.Errorf("build image request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -107,20 +170,18 @@ func (c imageHTTPClient) postJSON(ctx context.Context, endpoint string, headers 
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return err
+		return imageResponse{}, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadedImageBytes*2))
 	if err != nil {
-		return fmt.Errorf("read image response: %w", err)
+		return imageResponse{}, fmt.Errorf("read image response: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &imageAPIError{Status: resp.StatusCode, Body: string(raw)}
+	out := imageResponse{body: raw, status: resp.StatusCode}
+	if secs, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && secs > 0 {
+		out.retryAfter = time.Duration(secs) * time.Second
 	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("decode image response: %w", err)
-	}
-	return nil
+	return out, nil
 }
 
 // download fetches a result image and returns it base64-encoded with its

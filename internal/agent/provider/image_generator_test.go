@@ -13,7 +13,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
@@ -259,4 +261,63 @@ func TestImageDownloadRejectsNonImages(t *testing.T) {
 	defer srv.Close()
 	_, err := imageHTTPClient{client: srv.Client()}.download(context.Background(), srv.URL)
 	require.ErrorContains(t, err, "not an image")
+}
+
+func TestImagePostJSONRetriesRateLimits(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": "Throttling.RateQuota"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+
+	var out map[string]any
+	require.NoError(t, imageHTTPClient{client: srv.Client(), retryDelays: []time.Duration{time.Millisecond, time.Millisecond}}.postJSON(context.Background(), srv.URL, nil, map[string]any{}, &out))
+	require.EqualValues(t, 3, calls.Load())
+	require.Equal(t, true, out["ok"])
+}
+
+func TestImagePostJSONGivesUpAfterTheLastRetry(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": "Throttling.RateQuota"})
+	}))
+	defer srv.Close()
+
+	err := imageHTTPClient{client: srv.Client(), retryDelays: []time.Duration{time.Millisecond}}.postJSON(context.Background(), srv.URL, nil, map[string]any{}, &map[string]any{})
+	var apiErr *imageAPIError
+	require.True(t, errors.As(err, &apiErr))
+	require.Equal(t, http.StatusTooManyRequests, apiErr.Status)
+	require.EqualValues(t, 2, calls.Load())
+}
+
+func TestImagePostJSONDoesNotRetryClientErrors(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "InvalidParameter"})
+	}))
+	defer srv.Close()
+
+	err := imageHTTPClient{client: srv.Client()}.postJSON(context.Background(), srv.URL, nil, map[string]any{}, &map[string]any{})
+	require.Error(t, err)
+	require.EqualValues(t, 1, calls.Load())
+}
+
+func TestImagePostJSONSurfacesCancellationDuringABackoff(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": "Throttling.RateQuota"})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := imageHTTPClient{client: srv.Client(), retryDelays: []time.Duration{time.Minute}}.postJSON(ctx, srv.URL, nil, map[string]any{}, &map[string]any{})
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the caller learns it was cancelled, not throttled")
+	var apiErr *imageAPIError
+	require.True(t, errors.As(err, &apiErr), "the throttling that preceded it is kept for logs")
 }

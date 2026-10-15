@@ -19,12 +19,15 @@ HTTP API for **users** — profile, preferences, registration/login-adjacent flo
 - Cognito vs legacy JWT flows — follow comments in middleware and this handler when changing auth.
 - Production's plus-alias restriction is driven by `server.Config.Environment` (`ENV`, then `ENVIRONMENT`); the email allowlist is configured via `ALLOWED_EMAILS`.
   Both checks run before datastore/Stripe side effects.
+- **Preferences report the deployment's image vendors.**
+  `WithImageGenerationProviders` (set by `internal/server` from the key resolver) is echoed as the read-only `image_generation_providers` on GET/PUT `/user/preferences`, so the settings UI offers only vendors that have a key.
 - **Account deletion purges stored files.**
   With a store from `WithFileStore`, `DeleteUser` removes everything under `users/{id}/` and the account's `exports/{id}/` bundles after the row delete (`storage.PurgeUserObjects`), best effort.
 
 ## Testing
 
 - `user_test.go` — selected HTTP behaviors.
+- `preferences_test.go` — image vendor list on preference responses; an unknown `image_generation_provider` is a 400.
 
 ## Related documentation
 
