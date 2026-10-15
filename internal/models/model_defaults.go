@@ -59,6 +59,10 @@ type ModelConfig struct {
 	// VisionSupport marks models that accept image input; images are stripped
 	// from the context for models without it.
 	VisionSupport bool
+	// NoTemperature marks models that reject the temperature parameter (400
+	// "Unsupported parameter: 'temperature'"). Callers should build sampling
+	// params with provider.TemperatureFor rather than setting it directly.
+	NoTemperature bool
 	Provider      ModelProvider
 }
 
@@ -87,6 +91,7 @@ var AvailableModels = []ModelConfig{
 		Description:   "Fast, low-cost model from the GPT-5.6 family. Suited to short, high-volume work where latency matters more than depth.",
 		ToolSupport:   true,
 		VisionSupport: true,
+		NoTemperature: true,
 		Provider:      ModelProviderOpenAI,
 	},
 	{
@@ -243,6 +248,15 @@ func CatalogModel(name string) *ModelConfig {
 		}
 	}
 	return nil
+}
+
+// SupportsTemperature reports whether the named model accepts the temperature
+// sampling parameter. Names outside the seed catalog are assumed to accept it.
+func SupportsTemperature(name string) bool {
+	if m := CatalogModel(name); m != nil {
+		return !m.NoTemperature
+	}
+	return true
 }
 
 // IsClaudeModel reports whether the named model is routed through the Anthropic

@@ -109,7 +109,7 @@ func (a *Agent) PickGenerationExpression(ctx context.Context, userID, personalit
 			SafetyUserID:    userID.String(),
 			MaxOutputTokens: 384,
 		})
-		params.Temperature = openai.Float(0.2)
+		params.Temperature = provider.TemperatureFor(expressionPickModel, 0.2)
 		params.Text = expressionPickStructuredOutputFormat()
 	} else {
 		userPayload := strings.TrimSpace(fmt.Sprintf(`
@@ -124,7 +124,7 @@ Assistant reply to evaluate:
 `, catalog, strings.TrimSpace(userTurn), strings.TrimSpace(assistantReply)))
 		params = responses.ResponseNewParams{
 			Model:           expressionPickModel,
-			Temperature:     openai.Float(0.2),
+			Temperature:     provider.TemperatureFor(expressionPickModel, 0.2),
 			MaxOutputTokens: openai.Int(384),
 			Instructions:    openai.String(expressionPickInstructions),
 			Input: responses.ResponseNewParamsInputUnion{

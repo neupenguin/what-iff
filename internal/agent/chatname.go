@@ -21,7 +21,7 @@ func (a *Agent) generateChatName(ctx context.Context, userMessage string) (strin
 	}
 	params := responses.ResponseNewParams{
 		Model:           chatNameModel,
-		Temperature:     openai.Float(provider.DefaultTemperature),
+		Temperature:     provider.TemperatureFor(chatNameModel, provider.DefaultTemperature),
 		MaxOutputTokens: openai.Int(provider.DefaultMaxContentLength),
 		Instructions:    openai.String(chatNamePrompt),
 		Input: responses.ResponseNewParamsInputUnion{

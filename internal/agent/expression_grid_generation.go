@@ -314,7 +314,7 @@ func (a *Agent) inferExpressionGridLikeness(ctx context.Context, systemPrompt st
 
 	params := responses.ResponseNewParams{
 		Model:           chatNameModel,
-		Temperature:     openai.Float(0.4),
+		Temperature:     provider.TemperatureFor(chatNameModel, 0.4),
 		MaxOutputTokens: openai.Int(768),
 		Instructions:    openai.String(expressionLikenessInstructions),
 		Input:           input,
