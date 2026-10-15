@@ -11,8 +11,8 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/telemetry"
 )
 
-// GeminiImageModel is the Gemini image model ("Nano Banana 2") the image tool uses.
-const GeminiImageModel = "gemini-3.1-flash-image"
+// GeminiImageModel is the Gemini image model ("Nano Banana 2.1") the image tool uses.
+const GeminiImageModel = "gemini-nano-banana-2.1"
 
 // GeminiNativeBaseURL is the native Gemini API root for a configured
 // OpenAI-compatible Gemini base URL: ".../v1beta/openai/" becomes ".../v1beta".
