@@ -165,6 +165,18 @@ func (h *Handler) ImportAccount(w http.ResponseWriter, r *http.Request) {
 	handlerutils.RespondWithJSON(w, h.logger, http.StatusAccepted, job)
 }
 
+// importContext is what a background import runs under: the server's lifetime
+// rather than the request's, as the importing account, so its embeddings use
+// that account's provider key. The job's timeout covers the wait for a slot too,
+// so an import stuck ahead of this one can't hold it queued forever.
+func (h *Handler) importContext(userID uuid.UUID) (context.Context, context.CancelFunc) {
+	timeout := h.importTimeout
+	if timeout <= 0 {
+		timeout = importJobTimeout
+	}
+	return context.WithTimeout(middleware.ContextWithUser(h.backgroundContext(), userID, ""), timeout)
+}
+
 // runAccountImport owns the staged archive after the response returns. It serializes expensive
 // restores per API process and always removes the temporary file.
 //
@@ -196,13 +208,7 @@ func (h *Handler) runAccountImport(userID, jobID uuid.UUID, tmpPath string, sele
 		}
 	}()
 
-	// The job's timeout covers the wait for a slot too, so an import stuck ahead of this one
-	// can't hold it queued forever.
-	timeout := h.importTimeout
-	if timeout <= 0 {
-		timeout = importJobTimeout
-	}
-	ctx, cancel := context.WithTimeout(h.backgroundContext(), timeout)
+	ctx, cancel := h.importContext(userID)
 	defer cancel()
 	release, err := h.acquireImportSlot(ctx)
 	if err != nil {

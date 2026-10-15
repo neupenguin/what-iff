@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/theimaginaryfoundation/what-iff/ent"
+	"github.com/theimaginaryfoundation/what-iff/internal/accountkeys"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/embedding"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/mcpclient"
@@ -195,7 +196,11 @@ func (s *Server) setupRoutes() {
 	// applied at the transport they all still share. It sits directly on the
 	// base transport, so the timeouts and instrumentation below wrap the
 	// credentialed request exactly as they wrap any other.
-	keyResolver := providerkeys.NewDeploymentResolver(s.config.configuredProviderKeys())
+	accountKeys := accountkeys.New(s.db, dataStore, s.logger)
+	keyResolver := providerkeys.New(
+		providerkeys.NewDeploymentResolver(s.config.configuredProviderKeys()),
+		accountKeys,
+	)
 	providerHTTPClient := provider.CredentialHTTPClient(
 		credentialRules(s.config.providerEndpoints(), keyResolver),
 		baseHTTPClient,
@@ -312,7 +317,7 @@ func (s *Server) setupRoutes() {
 		WithFileStore(fileStore).
 		WithImageGenerationProviders(imageGenerationProviders(keyResolver))
 	jobHandler := job.NewHandlerWithCanceller(dataStore, agent, s.logger)
-	memoryHandler := memory.NewHandler(dataStore, s.logger, s.config.OpenAIKey, providerHTTPClient)
+	memoryHandler := memory.NewHandler(dataStore, s.logger, keyResolver.Configured(models.ModelProviderOpenAI), providerHTTPClient)
 	// Account export: async export runs in-process here in the main app; the bundle lands in the
 	// file store and its download link is delivered ONLY out-of-band (a deliberate control — app
 	// access alone cannot exfiltrate the account). The concrete email transport is provided by
@@ -326,7 +331,7 @@ func (s *Server) setupRoutes() {
 			exportSender = email.Instrument(snd, telemetry.DependencySES)
 		}
 	}
-	accountExportHandler := accountexport.NewHandler(dataStore, s.logger, fileStore, exportSender, s.config.OpenAIKey, providerHTTPClient, s.lifecycleCtx)
+	accountExportHandler := accountexport.NewHandler(dataStore, s.logger, fileStore, exportSender, keyResolver.Configured(models.ModelProviderOpenAI), providerHTTPClient, s.lifecycleCtx)
 	oauthService := mcpoauth.New(dataStore, providerHTTPClient, s.logger, mcpoauth.Config{
 		RedirectURL:         s.config.MCPOAuthRedirectURL,
 		PostAuthRedirectURL: s.config.MCPOAuthPostAuthURL,
@@ -409,6 +414,7 @@ func (s *Server) setupRoutes() {
 	fileAttachmentHandler.RegisterRoutes(authRouter)
 	imageGalleryHandler.RegisterRoutes(authRouter)
 	moodHandler.RegisterRoutes(authRouter)
+	mountAccountKeyRoutes(authRouter, keyResolver, accountKeys)
 	toolsHandler.RegisterRoutes(authRouter)
 	searchHandler.RegisterRoutes(authRouter)
 
@@ -434,7 +440,7 @@ func (s *Server) setupRoutes() {
 		AuthRouter:      authRouter,
 		V1AuthRouter:    apiV1Router,
 		FileStore:       fileStore,
-		CreateEmbedding: pluginEmbedder(s.config.OpenAIKey, providerHTTPClient),
+		CreateEmbedding: pluginEmbedder(keyResolver.Configured(models.ModelProviderOpenAI), providerHTTPClient),
 		Lifecycle:       s.lifecycleCtx,
 		Turns:           agentTurnStarter{agent: agent},
 		Attachments:     newAgentAttachmentIngester(agent, dataStore),
@@ -472,19 +478,32 @@ func (s *Server) dependencyHosts() []telemetry.HTTPTransportOption {
 	}
 }
 
+// mountAccountKeyRoutes serves the routes an account manages its own keys
+// through, but only when the resolver takes keys from accounts. A deployment
+// that supplies its own keys has nothing for an account to manage.
+func mountAccountKeyRoutes(router *mux.Router, resolver providerkeys.Resolver, keys *accountkeys.Keys) bool {
+	if !resolver.AccountsSupplyKeys() {
+		return false
+	}
+	keys.RegisterRoutes(router)
+	return true
+}
+
 // pluginEmbedder builds the embedding function handed to plugins through
-// plugins.Deps, or returns nil when no key is configured so a plugin can tell
-// the feature is unavailable rather than failing per request.
+// plugins.Deps, or returns nil when OpenAI is not configured so a plugin can
+// tell the feature is unavailable rather than failing per request.
 //
-// httpClient is the deny-network transport under a non-vendor LLM_BACKEND.
-// Constructing the client here rather than passing the key through the seam is
-// what keeps that policy enforceable: a plugin receives the ability to embed,
-// not the credential to reach the provider however it likes (ADR 0x018).
-func pluginEmbedder(openAIKey string, httpClient *http.Client) func(context.Context, string) ([]float32, error) {
-	if strings.TrimSpace(openAIKey) == "" {
+// The client is built without a key: httpClient's credential transport adds the
+// right one to each request, so a plugin embeds with the key of the account on
+// its context. httpClient is also the deny-network transport under a non-vendor
+// LLM_BACKEND. Constructing the client here rather than passing a key through
+// the seam is what keeps that policy enforceable: a plugin receives the ability
+// to embed, not a credential to reach the provider however it likes (ADR 0x018).
+func pluginEmbedder(openAIConfigured bool, httpClient *http.Client) func(context.Context, string) ([]float32, error) {
+	if !openAIConfigured {
 		return nil
 	}
-	opts := []option.RequestOption{option.WithAPIKey(openAIKey)}
+	var opts []option.RequestOption
 	if httpClient != nil {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}

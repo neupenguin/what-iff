@@ -20,7 +20,7 @@ HTTP API for **semantic memories** — CRUD, search, plus export/import portabil
 ## Non-obvious decisions
 
 - Search parameters and filters must stay aligned with `internal/datastore/memory.go` and OpenAPI.
-- `NewHandler` takes an optional `*http.Client` for its OpenAI embeddings client; under a non-vendor `LLM_BACKEND` (mock/local) the server passes the deny-network client so import and create/edit embeddings cannot reach the provider (ADR 0x018).
+- `NewHandler` takes whether OpenAI is configured and an optional `*http.Client` for its OpenAI embeddings client, which is built without a key (the shared transport supplies it per request); under a non-vendor `LLM_BACKEND` (mock/local) the server passes the deny-network client so import and create/edit embeddings cannot reach the provider (ADR 0x018).
 - Create/patch handlers reach the datastore through the narrow `memoryWriteStore` interface (`embed.go`) so the write-then-embed flow is unit-testable without a database; `embedTexts` overrides the embeddings call in tests.
 - **Provenance:** `GET /memory?provenance=user|external` filters, and `PATCH /memory/{id}` / `POST /memory/batch/patch` accept `provenance` (the owner confirming an external memory sets `user`); invalid values are a 400.
 

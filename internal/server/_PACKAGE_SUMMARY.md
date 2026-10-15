@@ -38,7 +38,9 @@ HTTP **API server**: Gorilla mux router, OpenTelemetry/metrics middleware, CORS,
 - **LLM backend wiring:** `Config.LLMBackend` (`vendor` default / `mock` / `local`, env `LLM_BACKEND`) plus `LocalLLMBaseURL`/`LocalLLMModel`.
   When non-vendor, `setupRoutes` builds `provider.DenyNetworkHTTPClient()` and threads it into `agent.AgentConfig.HTTPClient`, the memory handler constructor, and the embedder handed to plugins through `plugins.Deps.CreateEmbedding`, so every provider SDK client is egress-denied at the transport (the local backend's own client is constructed separately inside `agent.NewAgent` with real egress).
 - **Dependency metrics wiring:** before the datastore is built, `setupRoutes` calls `datastore.InstrumentEntClient` (ent query/mutation durations) and `database.RegisterPoolMetrics` (pool gauges).
-  Directly on that base transport sits `provider.CredentialHTTPClient`, which sets each request's provider credential from a `providerkeys.Resolver` (one per server, built from the configured keys), so every client sharing the transport resolves keys the same way and none is rebuilt per request.
+  Directly on that base transport sits `provider.CredentialHTTPClient`, which sets each request's provider credential from a `providerkeys.Resolver` (one per server, chosen by `providerkeys.New` from the configured keys and the keys accounts stored), so every client sharing the transport resolves keys the same way and none is rebuilt per request.
+  The memory and account-export handlers and the plugin embedder build their OpenAI clients without a key, gated on the resolver's `Configured(openai)`.
+  `mountAccountKeyRoutes` mounts `internal/accountkeys`' routes only when the chosen resolver's `AccountsSupplyKeys()` is true.
   The provider HTTP client is always non-nil now: `telemetry.InstrumentHTTPClient` wraps the deny transport under a non-vendor backend and `http.DefaultTransport` under `vendor` (the SDKs' own default is `http.DefaultClient`, so behaviour is unchanged), recording `http.client.request.duration` per attempt with the vendor from the request host; configured provider base URL overrides are added by `dependencyHosts`.
   Inside that instrumentation, `provider.WithCallTimeouts` bounds every attempt with `LLM_REQUEST_TIMEOUT`, `LLM_STREAM_TIMEOUT` and `LLM_STREAM_IDLE_TIMEOUT` (config fields `LLMRequestTimeout`/`LLMStreamTimeout`/`LLMStreamIdleTimeout`, defaults from `provider.DefaultCallTimeouts`, `0` disables).
   The same limits go to `agent.AgentConfig.LLMCallTimeouts` for the local backend's own client.
@@ -55,6 +57,7 @@ HTTP **API server**: Gorilla mux router, OpenTelemetry/metrics middleware, CORS,
 - `server_test.go` — `httpStatusClass`, route normalization / `metricHTTPRoute`.
 - `plugin_turns_test.go` — the turn starter's and attachment ingester's guards, and the mapping of a rejected upload to the plugin-facing errors.
 - `plugin_attachments_test.go` — the ingester end to end over fakes: size limit, chat lookup, save, unsupported type, provider and object-store failures.
+- `account_key_routes_test.go` — the key routes follow the resolver's `AccountsSupplyKeys()`, including through a wrapping resolver, and the default `providerkeys.New` mounts none.
 
 ## Related documentation
 

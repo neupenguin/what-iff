@@ -15,6 +15,7 @@
   The chat upload handler and the plugin attachment seam (`internal/server/plugin_attachments.go`) both call it.
   `ProcessUpload` records the spooled size (`whatiff.file.size`, operation `upload`) and the image `normalize` stage time.
   `whatiff.file.uploads` counts each upload once: failures in `ProcessUpload`, the multipart parse in `UploadFileAttachment`, or `UploadToS3`, success in `TriggerAsyncFileChunking`, which every path calls exactly once after the attachment is stored.
+  `TriggerAsyncFileChunking` runs its embeddings as the attachment's owner (`apicontext.WithUserID`), so they use that account's provider key after the request has ended.
   Callers must not count uploads themselves.
   A caller whose attachment record fails to save calls `AbandonFileAttachmentUpload`, which counts the failure and removes the temp file.
 - **`httpresponse.go`:** The response helpers every handler writes through — `RespondWithJSON`, `RespondWithHTML`, `RespondWithNoContent`, and `RespondWithError`.
@@ -24,7 +25,7 @@
 ## Dependencies
 
 - **Inbound:** `internal/handlers/chat`, `internal/handlers/personality`, and other upload paths.
-- **Outbound:** Standard library HTTP, `internal/models`, `internal/storage`, `internal/utils`, `internal/agent/filechunker`.
+- **Outbound:** Standard library HTTP, `internal/apicontext`, `internal/models`, `internal/storage`, `internal/utils`, `internal/agent/filechunker`.
   Deliberately **not** `internal/agent` — see below.
 
 ## Non-obvious decisions

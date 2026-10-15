@@ -81,12 +81,13 @@ type Handler struct {
 	lifecycleCtx context.Context
 }
 
-// NewHandler builds the handler. openAIKey enables memory-embedding regeneration on import; when
-// empty, memory import is skipped (export is unaffected). httpClient is the server's shared provider
-// HTTP client (instrumented, and the deny-network transport under a non-vendor LLM_BACKEND); nil
-// keeps the SDK default. lifecycleCtx is the server's shutdown context (nil for none): background
+// NewHandler builds the handler. openAIConfigured enables memory-embedding regeneration on import;
+// when false, memory import is skipped (export is unaffected). httpClient is the server's shared
+// provider HTTP client (instrumented, and the deny-network transport under a non-vendor
+// LLM_BACKEND), which supplies the key per request, so the client is built without one; nil keeps
+// the SDK default. lifecycleCtx is the server's shutdown context (nil for none): background
 // imports run under it, not under the request that started them, which ends with the response.
-func NewHandler(ds *datastore.Datastore, logger *zap.Logger, fileStore storage.FileStore, sender email.Sender, openAIKey string, httpClient *http.Client, lifecycleCtx context.Context) *Handler {
+func NewHandler(ds *datastore.Datastore, logger *zap.Logger, fileStore storage.FileStore, sender email.Sender, openAIConfigured bool, httpClient *http.Client, lifecycleCtx context.Context) *Handler {
 	h := &Handler{
 		lifecycleCtx:  lifecycleCtx,
 		ds:            ds,
@@ -98,8 +99,8 @@ func NewHandler(ds *datastore.Datastore, logger *zap.Logger, fileStore storage.F
 		imports:       make(chan struct{}, maxConcurrentAccountImports),
 		importTimeout: importJobTimeout,
 	}
-	if openAIKey != "" {
-		opts := []option.RequestOption{option.WithAPIKey(openAIKey)}
+	if openAIConfigured {
+		var opts []option.RequestOption
 		if httpClient != nil {
 			opts = append(opts, option.WithHTTPClient(httpClient))
 		}

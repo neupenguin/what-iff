@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/filechunker"
+	"github.com/theimaginaryfoundation/what-iff/internal/apicontext"
 	"github.com/theimaginaryfoundation/what-iff/internal/imageutil"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
@@ -295,7 +296,7 @@ func StoreChatAttachment(ctx context.Context, logger *zap.Logger, st AttachmentS
 	}
 	// Upload success/failure is counted in this package (ProcessUpload, UploadToS3 and
 	// TriggerAsyncFileChunking), shared by every upload path, so it isn't recorded here.
-	TriggerAsyncFileChunking(logger, st.Pipeline, createdAttachment.ID, tempFilePath, fileAttachment.Name)
+	TriggerAsyncFileChunking(logger, userID, st.Pipeline, createdAttachment.ID, tempFilePath, fileAttachment.Name)
 	return createdAttachment, nil
 }
 
@@ -303,12 +304,15 @@ func StoreChatAttachment(ctx context.Context, logger *zap.Logger, st AttachmentS
 // Skips silently for non-text / non-vector-support file types. Caller owns tempFilePath cleanup
 // on early return; the goroutine removes it on completion or error.
 // S3 archival must be completed synchronously by the caller before invoking this.
+// The embedding runs as userID, the attachment's owner, so it is made with that
+// account's provider key.
 //
 // Every upload path calls this exactly once, after the attachment is stored, so it is also where
 // a successful upload is counted on FileUploads (failures are counted by UploadFileAttachment and
 // UploadToS3).
 func TriggerAsyncFileChunking(
 	logger *zap.Logger,
+	userID uuid.UUID,
 	pipeline *filechunker.FileChunkPipeline,
 	attachmentID uuid.UUID,
 	tempFilePath string,
@@ -401,10 +405,11 @@ func TriggerAsyncFileChunking(
 			return
 		}
 
-		if err := pipeline.ProcessAndStore(context.Background(), attachmentID, fileContent, fileName, fileTypeInfo.ContentType); err != nil {
+		if err := pipeline.ProcessAndStore(apicontext.WithUserID(context.Background(), userID), attachmentID, fileContent, fileName, fileTypeInfo.ContentType); err != nil {
 			logger.Error("async file chunking failed",
 				zap.Error(err),
-				zap.String("file_attachment_id", attachmentID.String()))
+				zap.String("file_attachment_id", attachmentID.String()),
+				zap.String("user_id", userID.String()))
 		}
 	}()
 }
