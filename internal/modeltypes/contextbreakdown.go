@@ -44,6 +44,9 @@ type ContextBreakdown struct {
 	// Inputs lists, by reference, what this context was built from. Absent on snapshots
 	// captured before it existed.
 	Inputs *ContextInputs `json:"inputs,omitempty"`
+	// ImagesWithheld counts images left out of this reply's requests because the provider's
+	// safety filter refused a request that carried them; the reply was generated without them.
+	ImagesWithheld int `json:"images_withheld,omitempty"`
 }
 
 // Memory input stages: how a memory reached this turn's context.

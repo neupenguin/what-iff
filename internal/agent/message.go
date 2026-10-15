@@ -838,6 +838,10 @@ type chatContext struct {
 	liveMemories           []*models.Memory
 	prefetchedMemoryCount  int // leading liveMemories from enrichment; the rest came from tools
 	memoryEnrichmentFailed bool
+	// imagesWithheld counts images the agent loop left out of a request this turn after the
+	// provider refused it on safety grounds (retryWithoutImagesOnRefusal); recorded on the
+	// reply's context breakdown.
+	imagesWithheld int
 	// userNameLine is this turn's profile line naming the user (the first line of memories on a
 	// chat's first message), recorded explicitly so it can be persisted as its own context item
 	// type instead of being recognised by its text. Empty when the turn has no such line.
@@ -1780,6 +1784,7 @@ func (a *Agent) buildContextBreakdown(chatCtx *chatContext, modelContext *provid
 	if chatCtx != nil {
 		breakdown.Model = chatCtx.model
 		breakdown.Provider = chatCtx.modelProvider
+		breakdown.ImagesWithheld = chatCtx.imagesWithheld
 	}
 	return breakdown
 }
@@ -2841,6 +2846,10 @@ func (a *Agent) runCheckpointOpenAI(ctx context.Context, userID uuid.UUID, chatM
 	doneSummary := a.timeTurnStage(ctx, turnStageCheckpointSummary)
 	summary, err := a.summarizeConversationForCheckpoint(ctx, userID, chatCtx, checkpointSummarySource{
 		PreviousResponseID: agentMessage.ResponseID,
+		// Used only if the chained summary is refused on safety grounds (see
+		// checkpointSummaryWithoutImages): the same turn, rebuilt without its images.
+		ModelContext:   inferenceModelContext,
+		AssistantReply: agentMessage.Message,
 	})
 	doneSummary()
 	if err != nil {
