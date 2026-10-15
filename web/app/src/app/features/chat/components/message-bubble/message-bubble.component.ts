@@ -100,6 +100,13 @@ import { MessageContentComponent } from '../message-content/message-content.comp
             </button>
           </div>
           <div class="bubble__meta-end">
+            @if (imagesWithheld() > 0) {
+              <span
+                class="bubble__hint"
+                data-testid="images-withheld"
+                [uiTooltip]="imagesWithheldHint()"
+              >Images left out</span>
+            }
             @if (hasContextBreakdown()) {
               <button
                 type="button"
@@ -493,6 +500,17 @@ export class MessageBubbleComponent {
   readonly showContext = output<ChatMessage>();
 
   /** True for assistant replies that captured a Context X-ray snapshot. */
+  /** Images the agent left out of this reply after a safety refusal (0 when none). */
+  readonly imagesWithheld = computed(() => {
+    const m = this.message();
+    return m.origin === 'Assistant' ? (m.context_breakdown?.images_withheld ?? 0) : 0;
+  });
+  readonly imagesWithheldHint = computed(() => {
+    const withheld = this.imagesWithheld();
+    return withheld === 1
+      ? "An image was left out of this reply: the provider's safety filter refused a request that included it, so the reply was written without it."
+      : `${withheld} images were left out of this reply: the provider's safety filter refused a request that included them, so the reply was written without them.`;
+  });
   readonly hasContextBreakdown = computed(() => {
     const m = this.message();
     return m.origin === 'Assistant' && (m.context_breakdown?.segments?.length ?? 0) > 0;

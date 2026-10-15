@@ -11355,6 +11355,8 @@ export interface components {
             captured_at: string;
             /** @description What this context was built from, by reference (IDs and short hashes, never content). Absent on snapshots captured before it existed. */
             inputs?: components["schemas"]["ContextInputs"] | null;
+            /** @description Images left out of this reply's requests because the provider's safety filter refused a request that carried them; the request was retried without them. Absent when none. */
+            images_withheld?: number;
         };
         /** @description Input manifest for one assistant turn: references to the memories, mode, scratchpad and checkpoint summary the model context was built from, so "why was this loaded?" can be answered after the fact. */
         ContextInputs: {

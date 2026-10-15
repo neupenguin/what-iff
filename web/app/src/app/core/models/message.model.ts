@@ -33,6 +33,8 @@ export interface ContextBreakdown {
   model?: string;
   provider?: string;
   captured_at: string;
+  /** Images left out of this reply's requests after the provider's safety filter refused one that carried them. */
+  images_withheld?: number;
 }
 
 export interface ChatMessage {
