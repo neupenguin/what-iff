@@ -197,8 +197,9 @@
             </div>
           </details>
 
-          <!-- Actions -->
-          <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+          <!-- Actions. In the modal on phones the host renders these in its sticky footer instead. -->
+          <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700"
+               [class]="modalMode() ? 'max-sm:hidden' : ''">
             <div class="flex items-center gap-2">
               <button (click)="goBackToEdit()"
                       [disabled]="isGenerating() || isAccepting() || isResetting()"

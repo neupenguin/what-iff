@@ -2,7 +2,7 @@ import type { Mock, MockedObject } from "vitest";
 import { Component, provideZonelessChangeDetection, signal, ChangeDetectionStrategy } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withXhr } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Router, provideRouter } from '@angular/router';
 import { BehaviorSubject, of } from 'rxjs';
 
@@ -14,6 +14,8 @@ import { NavService } from '../core/services/nav.service';
 import { ThemeService } from '../core/services/theme.service';
 import { AppLayoutComponent } from './app-layout.component';
 import { RightPanelService } from '../core/services/right-panel.service';
+import { GeneratePersonalityModalService } from '../core/services/generate-personality-modal.service';
+import type { PersonalityGenFlow } from '../core/models/personality-gen-flow.model';
 
 @Component({ selector: 'noop', standalone: true, changeDetection: ChangeDetectionStrategy.Eager,
     template: '' })
@@ -203,6 +205,74 @@ describe('AppLayoutComponent', () => {
         await fixture.componentInstance.onPersonaPicked({ id: 'personality-1' } as any);
 
         expect(nav.setCollapsed).not.toHaveBeenCalled();
+    });
+
+
+    describe('Generate Personality modal — phone footer', () => {
+        const flowOf = (overrides: Partial<PersonalityGenFlow>): PersonalityGenFlow => ({
+            id: 'flow-1',
+            status: 'in_progress',
+            current_step: 0,
+            answers: {},
+            generated_prompt: '',
+            generated_about_me: '',
+            generated_names: [],
+            image_style: 'none',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            ...overrides,
+        });
+
+        async function openModal(flow: PersonalityGenFlow) {
+            const fixture = TestBed.createComponent(AppLayoutComponent);
+            fixture.detectChanges();
+            TestBed.inject(GeneratePersonalityModalService).show();
+            fixture.detectChanges();
+            const http = TestBed.inject(HttpTestingController);
+            http.expectOne(req => req.method === 'GET' && req.url.endsWith('/personality/generate')).flush(flow);
+            await fixture.whenStable();
+            fixture.detectChanges();
+            return fixture.nativeElement as HTMLElement;
+        }
+
+        const labelOf = (b: Element) => (b.getAttribute('aria-label') ?? b.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+        it('shows Generate now plus a Start Over / Previous / Next row on wizard pages', async () => {
+            const host = await openModal(flowOf({ current_step: 0 }));
+            const footer = host.querySelector('.ui-modal__footer') as HTMLElement;
+            const nav = footer.querySelector('[role="group"][aria-label="Wizard navigation"]') as HTMLElement;
+
+            expect(nav).not.toBeNull();
+            expect(footer.textContent).toContain('Generate now');
+            // Nothing to discard yet: Start Over is hidden, Previous is disabled, Next is enabled.
+            expect(nav.querySelector('button[aria-label="Start over"]')).toBeNull();
+            expect((nav.querySelector('button[aria-label="Previous step"]') as HTMLButtonElement).disabled).toBe(true);
+            expect((nav.querySelector('button[aria-label="Next step"]') as HTMLButtonElement).disabled).toBe(false);
+        });
+
+        it('shows Start Over once there is progress and disables Next on the last page', async () => {
+            const host = await openModal(flowOf({ current_step: 3, answers: { who: 'A fox' } }));
+            const nav = host.querySelector('[role="group"][aria-label="Wizard navigation"]') as HTMLElement;
+
+            expect(nav.querySelector('button[aria-label="Start over"]')).not.toBeNull();
+            expect((nav.querySelector('button[aria-label="Previous step"]') as HTMLButtonElement).disabled).toBe(false);
+            expect((nav.querySelector('button[aria-label="Next step"]') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('swaps to Accept & create / Regenerate on the review screen and drops the wizard row', async () => {
+            const host = await openModal(flowOf({ status: 'generated', current_step: 3, answers: { who: 'A fox' }, generated_names: ['Fennick'] }));
+            const footer = host.querySelector('.ui-modal__footer') as HTMLElement;
+            const review = footer.querySelector('[role="group"][aria-label="Review actions"]') as HTMLElement;
+
+            expect(footer.querySelector('[aria-label="Wizard navigation"]')).toBeNull();
+            expect(review).not.toBeNull();
+            expect(labelOf(footer.querySelector('button.min-h-11.w-full')!)).toBe('Accept & create');
+            expect([...review.querySelectorAll('button')].map(labelOf)).toEqual([
+                'Start over',
+                'Previous step: edit your answers',
+                'Regenerate',
+            ]);
+        });
     });
 
     it('disposes shortcut + handler + commands on destroy', () => {

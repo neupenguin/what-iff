@@ -253,6 +253,11 @@ export class PersonalityGenerateComponent implements OnInit {
     return this.currentStep() === this.totalSteps - 1;
   }
 
+  /** True once at least one field has an answer; `finishAndGenerate()` rejects an empty draft. */
+  canGenerate(): boolean {
+    return this.hasAtLeastOneAnswer(this.answers());
+  }
+
   jumpToStep(step: number): void {
     if (this.isReviewScreen() || step === this.currentStep()) return;
     this.currentStep.set(step);
