@@ -99,9 +99,8 @@ type Usage struct {
 	// turn itself is an image-generation ritual, which the implementation prices as a
 	// fixed low-quality image.
 	ImageQuality string
-	// ImageProvider is the vendor (a models.ModelProvider) that made the image, from
-	// the generate_image tool or an image-generation ritual, so an implementation can
-	// price vendors separately. Only meaningful when ActionType is
+	// ImageProvider is the vendor (a models.ModelProvider) the generate_image tool
+	// made the image with, so an implementation can price vendors separately. Only meaningful when ActionType is
 	// models.ActionTypeImageGeneration; empty means OpenAI, the only vendor before
 	// users could choose one.
 	ImageProvider string

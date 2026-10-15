@@ -892,10 +892,6 @@ type chatContext struct {
 	loadedTools map[string]struct{}
 	// mcpSessions stores MCP session ids for this single conversation turn.
 	mcpSessions map[string]string
-	// ritualImageGenerator is the vendor an image-generation ritual turn drew its image
-	// with, so the turn's usage is recorded against it (ritualImageUsage). Nil for any
-	// other turn, and for a ritual that never reached a vendor.
-	ritualImageGenerator provider.ImageGenerator
 }
 
 func (c *chatContext) setMCPServerCache(servers []*models.MCPServer, loadedByServer map[uuid.UUID][]string) {
@@ -2701,7 +2697,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 		if agentMessage != nil {
 			messageID = agentMessage.ID.String()
 		}
-		usage := metering.Usage{
+		a.meter.Record(ctx, qd, metering.Usage{
 			UserID:     userID,
 			ActionType: recordAction,
 			Model:      chatCtx.model,
@@ -2709,11 +2705,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 			Tokens:     chatMessage.Tokens,
 			MessageID:  messageID,
 			Source:     metering.TurnSourceFromContext(ctx),
-		}
-		if recordAction == models.ActionTypeImageGeneration {
-			ritualImageUsage(&usage, chatCtx)
-		}
-		a.meter.Record(ctx, qd, usage)
+		})
 
 		if usage, ok := a.webSearchUsage(userID, chatMessage.ChatID, chatCtx, actionType); ok {
 			a.meter.Record(ctx, qd, usage)
@@ -3245,18 +3237,14 @@ func (a *Agent) recordCancelledChatUsage(
 	if hasSystemRitual(userMessage.Rituals, SystemRitualIDImageGenerate) {
 		recordAction = models.ActionTypeImageGeneration
 	}
-	usage := metering.Usage{
+	a.meter.Record(ctx, qd, metering.Usage{
 		UserID:     chatJob.UserID,
 		ActionType: recordAction,
 		Model:      chatCtx.model,
 		ChatID:     userMessage.ChatID.String(),
 		Tokens:     inputTokens,
 		Metadata:   metadata,
-	}
-	if recordAction == models.ActionTypeImageGeneration {
-		ritualImageUsage(&usage, chatCtx)
-	}
-	a.meter.Record(ctx, qd, usage)
+	})
 	if partialMsg == nil || !outputKnown {
 		return
 	}

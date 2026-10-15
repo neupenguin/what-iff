@@ -36,7 +36,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
 - **Rituals:** User and system rituals, image ritual flow, registry of built-in system rituals.
 - **Image vendor (`image_generators.go`):** `NewAgent` builds a `provider.ImageGenerator` for each image vendor with a credential.
   `imageGeneratorForUser` picks the user's `image_generation_provider` for the `generate_image` tool and the image ritual, among the vendors the caller holds a key for (asked per request, since keys can belong to accounts), falling back to the first of those (OpenAI first).
-  Both record the vendor on their usage as `metering.Usage.ImageProvider` (plus `engine`/`provider` metadata) so a metering implementation can price vendors separately; a ritual remembers its vendor on `chatContext.ritualImageGenerator` until the turn's usage is recorded.
+  The tool records the vendor on each image's usage as `metering.Usage.ImageProvider` (plus `engine`/`provider` metadata) so a metering implementation can price vendors separately.
   Portrait and expression-grid generation stay on `OpenAIProvider` because they need the edit-with-reference endpoint.
 - **Jobs:** Running scheduled/async agent work (`agentjob_run.go`, `agentjob_schedule.go`) and tools that create jobs.
 - **Thread rehydration (`thread_rehydration.go`):** Lazy summarization of **imported** threads.
