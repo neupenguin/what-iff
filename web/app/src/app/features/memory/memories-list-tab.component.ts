@@ -3,10 +3,8 @@ import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, OnIni
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { catchError, fromEvent, map, of } from 'rxjs';
+import { fromEvent } from 'rxjs';
 
-import { Chat } from '../../core/models/chat.model';
-import { ChatService } from '../../core/services/chat.service';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
@@ -55,7 +53,6 @@ const DESKTOP_FOCUS_QUERY = '(min-width: 961px)';
 export class MemoriesListTabComponent implements OnInit {
   private readonly view = inject(MemoryViewService);
   private readonly memoryService = inject(MemoryService);
-  private readonly chatService = inject(ChatService);
   private readonly personalityService = inject(PersonalityService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
@@ -67,38 +64,10 @@ export class MemoriesListTabComponent implements OnInit {
   readonly deleteTargetIds = signal<string[]>([]);
   readonly moveMenuOpen = signal(false);
   readonly moveTargetIds = signal<string[]>([]);
-  /**
-   * The Move menu's targets: 'pin' moves global/personality memories between global and a
-   * personality; 'promote' takes thread memories out of their thread (Thread tab).
-   */
-  readonly moveMode = signal<'pin' | 'promote'>('pin');
-  /** The promoted memories' threads, for naming the personality option; null while loading. */
-  readonly promoteThreads = signal<Chat[] | null>(null);
-  /** Reasons the server gave for promotions it refused; the other memories moved. */
+  /** Reasons the server gave for moves it refused; the other memories moved. */
   readonly moveErrors = signal<string[]>([]);
-  /**
-   * The personality option when promoting thread memories: named when every selected memory's
-   * thread shares one personality, "each thread's" when they differ, and absent when any thread
-   * has none (the server would refuse that pin).
-   */
-  readonly promotePersonality = computed<{ id: string | null; label: string } | null>(() => {
-    const threads = this.promoteThreads();
-    if (!threads) return null;
-    const byID = new Map(threads.map(thread => [thread.id, thread]));
-    const memoriesByID = new Map(this.view.memories().map(memory => [memory.id, memory]));
-    const personalityIDs = new Set<string>();
-    for (const id of this.moveTargetIds()) {
-      const thread = byID.get(memoriesByID.get(id)?.chat_id ?? '');
-      if (!thread?.personality_id) return null;
-      personalityIDs.add(thread.personality_id);
-    }
-    if (personalityIDs.size !== 1) return { id: null, label: "Each thread's personality" };
-    const [id] = personalityIDs;
-    const thread = threads.find(t => t.personality_id === id);
-    return { id, label: this.personalityNames()[id] ?? thread?.personality_name ?? 'Its personality' };
-  });
-  /** The memory whose scope is being changed across the thread boundary (MemoryScopeDialogComponent). */
-  readonly scopeDialogMemory = signal<Memory | null>(null);
+  /** The memories being moved into a thread (MemoryScopeDialogComponent). */
+  readonly threadDialogMemories = signal<Memory[] | null>(null);
   readonly searchDraft = signal('');
   readonly pinUpdatingId = signal<string | null>(null);
   readonly focusedId = signal<string | null>(null);
@@ -431,129 +400,75 @@ export class MemoriesListTabComponent implements OnInit {
     });
   }
 
+  /**
+   * The one Move menu, for the bulk bar on every tab and for a single card or the focus panel:
+   * global, any personality, or a thread. Every level can go anywhere (the server refuses only a
+   * sandboxed thread the memory was not made in); summaries stay with their thread.
+   */
   openMoveMenu(ids: string[]): void {
-    if (this.isThreadView()) {
-      this.openPromoteMenu(ids);
-      return;
-    }
     const memoriesByID = new Map(this.view.memories().map(memory => [memory.id, memory]));
-    const eligibleIDs = ids.filter(id => memoriesByID.get(id)?.level !== 'thread');
-    // A stale or mixed selection must not repeatedly retry an invalid thread move.
+    const eligibleIDs = ids.filter(id => {
+      const level = memoriesByID.get(id)?.level;
+      return level !== undefined && level !== 'summary';
+    });
     if (eligibleIDs.length !== ids.length) {
       this.view.setSelectedIds(eligibleIDs);
     }
     if (eligibleIDs.length === 0) return;
-    this.moveMode.set('pin');
+    this.moveErrors.set([]);
     this.moveTargetIds.set(eligibleIDs);
     this.moveMenuOpen.set(true);
-  }
-
-  /** Thread tab: offer to take the selected thread memories to global or their thread's personality. */
-  private openPromoteMenu(ids: string[]): void {
-    const memoriesByID = new Map(this.view.memories().map(memory => [memory.id, memory]));
-    const eligibleIDs = ids.filter(id => memoriesByID.get(id)?.level === 'thread');
-    if (eligibleIDs.length === 0) return;
-    this.moveMode.set('promote');
-    this.moveTargetIds.set(eligibleIDs);
-    this.moveErrors.set([]);
-    this.promoteThreads.set(null);
-    this.moveMenuOpen.set(true);
-
-    const chatIDs = [...new Set(eligibleIDs.map(id => memoriesByID.get(id)?.chat_id).filter((id): id is string => !!id))];
-    if (chatIDs.length === 0) {
-      this.promoteThreads.set([]);
-      return;
-    }
-    this.chatService
-      .listChatsPage(1, chatIDs.length, { ids: chatIDs.join(',') })
-      .pipe(
-        map(page => page.results ?? []),
-        catchError(() => of<Chat[]>([])),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe(threads => this.promoteThreads.set(threads));
-  }
-
-  /** Moves the promote menu's thread memories to global or to their thread's personality. */
-  promoteTo(target: 'global' | 'personality'): void {
-    const ids = this.moveTargetIds();
-    if (ids.length === 0) return;
-    let move: MemoryScopeMoveInput = { level: 'global' };
-    if (target === 'personality') {
-      const personality = this.promotePersonality();
-      if (!personality) return;
-      // Without an id the server pins each memory to its own thread's personality.
-      move = personality.id ? { level: 'personality', personality_id: personality.id } : { level: 'personality' };
-    }
-    this.moveErrors.set([]);
-    this.view.moveScope(ids, move).subscribe(reasons => {
-      this.view.load(this.currentPage());
-      if (reasons.length === 0) {
-        this.closeMoveMenu();
-        return;
-      }
-      this.moveErrors.set(reasons);
-      // The ones that moved have left the Thread tab; only the refused ones remain targets.
-      this.moveTargetIds.set([]);
-    });
   }
 
   closeMoveMenu(): void {
     this.moveMenuOpen.set(false);
     this.moveTargetIds.set([]);
-    this.moveMode.set('pin');
-    this.promoteThreads.set(null);
     this.moveErrors.set([]);
   }
 
+  /** Moves the menu's memories to global (null) or to a personality, through the scope endpoint. */
   moveToPersonality(personalityId: string | null): void {
     const ids = this.moveTargetIds();
     if (ids.length === 0) return;
-    const patch =
-      personalityId === null
-        ? { level: 'global' as const, pinned_personality_id: null }
-        : { level: 'personality' as const, pinned_personality_id: personalityId };
-
-    const request$ =
-      ids.length === 1
-        ? this.view.patchOne(ids[0], patch)
-        : (() => {
-            this.view.setSelectedIds(ids);
-            return this.view.patchSelected(patch);
-          })();
-
-    request$.subscribe({
-      next: () => {
-        this.closeMoveMenu();
+    const move: MemoryScopeMoveInput =
+      personalityId === null ? { level: 'global' } : { level: 'personality', personality_id: personalityId };
+    this.moveErrors.set([]);
+    this.view.moveScope(ids, move).subscribe({
+      next: reasons => {
         this.view.load(this.currentPage());
+        if (reasons.length === 0) {
+          this.closeMoveMenu();
+          return;
+        }
+        // The rest have moved; the menu stays open to say which could not.
+        this.moveErrors.set(reasons);
       },
-      error: () => this.closeMoveMenu(),
+      // moveScope reports each refusal as a reason; this is only for a failure outside the requests.
+      error: () => {
+        this.view.load(this.currentPage());
+        this.moveErrors.set(['Failed to move memories']);
+      },
     });
   }
 
+  /** From the Move menu: pick a thread for the menu's memories. */
+  moveToThread(): void {
+    const ids = new Set(this.moveTargetIds());
+    const memories = this.view.memories().filter(memory => ids.has(memory.id));
+    this.closeMoveMenu();
+    if (memories.length > 0) this.threadDialogMemories.set(memories);
+  }
+
   onMoveOne(memoryId: string): void {
-    const memory = this.view.memories().find(item => item.id === memoryId);
-    if (memory?.level === 'thread') {
-      this.scopeDialogMemory.set(memory);
-      return;
-    }
     this.openMoveMenu([memoryId]);
   }
 
-  /** From the single-memory Move menu: send a global/personality memory back to a thread. */
-  moveBackToThread(): void {
-    const [id] = this.moveTargetIds();
-    const memory = this.view.memories().find(item => item.id === id);
-    this.closeMoveMenu();
-    if (memory) this.scopeDialogMemory.set(memory);
+  closeThreadDialog(): void {
+    this.threadDialogMemories.set(null);
   }
 
-  closeScopeDialog(): void {
-    this.scopeDialogMemory.set(null);
-  }
-
-  onScopeMoved(): void {
-    this.scopeDialogMemory.set(null);
+  onThreadMoved(): void {
+    this.threadDialogMemories.set(null);
     this.view.load(this.currentPage());
   }
 

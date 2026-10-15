@@ -64,7 +64,7 @@
             @if (menuOpen()) {
               <div class="memory-card__menu" role="menu">
                 <button type="button" role="menuitem" (click)="startEdit($event)">Edit</button>
-                <button type="button" role="menuitem" [uiTooltip]="moveHint()" placement="left" (click)="onMove($event)">
+                <button type="button" role="menuitem" [uiTooltip]="moveHint" placement="left" (click)="onMove($event)">
                   Move
                 </button>
                 <button

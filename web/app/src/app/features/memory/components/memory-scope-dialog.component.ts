@@ -1,32 +1,29 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, input, OnInit, output, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { catchError, map, Observable, of, switchMap } from 'rxjs';
+import { catchError, map, of } from 'rxjs';
 
 import { Chat, isSandboxed } from '../../../core/models/chat.model';
-import { Memory, MemoryScopeMoveInput } from '../../../core/models/memory.model';
+import { Memory } from '../../../core/models/memory.model';
 import { ChatService } from '../../../core/services/chat.service';
-import { MemoryService } from '../../../core/services/memory.service';
-import { apiErrorMessage } from '../../../core/utils/api-error.helpers';
+import { MemoryViewService } from '../../../core/services/memory-view.service';
 import { ModalComponent } from '../../../shared/ui/modal/modal.component';
-import { GLOBAL_SCOPE_LABEL } from '../helpers/memory-vm.helpers';
-import { MemoryPersonalityOption } from './memory-form.component';
 
 /** Threads offered as a destination; the list is for picking, not browsing. */
 const THREAD_PICKER_LIMIT = 100;
 
 /**
- * Moves one memory across the thread boundary (POST /memory/{id}/scope): a thread memory up to
- * global or its thread's personality, or a global/personality memory back to a thread. Moving
- * between global and personalities stays with the memory list's Move menu.
+ * Moves one or more memories into a thread (POST /memory/{id}/scope with level `thread`), from
+ * any level: global, personality, or another thread. Opened from the memory list's Move menu,
+ * which handles global and personality destinations itself.
  *
- * Back to thread preselects the thread the memory came from (its `chat_id`) when that thread
- * still exists and belongs to the memory's personality. Otherwise nothing is preselected and the
- * user must pick one: a memory is never attached to a thread it was not explicitly sent to.
+ * For a single global/personality memory, the thread it came from (its `chat_id`) is listed first
+ * and preselected. Otherwise nothing is preselected and the user picks: a memory is never attached
+ * to a thread it was not explicitly sent to.
  *
- * The personality and sandbox rules here only shape what the dialog offers; the server
- * (datastore.MoveMemoryScope) is authoritative and refuses anything else with a 409, whose reason
- * is shown as is. A rule change belongs in both places and in both test suites.
+ * Sandboxed (Discord relay) threads are offered only as the place a single memory came from; the
+ * server (datastore.MoveMemoryScope) refuses any other move into one with a 409, whose reason is
+ * shown as is. A rule change belongs in both places and in both test suites.
  */
 @Component({
   selector: 'app-memory-scope-dialog',
@@ -37,113 +34,113 @@ const THREAD_PICKER_LIMIT = 100;
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MemoryScopeDialogComponent implements OnInit {
-  private readonly memoryService = inject(MemoryService);
+  private readonly view = inject(MemoryViewService);
   private readonly chatService = inject(ChatService);
   private readonly destroyRef = inject(DestroyRef);
 
-  readonly memory = input.required<Memory>();
-  readonly personalities = input<MemoryPersonalityOption[]>([]);
+  readonly memories = input.required<Memory[]>();
 
-  readonly moved = output<Memory>();
+  /** Emitted once any memory has moved (all of them, or the rest after a partial failure was shown). */
+  readonly moved = output<void>();
   readonly cancel = output<void>();
 
-  readonly globalScopeLabel = GLOBAL_SCOPE_LABEL;
-
-  /** The memory's thread, or the thread it was promoted from; null when none is recorded or it was deleted. */
-  readonly sourceThread = signal<Chat | null>(null);
   readonly threads = signal<Chat[]>([]);
   readonly loading = signal(true);
   readonly saving = signal(false);
-  readonly error = signal<string | null>(null);
-  /** Promotion target for a thread memory. */
-  readonly promoteTo = signal<'global' | 'personality' | null>(null);
-  /** Destination thread for a global/personality memory. */
+  /** Reasons the server gave for memories it would not move; the others have moved. */
+  readonly errors = signal<string[]>([]);
   readonly threadId = signal<string | null>(null);
 
-  readonly isThreadMemory = computed(() => this.memory().level === 'thread');
-  /** The personality a move stays within: the memory's pin, else its source thread's. */
-  readonly personalityId = computed(() => this.memory().pinned_personality_id ?? this.sourceThread()?.personality_id ?? null);
-  readonly personalityName = computed(() => {
-    const id = this.personalityId();
-    if (!id) return null;
-    return this.personalities().find(p => p.id === id)?.label ?? this.sourceThread()?.personality_name ?? null;
+  /** The memory being moved, when there is exactly one. */
+  readonly single = computed(() => {
+    const memories = this.memories();
+    return memories.length === 1 ? memories[0] : null;
   });
-  /** The source thread, when it is a valid destination for moving the memory back. */
+  /** The thread a single global/personality memory came from, when it still exists. */
   readonly returnThread = computed(() => {
-    const source = this.sourceThread();
-    if (!source) return null;
-    const personalityId = this.personalityId();
-    if (personalityId && source.personality_id !== personalityId) return null;
-    return source;
+    const memory = this.single();
+    if (!memory?.chat_id || memory.level === 'thread') return null;
+    return this.threads().find(chat => chat.id === memory.chat_id) ?? null;
   });
-  /** Destination threads: the memory's personality's, the source thread first; sandboxes only take back their own. */
+  /** Destination threads: the source thread first; sandboxes only take back their own; not a lone thread memory's current thread. */
   readonly threadOptions = computed(() => {
     const back = this.returnThread();
-    const rest = this.threads().filter(chat => chat.id !== back?.id && !isSandboxed(chat));
+    const memory = this.single();
+    const current = memory?.level === 'thread' ? memory.chat_id : undefined;
+    const rest = this.threads().filter(chat => chat.id !== back?.id && chat.id !== current && !isSandboxed(chat));
     return back ? [back, ...rest] : rest;
   });
-  readonly canSubmit = computed(() => !this.saving() && !this.loading() && this.moveInput() !== null);
+  readonly title = computed(() => {
+    const count = this.memories().length;
+    return count === 1 ? 'Move this memory to a thread' : `Move ${count} memories to a thread`;
+  });
+  readonly canSubmit = computed(() => !this.saving() && !this.loading() && this.threadId() !== null && this.errors().length === 0);
 
   ngOnInit(): void {
-    const memory = this.memory();
-    this.loadSourceThread(memory.chat_id)
+    const sourceID = this.single()?.chat_id;
+    this.chatService
+      .listChatsPage(1, THREAD_PICKER_LIMIT)
       .pipe(
-        switchMap(source => {
-          this.sourceThread.set(source);
-          return this.isThreadMemory() ? of<Chat[]>([]) : this.loadThreads(this.personalityId());
-        }),
+        map(page => page.results ?? []),
+        catchError(() => of<Chat[]>([])),
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe(threads => {
-        this.threads.set(threads);
-        this.threadId.set(this.returnThread()?.id ?? null);
-        this.loading.set(false);
+        // The listing may stop before the source thread; an explicit id also finds an archived one.
+        if (sourceID && !threads.some(chat => chat.id === sourceID)) {
+          this.loadSourceThread(sourceID, threads);
+          return;
+        }
+        this.ready(threads);
       });
   }
 
   submit(): void {
-    const move = this.moveInput();
-    if (!move || this.saving()) return;
+    const chatID = this.threadId();
+    if (!chatID || !this.canSubmit()) return;
     this.saving.set(true);
-    this.error.set(null);
-    this.memoryService.moveMemoryScope(this.memory().id, move).subscribe({
-      next: memory => {
+    const ids = this.memories().map(memory => memory.id);
+    this.view.moveScope(ids, { level: 'thread', chat_id: chatID }).subscribe({
+      next: reasons => {
         this.saving.set(false);
-        this.moved.emit(memory);
+        if (reasons.length === 0) {
+          this.moved.emit();
+          return;
+        }
+        this.errors.set(reasons);
       },
-      error: error => {
+      // moveScope reports each refusal as a reason; this is only for a failure outside the requests.
+      error: () => {
         this.saving.set(false);
-        this.error.set(apiErrorMessage(error, 'Failed to move memory'));
+        this.errors.set(['Failed to move memories']);
       },
     });
   }
 
-  private moveInput(): MemoryScopeMoveInput | null {
-    if (this.isThreadMemory()) {
-      const target = this.promoteTo();
-      if (target === 'global') return { level: 'global' };
-      const personalityId = this.personalityId();
-      if (target === 'personality' && personalityId) return { level: 'personality', personality_id: personalityId };
-      return null;
+  /** Closing after a partial failure still reports the moves that went through. */
+  close(): void {
+    const someMoved = this.errors().length > 0 && this.errors().length < this.memories().length;
+    if (someMoved) {
+      this.moved.emit();
+    } else {
+      this.cancel.emit();
     }
-    const chatId = this.threadId();
-    return chatId ? { level: 'thread', chat_id: chatId } : null;
   }
 
-  private loadSourceThread(chatId: string | undefined): Observable<Chat | null> {
-    if (!chatId) return of(null);
-    // An explicit id also finds an archived thread; a deleted one comes back empty.
-    return this.chatService.listChatsPage(1, 1, { ids: chatId }).pipe(
-      map(page => page.results?.find(chat => chat.id === chatId) ?? null),
-      catchError(() => of(null)),
-    );
+  private loadSourceThread(sourceID: string, threads: Chat[]): void {
+    this.chatService
+      .listChatsPage(1, 1, { ids: sourceID })
+      .pipe(
+        map(page => page.results?.find(chat => chat.id === sourceID) ?? null),
+        catchError(() => of(null)),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(source => this.ready(source ? [source, ...threads] : threads));
   }
 
-  private loadThreads(personalityId: string | null): Observable<Chat[]> {
-    const filters = personalityId ? { personality_id: personalityId } : undefined;
-    return this.chatService.listChatsPage(1, THREAD_PICKER_LIMIT, filters).pipe(
-      map(page => page.results ?? []),
-      catchError(() => of<Chat[]>([])),
-    );
+  private ready(threads: Chat[]): void {
+    this.threads.set(threads);
+    this.threadId.set(this.returnThread()?.id ?? null);
+    this.loading.set(false);
   }
 }

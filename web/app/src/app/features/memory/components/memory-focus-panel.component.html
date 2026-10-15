@@ -51,7 +51,7 @@
         <span class="focus-panel__scope-chip" [attr.data-level]="memory().level">{{ association() }}</span>
       }
       @if (!readOnly()) {
-        <button type="button" class="focus-panel__link-btn" [uiTooltip]="moveHint()" (click)="move.emit(memory().id)">
+        <button type="button" class="focus-panel__link-btn" [uiTooltip]="moveHint" (click)="move.emit(memory().id)">
           Move
         </button>
       }

@@ -8,7 +8,7 @@ import {
   GLOBAL_SCOPE_LABEL,
   isUserScopedMemoryLevel,
   levelDescription,
-  moveActionHint,
+  MOVE_ACTION_HINT,
   MemoryCardVm,
   VERIFIED_HINT,
 } from '../helpers/memory-vm.helpers';
@@ -58,7 +58,7 @@ export class MemoryCardComponent {
   readonly confidenceHint = CONFIDENCE_HINT;
   readonly verifiedHint = VERIFIED_HINT;
   readonly levelHint = computed(() => levelDescription(this.memory().level));
-  readonly moveHint = computed(() => moveActionHint(this.memory().level));
+  readonly moveHint = MOVE_ACTION_HINT;
 
   readonly editing = signal(false);
   readonly draft = signal('');

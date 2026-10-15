@@ -35,15 +35,10 @@ export interface MemoryCardVm {
   updatedAt: string;
 }
 
-export function toMemoryCardVm(
-  memory: Memory,
-  excerptLength: number = 220,
-  personalityNames: Record<string, string> = {},
-): MemoryCardVm {
+export function toMemoryCardVm(memory: Memory, excerptLength: number = 220, personalityNames: Record<string, string> = {}): MemoryCardVm {
   const pinnedPersonalityId = memory.pinned_personality_id ?? null;
-  const verifiedCount = memory.chain_metadata?.duplicate_count && memory.chain_metadata.duplicate_count > 1
-    ? memory.chain_metadata.duplicate_count
-    : null;
+  const verifiedCount =
+    memory.chain_metadata?.duplicate_count && memory.chain_metadata.duplicate_count > 1 ? memory.chain_metadata.duplicate_count : null;
   const confidencePercent = Math.round(Math.max(0, Math.min(1, memory.confidence)) * 100);
   return {
     id: memory.id,
@@ -106,12 +101,8 @@ export function levelDescription(level: Memory['level']): string {
   }
 }
 
-/** Tooltip for a memory's Move action: thread memories move beyond their thread, others between personalities or back. */
-export function moveActionHint(level: Memory['level']): string {
-  return level === 'thread'
-    ? 'Use this memory with a personality or everywhere'
-    : 'Change which personality can use this memory, or move it back to a thread';
-}
+/** Tooltip for a memory's Move action; every level can move to the same places. */
+export const MOVE_ACTION_HINT = 'Move this memory to global, a personality or a thread';
 
 /** Shared label for a merge event type (merge history, compaction log and focus panel). */
 export function mergeTypeLabel(type: MemoryMergeType): string {

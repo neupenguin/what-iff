@@ -1,4 +1,3 @@
-import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
@@ -6,7 +5,7 @@ import { of, throwError } from 'rxjs';
 import { Chat } from '../../../core/models/chat.model';
 import { Memory } from '../../../core/models/memory.model';
 import { ChatService } from '../../../core/services/chat.service';
-import { MemoryService } from '../../../core/services/memory.service';
+import { MemoryViewService } from '../../../core/services/memory-view.service';
 import { MemoryScopeDialogComponent } from './memory-scope-dialog.component';
 
 function chat(id: string, partial: Partial<Chat> = {}): Chat {
@@ -25,7 +24,7 @@ function memory(partial: Partial<Memory> = {}): Memory {
   return {
     id: 'm-1',
     content: 'Likes rain.',
-    level: 'thread',
+    level: 'global',
     type: 'Context',
     status: 'active',
     confidence: 0.6,
@@ -42,153 +41,126 @@ describe('MemoryScopeDialogComponent', () => {
   let fixture: ComponentFixture<MemoryScopeDialogComponent>;
   let component: MemoryScopeDialogComponent;
   let listChatsPage: ReturnType<typeof vi.fn>;
-  let moveMemoryScope: ReturnType<typeof vi.fn>;
+  let moveScope: ReturnType<typeof vi.fn>;
 
-  async function setup(mem: Memory, chats: { source?: Chat | null; threads?: Chat[] } = {}): Promise<void> {
+  /** threads: the picker listing; byID: what an explicit-id lookup finds (e.g. an archived source). */
+  async function setup(memories: Memory[], chats: { threads?: Chat[]; byID?: Chat[] } = {}): Promise<void> {
     TestBed.resetTestingModule();
     listChatsPage = vi.fn((_page: number, _limit: number, filters?: { ids?: string }) => {
-      const results = filters?.ids ? (chats.source ? [chats.source] : []) : (chats.threads ?? []);
+      const results = filters?.ids ? (chats.byID ?? []).filter(c => c.id === filters.ids) : (chats.threads ?? []);
       return of({ results, total_count: results.length, page: 1 });
     });
-    moveMemoryScope = vi.fn().mockReturnValue(of(memory({ level: 'global' })));
+    moveScope = vi.fn().mockReturnValue(of([]));
     await TestBed.configureTestingModule({
       imports: [MemoryScopeDialogComponent],
       providers: [
         provideZonelessChangeDetection(),
         { provide: ChatService, useValue: { listChatsPage } },
-        { provide: MemoryService, useValue: { moveMemoryScope } },
+        { provide: MemoryViewService, useValue: { moveScope } },
       ],
     }).compileComponents();
     fixture = TestBed.createComponent(MemoryScopeDialogComponent);
     component = fixture.componentInstance;
-    fixture.componentRef.setInput('memory', mem);
-    fixture.componentRef.setInput('personalities', [
-      { id: 'persona-a', label: 'Ada' },
-      { id: 'persona-b', label: 'Bo' },
-    ]);
+    fixture.componentRef.setInput('memories', memories);
     fixture.detectChanges();
   }
 
-  describe('a thread memory', () => {
-    it('offers global and its thread personality, and moves the record', async () => {
-      await setup(memory(), { source: chat('chat-src') });
-      const moved = vi.spyOn(component.moved, 'emit');
-
-      expect(component.personalityName()).toBe('Ada');
-      expect(component.canSubmit()).toBe(false);
-
-      component.promoteTo.set('personality');
-      component.submit();
-
-      expect(moveMemoryScope).toHaveBeenCalledWith('m-1', { level: 'personality', personality_id: 'persona-a' });
-      expect(moved).toHaveBeenCalled();
+  it('lists threads of every personality, unfiltered', async () => {
+    await setup([memory({ chat_id: undefined })], {
+      threads: [chat('chat-a'), chat('chat-b', { personality_id: 'persona-b', personality_name: 'Bo' })],
     });
 
-    it('offers only global when its thread has no personality', async () => {
-      await setup(memory(), { source: chat('chat-src', { personality_id: undefined }) });
-
-      expect(fixture.nativeElement.querySelector('input[value="personality"]')).toBeNull();
-      component.promoteTo.set('global');
-      component.submit();
-      expect(moveMemoryScope).toHaveBeenCalledWith('m-1', { level: 'global' });
-    });
-
-    it('does not list threads to pick from', async () => {
-      await setup(memory(), { source: chat('chat-src') });
-      expect(listChatsPage).toHaveBeenCalledTimes(1);
-    });
+    expect(listChatsPage).toHaveBeenCalledWith(1, 100);
+    expect(component.threadOptions().map(c => c.id)).toEqual(['chat-a', 'chat-b']);
+    expect(component.threadId()).toBeNull();
   });
 
-  describe('a promoted memory going back to a thread', () => {
-    const promoted = memory({ level: 'global' });
+  it('preselects and lists first the thread a single memory came from', async () => {
+    await setup([memory()], { threads: [chat('chat-a'), chat('chat-src')] });
 
-    it('preselects the thread it came from, and lets the user pick another of its personality', async () => {
-      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src'), chat('chat-other')] });
+    expect(component.threadOptions().map(c => c.id)).toEqual(['chat-src', 'chat-a']);
+    expect(component.threadId()).toBe('chat-src');
+    expect(fixture.nativeElement.textContent).toContain('It came from “Thread chat-src”');
+  });
 
-      expect(listChatsPage).toHaveBeenLastCalledWith(1, 100, { personality_id: 'persona-a' });
-      expect(component.threadId()).toBe('chat-src');
-      expect(component.threadOptions().map(c => c.id)).toEqual(['chat-src', 'chat-other']);
+  it('finds an archived source thread by id when the listing does not include it', async () => {
+    await setup([memory()], { threads: [chat('chat-a')], byID: [chat('chat-src', { archived: true } as Partial<Chat>)] });
 
-      component.threadId.set('chat-other');
-      component.submit();
-      expect(moveMemoryScope).toHaveBeenCalledWith('m-1', { level: 'thread', chat_id: 'chat-other' });
-    });
+    expect(listChatsPage).toHaveBeenCalledWith(1, 1, { ids: 'chat-src' });
+    expect(component.threadId()).toBe('chat-src');
+  });
 
-    it('preselects nothing when the source thread is gone', async () => {
-      await setup(promoted, { source: null, threads: [chat('chat-other')] });
+  it('does not offer a thread memory its own thread', async () => {
+    await setup([memory({ level: 'thread', chat_id: 'chat-src' })], { threads: [chat('chat-src'), chat('chat-a')] });
 
-      expect(component.threadId()).toBeNull();
-      expect(component.canSubmit()).toBe(false);
-      expect(fixture.nativeElement.querySelector('[role="note"]')?.textContent).toContain('gone');
-    });
+    expect(component.threadOptions().map(c => c.id)).toEqual(['chat-a']);
+    expect(component.threadId()).toBeNull();
+  });
 
-    it('preselects nothing, and lists every thread, when no source thread is recorded', async () => {
-      await setup(memory({ level: 'global', chat_id: undefined, chat_name: undefined }), { threads: [chat('chat-x')] });
+  it('offers a sandboxed thread only to a single memory that came from it', async () => {
+    const sandbox = (id: string) => chat(id, { context_scope: 'sandbox' });
+    await setup([memory({ chat_id: 'sb-src' })], { threads: [sandbox('sb-src'), sandbox('sb-other'), chat('chat-a')] });
+    expect(component.threadOptions().map(c => c.id)).toEqual(['sb-src', 'chat-a']);
 
-      expect(listChatsPage).toHaveBeenCalledTimes(1);
-      expect(listChatsPage).toHaveBeenCalledWith(1, 100, undefined);
-      expect(component.threadId()).toBeNull();
-      expect(component.canSubmit()).toBe(false);
-    });
+    await setup([memory({ id: 'm-1', chat_id: 'sb-src' }), memory({ id: 'm-2' })], { threads: [sandbox('sb-src'), chat('chat-a')] });
+    expect(component.threadOptions().map(c => c.id)).toEqual(['chat-a']);
+  });
 
-    it('stays within its pin: a source thread of another personality is not preselected', async () => {
-      await setup(memory({ level: 'personality', pinned_personality_id: 'persona-b' }), {
-        source: chat('chat-src'),
-        threads: [chat('chat-b', { personality_id: 'persona-b' })],
-      });
+  it('moves every memory to the chosen thread', async () => {
+    await setup([memory({ id: 'm-1' }), memory({ id: 'm-2', level: 'thread' })], { threads: [chat('chat-a')] });
+    const moved = vi.spyOn(component.moved, 'emit');
 
-      expect(listChatsPage).toHaveBeenLastCalledWith(1, 100, { personality_id: 'persona-b' });
-      expect(component.threadId()).toBeNull();
-      expect(component.threadOptions().map(c => c.id)).toEqual(['chat-b']);
-    });
+    expect(component.title()).toBe('Move 2 memories to a thread');
+    expect(component.canSubmit()).toBe(false);
+    component.threadId.set('chat-a');
+    component.submit();
 
-    it('leaves out sandboxed threads other than the source', async () => {
-      await setup(promoted, {
-        source: chat('chat-src', { context_scope: 'sandbox' }),
-        threads: [chat('chat-src', { context_scope: 'sandbox' }), chat('chat-sb', { context_scope: 'sandbox' })],
-      });
+    expect(moveScope).toHaveBeenCalledWith(['m-1', 'm-2'], { level: 'thread', chat_id: 'chat-a' });
+    expect(moved).toHaveBeenCalled();
+  });
 
-      expect(component.threadOptions().map(c => c.id)).toEqual(['chat-src']);
-    });
+  it('shows refusals and reports the moves that went through on close', async () => {
+    await setup([memory({ id: 'm-1' }), memory({ id: 'm-2' })], { threads: [chat('chat-a')] });
+    moveScope.mockReturnValue(of(['a sandboxed thread only takes back memories made in it']));
+    const moved = vi.spyOn(component.moved, 'emit');
+    const cancel = vi.spyOn(component.cancel, 'emit');
 
-    it('shows the server error and stays open when the move is refused', async () => {
-      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src')] });
-      moveMemoryScope.mockReturnValue(throwError(() => new Error('that thread belongs to a different personality')));
-      const moved = vi.spyOn(component.moved, 'emit');
+    component.threadId.set('chat-a');
+    component.submit();
+    fixture.detectChanges();
 
-      component.submit();
-      fixture.detectChanges();
+    expect(moved).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('Some memories could not be moved');
+    expect(component.canSubmit()).toBe(false);
 
-      expect(moved).not.toHaveBeenCalled();
-      expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('different personality');
-    });
+    component.close();
+    expect(moved).toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
 
-    it('reads the refusal reason off an HTTP error envelope', async () => {
-      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src')] });
-      moveMemoryScope.mockReturnValue(
-        throwError(
-          () =>
-            new HttpErrorResponse({
-              status: 409,
-              error: { code: 'conflict', message: 'a sandboxed thread only takes back its own memories' },
-            }),
-        ),
-      );
+  it('cancels when nothing moved', async () => {
+    await setup([memory()], { threads: [chat('chat-a')] });
+    moveScope.mockReturnValue(of(['nope']));
+    const cancel = vi.spyOn(component.cancel, 'emit');
 
-      component.submit();
-      fixture.detectChanges();
+    component.threadId.set('chat-a');
+    component.submit();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('Nothing was moved: nope');
 
-      expect(component.error()).toBe('a sandboxed thread only takes back its own memories');
-    });
+    component.close();
+    expect(cancel).toHaveBeenCalled();
+  });
 
-    it('falls back to generic copy when the failure has no envelope', async () => {
-      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src')] });
-      moveMemoryScope.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 502, error: '<html>Bad Gateway</html>' })));
+  it('recovers from a failure outside the per-memory requests', async () => {
+    await setup([memory()], { threads: [chat('chat-a')] });
+    moveScope.mockReturnValue(throwError(() => new Error('boom')));
 
-      component.submit();
-      fixture.detectChanges();
+    component.threadId.set('chat-a');
+    component.submit();
+    fixture.detectChanges();
 
-      expect(component.error()).toBe('Failed to move memory');
-    });
+    expect(component.saving()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('Failed to move memories');
   });
 });

@@ -188,11 +188,7 @@
         <span class="memories-list__bulk-count">{{ selectedCount() }} selected</span>
         <button
           type="button"
-          [uiTooltip]="
-            isThreadView()
-              ? 'Make the selected memories available outside their thread'
-              : 'Change which personality can use the selected memories'
-          "
+          uiTooltip="Move the selected memories to global, a personality or a thread"
           (click)="onMoveSelected()"
           [disabled]="mutating()"
         >
@@ -289,30 +285,20 @@
   <div class="memories-list__move-overlay" (click)="closeMoveMenu()">
     <div class="memories-list__move-menu" role="dialog" aria-label="Move memories" (click)="$event.stopPropagation()">
       <h2>Move to</h2>
-      @if (moveMode() === "promote") {
-        @if (moveErrors().length > 0) {
-          <p class="memories-list__move-error" role="alert">
-            Some memories could not be moved: {{ moveErrors()[0] }}
-            @if (moveErrors().length > 1) {
-              (and {{ moveErrors().length - 1 }} more)
-            }
-          </p>
-        } @else {
-          <button type="button" [disabled]="mutating()" (click)="promoteTo('global')">{{ globalScopeLabel }}</button>
-          @if (promoteThreads() === null) {
-            <p class="memories-list__move-loading">Loading personalities…</p>
-          } @else if (promotePersonality(); as personality) {
-            <button type="button" [disabled]="mutating()" (click)="promoteTo('personality')">{{ personality.label }}</button>
+      @if (moveErrors().length > 0) {
+        <p class="memories-list__move-error" role="alert">
+          {{ moveErrors().length === moveTargetIds().length ? "Nothing was moved" : "Some memories could not be moved" }}:
+          {{ moveErrors()[0] }}
+          @if (moveErrors().length > 1) {
+            (and {{ moveErrors().length - 1 }} more)
           }
-        }
+        </p>
       } @else {
-        <button type="button" (click)="moveToPersonality(null)">{{ globalScopeLabel }}</button>
+        <button type="button" [disabled]="mutating()" (click)="moveToPersonality(null)">{{ globalScopeLabel }}</button>
         @for (personality of personalities(); track personality.id) {
-          <button type="button" (click)="moveToPersonality(personality.id)">{{ personality.label }}</button>
+          <button type="button" [disabled]="mutating()" (click)="moveToPersonality(personality.id)">{{ personality.label }}</button>
         }
-        @if (moveTargetIds().length === 1) {
-          <button type="button" class="memories-list__move-thread" (click)="moveBackToThread()">Back to a thread…</button>
-        }
+        <button type="button" class="memories-list__move-thread" [disabled]="mutating()" (click)="moveToThread()">A thread…</button>
       }
       <button type="button" class="memories-list__move-cancel" (click)="closeMoveMenu()">
         {{ moveErrors().length > 0 ? "Close" : "Cancel" }}
@@ -321,13 +307,8 @@
   </div>
 }
 
-@if (scopeDialogMemory(); as scopeMemory) {
-  <app-memory-scope-dialog
-    [memory]="scopeMemory"
-    [personalities]="personalities()"
-    (moved)="onScopeMoved()"
-    (cancel)="closeScopeDialog()"
-  />
+@if (threadDialogMemories(); as threadMemories) {
+  <app-memory-scope-dialog [memories]="threadMemories" (moved)="onThreadMoved()" (cancel)="closeThreadDialog()" />
 }
 
 <app-delete-memory-modal
