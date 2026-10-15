@@ -82,7 +82,7 @@ const maxDownloadedImageBytes = 32 << 20
 // for vendors that answer with a URL, a download of the result.
 type imageHTTPClient struct {
 	client *http.Client
-	// retryDelays overrides defaultImageRetryDelays (tests).
+	// retryDelays overrides defaultImageRetryDelays and defaultDownloadRetryDelays (tests).
 	retryDelays []time.Duration
 }
 
@@ -194,26 +194,66 @@ func (c imageHTTPClient) download(ctx context.Context, rawURL string) (Generated
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return GeneratedImage{}, fmt.Errorf("download image: refusing non-https result URL")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	delays := c.downloadDelays()
+	for attempt := 0; ; attempt++ {
+		img, status, err := c.downloadOnce(ctx, u.String())
+		if err == nil {
+			return img, nil
+		}
+		if !downloadRetryable(status) || attempt >= len(delays) {
+			return GeneratedImage{}, err
+		}
+		timer := time.NewTimer(delays[attempt])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return GeneratedImage{}, fmt.Errorf("%w (gave up waiting: %w)", err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// defaultDownloadRetryDelays are the waits before re-fetching a result URL. z.ai answers with
+// the URL a moment before its file CDN serves it, so an immediate fetch can 404; a few seconds
+// of patience is enough.
+var defaultDownloadRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+
+func (c imageHTTPClient) downloadDelays() []time.Duration {
+	if c.retryDelays != nil {
+		return c.retryDelays
+	}
+	return defaultDownloadRetryDelays
+}
+
+// downloadRetryable reports whether a result-URL status may clear up on its own: not there
+// yet (404), rate limited, or a server error.
+func downloadRetryable(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusTooManyRequests || status >= 500
+}
+
+// downloadOnce fetches the image once, returning the HTTP status (0 when no response arrived).
+func (c imageHTTPClient) downloadOnce(ctx context.Context, rawURL string) (GeneratedImage, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return GeneratedImage{}, fmt.Errorf("build image download: %w", err)
+		return GeneratedImage{}, 0, fmt.Errorf("build image download: %w", err)
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return GeneratedImage{}, fmt.Errorf("download image: %w", err)
+		return GeneratedImage{}, 0, fmt.Errorf("download image: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return GeneratedImage{}, fmt.Errorf("download image: status %d", resp.StatusCode)
+		return GeneratedImage{}, resp.StatusCode, fmt.Errorf("download image: status %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadedImageBytes+1))
 	if err != nil {
-		return GeneratedImage{}, fmt.Errorf("download image: %w", err)
+		return GeneratedImage{}, resp.StatusCode, fmt.Errorf("download image: %w", err)
 	}
 	if len(data) > maxDownloadedImageBytes {
-		return GeneratedImage{}, fmt.Errorf("download image: larger than %d bytes", maxDownloadedImageBytes)
+		return GeneratedImage{}, resp.StatusCode, fmt.Errorf("download image: larger than %d bytes", maxDownloadedImageBytes)
 	}
-	return imageFromBytes(data)
+	img, err := imageFromBytes(data)
+	return img, resp.StatusCode, err
 }
 
 // imageFromBytes checks that data is an image and encodes it.

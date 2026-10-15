@@ -321,3 +321,34 @@ func TestImagePostJSONSurfacesCancellationDuringABackoff(t *testing.T) {
 	var apiErr *imageAPIError
 	require.True(t, errors.As(err, &apiErr), "the throttling that preceded it is kept for logs")
 }
+
+func TestImageDownloadWaitsForAResultThatIsNotThereYet(t *testing.T) {
+	pngBytes := testImageBytes(t, "png")
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(pngBytes)
+	}))
+	defer srv.Close()
+
+	img, err := imageHTTPClient{client: srv.Client(), retryDelays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}}.download(context.Background(), srv.URL+"/out.png")
+	require.NoError(t, err)
+	require.Equal(t, "image/png", img.MIMEType)
+	require.EqualValues(t, 3, calls.Load())
+}
+
+func TestImageDownloadGivesUpOnAPermanentFailure(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	_, err := imageHTTPClient{client: srv.Client(), retryDelays: []time.Duration{time.Millisecond}}.download(context.Background(), srv.URL)
+	require.ErrorContains(t, err, "status 403")
+	require.EqualValues(t, 1, calls.Load(), "a 403 is not retried")
+}
