@@ -1,0 +1,323 @@
+package accountkeys
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	entschema "entgo.io/ent/dialect/sql/schema"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+
+	"github.com/theimaginaryfoundation/what-iff/ent"
+	"github.com/theimaginaryfoundation/what-iff/ent/migrate"
+	"github.com/theimaginaryfoundation/what-iff/internal/apicontext"
+	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
+	"github.com/theimaginaryfoundation/what-iff/internal/models"
+)
+
+// prefixSealer stands in for the token key: reversible, and visibly not the key.
+type prefixSealer struct{ err error }
+
+func (s prefixSealer) EncryptToken(p string) (string, error) {
+	return "sealed:" + p, s.err
+}
+
+func (s prefixSealer) DecryptToken(c string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	return strings.TrimPrefix(c, "sealed:"), nil
+}
+
+type fixture struct {
+	keys       *Keys
+	db         *sql.DB
+	alice, bob uuid.UUID
+}
+
+func newFixture(t *testing.T, sealer Sealer) fixture {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+uuid.NewString()+"?mode=memory&cache=shared&_fk=1")
+	require.NoError(t, err)
+	for _, stmt := range []string{
+		`CREATE TABLE users (id uuid PRIMARY KEY)`,
+		`CREATE TABLE account_provider_keys (
+			id uuid PRIMARY KEY,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			user_id uuid NOT NULL,
+			provider text NOT NULL,
+			key text NOT NULL,
+			hint text NOT NULL DEFAULT '',
+			UNIQUE (user_id, provider),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+	} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+	f := fixture{db: db, alice: uuid.New(), bob: uuid.New()}
+	for _, id := range []uuid.UUID{f.alice, f.bob} {
+		_, err := db.Exec(`INSERT INTO users (id) VALUES (?)`, id)
+		require.NoError(t, err)
+	}
+	client := ent.NewClient(ent.Driver(entsql.OpenDB(dialect.SQLite, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	f.keys = New(client, sealer, zap.NewNop())
+	return f
+}
+
+func asUser(id uuid.UUID) context.Context {
+	return middleware.ContextWithUser(context.Background(), id, "")
+}
+
+// --- Storage
+
+func TestSet_StoresSealedAndAnswersWithTheKey(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+
+	summary, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "  sk-test-abcd1234  ")
+	require.NoError(t, err)
+	require.Equal(t, models.ModelProviderOpenAI, summary.Provider)
+	require.Equal(t, "1234", summary.Hint)
+
+	var stored string
+	require.NoError(t, f.db.QueryRow(`SELECT key FROM account_provider_keys`).Scan(&stored))
+	require.Equal(t, "sealed:sk-test-abcd1234", stored, "stored trimmed and sealed")
+	require.Equal(t, "sk-test-abcd1234", f.keys.Key(asUser(f.alice), models.ModelProviderOpenAI))
+}
+
+func TestSet_AgainReplacesTheKey(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	ctx := context.Background()
+
+	_, err := f.keys.Set(ctx, f.alice, models.ModelProviderOpenAI, "sk-first-key-1111")
+	require.NoError(t, err)
+	summary, err := f.keys.Set(ctx, f.alice, models.ModelProviderOpenAI, "sk-second-key-2222")
+	require.NoError(t, err)
+	require.Equal(t, "2222", summary.Hint)
+
+	require.Equal(t, "sk-second-key-2222", f.keys.Key(asUser(f.alice), models.ModelProviderOpenAI))
+	list, err := f.keys.List(ctx, f.alice)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+}
+
+func TestSet_Validation(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	ctx := context.Background()
+
+	_, err := f.keys.Set(ctx, f.alice, "acme", "sk-valid-key-0000")
+	require.ErrorIs(t, err, ErrUnknownProvider)
+
+	for name, key := range map[string]string{
+		"empty":        "   ",
+		"too short":    "sk-1234",
+		"inner space":  "sk-has a-space",
+		"inner tab":    "sk-has\ta-tab-00",
+		"inner return": "sk-line\nbreak-00",
+		"too long":     strings.Repeat("k", 513),
+	} {
+		_, err := f.keys.Set(ctx, f.alice, models.ModelProviderOpenAI, key)
+		require.ErrorIs(t, err, ErrInvalidKey, name)
+	}
+	list, err := f.keys.List(ctx, f.alice)
+	require.NoError(t, err)
+	require.Empty(t, list, "a rejected key is not stored")
+}
+
+func TestSet_SealerFailureStoresNothing(t *testing.T) {
+	f := newFixture(t, prefixSealer{err: errors.New("no token key")})
+
+	_, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "sk-test-abcd1234")
+	require.Error(t, err)
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM account_provider_keys`).Scan(&n))
+	require.Zero(t, n)
+}
+
+func TestList_IsPerAccountInProviderOrder(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	ctx := context.Background()
+	for _, p := range []models.ModelProvider{models.ModelProviderZAI, models.ModelProviderAnthropic, models.ModelProviderOpenAI} {
+		_, err := f.keys.Set(ctx, f.alice, p, "sk-key-for-"+string(p))
+		require.NoError(t, err)
+	}
+
+	list, err := f.keys.List(ctx, f.alice)
+	require.NoError(t, err)
+	var got []models.ModelProvider
+	for _, k := range list {
+		got = append(got, k.Provider)
+	}
+	require.Equal(t, []models.ModelProvider{models.ModelProviderAnthropic, models.ModelProviderOpenAI, models.ModelProviderZAI}, got)
+
+	list, err = f.keys.List(ctx, f.bob)
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
+func TestDelete(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	ctx := context.Background()
+	_, err := f.keys.Set(ctx, f.alice, models.ModelProviderAnthropic, "sk-ant-alice-9999")
+	require.NoError(t, err)
+
+	require.ErrorIs(t, f.keys.Delete(ctx, f.bob, models.ModelProviderAnthropic), ErrKeyNotFound, "another account's key is not found")
+	require.Equal(t, "sk-ant-alice-9999", f.keys.Key(asUser(f.alice), models.ModelProviderAnthropic))
+
+	require.NoError(t, f.keys.Delete(ctx, f.alice, models.ModelProviderAnthropic))
+	require.Empty(t, f.keys.Key(asUser(f.alice), models.ModelProviderAnthropic))
+	require.ErrorIs(t, f.keys.Delete(ctx, f.alice, models.ModelProviderAnthropic), ErrKeyNotFound)
+}
+
+// Deleting an account deletes its keys. The cascade is on this table's own
+// foreign key, so it comes from the generated migration, not the User schema.
+func TestKeysAreDeletedWithTheAccount(t *testing.T) {
+	fks := migrate.AccountProviderKeysTable.ForeignKeys
+	require.Len(t, fks, 1)
+	require.Equal(t, migrate.UsersTable, fks[0].RefTable)
+	require.Equal(t, entschema.Cascade, fks[0].OnDelete)
+
+	f := newFixture(t, prefixSealer{})
+	_, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "sk-test-abcd1234")
+	require.NoError(t, err)
+	_, err = f.db.Exec(`DELETE FROM users WHERE id = ?`, f.alice)
+	require.NoError(t, err)
+
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM account_provider_keys`).Scan(&n))
+	require.Zero(t, n)
+}
+
+// --- Resolver
+
+// One account's key is never another's answer.
+func TestKey_AnswersWithTheRequestingAccountsKey(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	ctx := context.Background()
+	_, err := f.keys.Set(ctx, f.alice, models.ModelProviderOpenAI, "sk-alice-key-1111")
+	require.NoError(t, err)
+	_, err = f.keys.Set(ctx, f.bob, models.ModelProviderOpenAI, "sk-bob-key-2222")
+	require.NoError(t, err)
+
+	require.Equal(t, "sk-alice-key-1111", f.keys.Key(asUser(f.alice), models.ModelProviderOpenAI))
+	require.Equal(t, "sk-bob-key-2222", f.keys.Key(asUser(f.bob), models.ModelProviderOpenAI))
+	require.Empty(t, f.keys.Key(asUser(f.alice), models.ModelProviderAnthropic))
+}
+
+// Background work records its account with apicontext alone where it cannot
+// import middleware; the resolver must still find it.
+func TestKey_ReadsAnAccountRecordedWithAPIContext(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	_, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "sk-alice-key-1111")
+	require.NoError(t, err)
+
+	require.Equal(t, "sk-alice-key-1111", f.keys.Key(apicontext.WithUserID(context.Background(), f.alice), models.ModelProviderOpenAI))
+}
+
+// A context naming no account gets no key, rather than somebody else's.
+func TestKey_NoAccountNoKey(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	_, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "sk-alice-key-1111")
+	require.NoError(t, err)
+
+	require.Empty(t, f.keys.Key(context.Background(), models.ModelProviderOpenAI))
+}
+
+func TestKey_UnreadableKeyIsNoKey(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	_, err := f.keys.Set(context.Background(), f.alice, models.ModelProviderOpenAI, "sk-alice-key-1111")
+	require.NoError(t, err)
+	f.keys.sealer = prefixSealer{err: errors.New("token key changed")}
+
+	require.Empty(t, f.keys.Key(asUser(f.alice), models.ModelProviderOpenAI))
+}
+
+// Which accounts have keys is only known per request, so every client is built.
+func TestConfigured_EveryProvider(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	for _, p := range models.ModelProviders {
+		require.True(t, f.keys.Configured(p), p)
+	}
+	require.True(t, f.keys.AccountsSupplyKeys())
+}
+
+// --- Routes
+
+// keyBody is a PUT body carrying key.
+func keyBody(key string) string {
+	b, _ := json.Marshal(map[string]string{"key": key})
+	return string(b)
+}
+
+func serve(t *testing.T, f fixture, userID *uuid.UUID, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	router := mux.NewRouter()
+	f.keys.RegisterRoutes(router)
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if userID != nil {
+		req = req.WithContext(middleware.ContextWithUser(req.Context(), *userID, ""))
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestRoutes_SetListDelete(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+
+	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", keyBody("sk-test-abcd1234"))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "sk-test", "the key is never sent back")
+
+	rec = serve(t, f, &f.alice, http.MethodGet, "/provider-keys", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var list []models.ProviderKeySummary
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Len(t, list, 1)
+	require.Equal(t, "1234", list[0].Hint)
+	require.NotContains(t, rec.Body.String(), "sk-test")
+
+	rec = serve(t, f, &f.alice, http.MethodDelete, "/provider-keys/openai", "")
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	rec = serve(t, f, &f.alice, http.MethodDelete, "/provider-keys/openai", "")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestRoutes_RejectBadInput(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+
+	rec := serve(t, f, &f.alice, http.MethodPut, "/provider-keys/acme", keyBody("sk-test-abcd1234"))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	rec = serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", `{"key":"short"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	rec = serve(t, f, &f.alice, http.MethodPut, "/provider-keys/openai", `not json`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestRoutes_RequireAnAccount(t *testing.T) {
+	f := newFixture(t, prefixSealer{})
+	for _, r := range []struct{ method, path, body string }{
+		{http.MethodGet, "/provider-keys", ""},
+		{http.MethodPut, "/provider-keys/openai", keyBody("sk-test-abcd1234")},
+		{http.MethodDelete, "/provider-keys/openai", ""},
+	} {
+		rec := serve(t, f, nil, r.method, r.path, r.body)
+		require.Equal(t, http.StatusUnauthorized, rec.Code, r.method)
+	}
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM account_provider_keys`).Scan(&n))
+	require.Zero(t, n)
+}

@@ -38,7 +38,8 @@ type CredentialRule struct {
 	BaseURL string
 	Style   CredentialStyle
 	// Resolve returns the credential to use for this request, or "" when the
-	// caller has none.
+	// caller has none. It is the only source of credentials for the rule's
+	// host: whatever the request already carried is dropped.
 	Resolve func(context.Context) string
 }
 
@@ -84,13 +85,17 @@ func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return base.RoundTrip(req)
 	}
 	key := rule.Resolve(req.Context())
-	if key == "" {
-		// Leave whatever the SDK set. The provider's own 401 is a better
-		// failure than a malformed empty credential.
-		return base.RoundTrip(req)
-	}
 	// RoundTrip must not modify the caller's request (net/http contract).
 	req = req.Clone(req.Context())
+	// The resolver is the only source of credentials. The SDKs fill these
+	// headers from the process environment when a client is built without a
+	// key, and that key belongs to the deployment, not to this caller.
+	req.Header.Del("Authorization")
+	req.Header.Del("x-api-key")
+	if key == "" {
+		// Sent without a credential: the provider's own 401 says so.
+		return base.RoundTrip(req)
+	}
 	switch rule.Style {
 	case AnthropicAPIKey:
 		req.Header.Set("x-api-key", key)
@@ -102,6 +107,11 @@ func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, erro
 
 // CredentialHTTPClient wraps base so every outgoing provider request carries
 // the right credential for the provider it is bound for.
+//
+// On a provider's host the resolver's answer always wins: any Authorization
+// or x-api-key already on the request, whether set by the SDK from the
+// environment or by the caller, is dropped, and an empty answer sends no
+// credential at all. Requests to other hosts are left untouched.
 //
 // base may be nil. When base has its own transport it is preserved — under a
 // non-vendor backend that is the deny-network transport, and dropping it would

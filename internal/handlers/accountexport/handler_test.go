@@ -7,10 +7,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -37,7 +41,7 @@ func TestNewHandlerUsesProvidedHTTPClient(t *testing.T) {
 		}, nil
 	})}
 
-	h := NewHandler(nil, zap.NewNop(), nil, nil, "test-key", httpClient, nil)
+	h := NewHandler(nil, zap.NewNop(), nil, nil, true, httpClient, nil)
 	require.NotNil(t, h.oaiClient)
 
 	got, err := h.createEmbeddings(context.Background(), []string{"a", "b"})
@@ -47,8 +51,27 @@ func TestNewHandlerUsesProvidedHTTPClient(t *testing.T) {
 }
 
 func TestNewHandlerWithoutKeyDisablesMemoryImport(t *testing.T) {
-	h := NewHandler(nil, zap.NewNop(), nil, nil, "", &http.Client{}, nil)
+	h := NewHandler(nil, zap.NewNop(), nil, nil, false, &http.Client{}, nil)
 	assert.Nil(t, h.oaiClient)
 	_, err := h.createEmbeddings(context.Background(), []string{"a"})
 	assert.ErrorIs(t, err, errMemoryImportUnavailable)
+}
+
+// An import runs after its request has ended, but still as the importing
+// account, so its embeddings use that account's provider key. It outlives the
+// request, not the server.
+func TestImportContextRunsAsTheImporterUntilShutdown(t *testing.T) {
+	lifecycle, shutdown := context.WithCancel(context.Background())
+	h := &Handler{lifecycleCtx: lifecycle, importTimeout: time.Hour}
+	owner := uuid.New()
+
+	ctx, cancel := h.importContext(owner)
+	defer cancel()
+
+	got, ok := middleware.GetUserIDFromContext(ctx)
+	require.True(t, ok)
+	assert.Equal(t, owner, got)
+
+	shutdown()
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
 }

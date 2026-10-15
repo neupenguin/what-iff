@@ -862,6 +862,113 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /provider-keys:
+    get:
+      summary: List the account's provider keys
+      description: Describes the model-provider API keys this account has stored. Keys are write-only; only the provider and the key's last four characters are returned. The provider-key routes are served only when the server takes keys from accounts; a deployment that supplies its own keys does not serve them.
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stored keys, in provider order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderKeySummary'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /provider-keys/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: The model provider
+        schema:
+          $ref: '#/components/schemas/ModelProvider'
+    put:
+      summary: Store the account's key for a provider
+      description: Stores the key, encrypted at rest, replacing any key already stored for this provider. The key is never returned.
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProviderKeyRequest'
+      responses:
+        '200':
+          description: Key stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderKeySummary'
+        '400':
+          description: Invalid request body, or a key that is not 8 to 512 characters without spaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Remove the account's key for a provider
+      tags: [Provider Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Key removed
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No key stored for this provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   # Role Management Endpoints
   /v1/roles:
     get:
@@ -8569,6 +8676,34 @@ components:
           format: uuid
           description: The user turn this job answers. Set by GET /chat/{chatId}/active-job.
 
+    ModelProvider:
+      type: string
+      description: A model provider.
+      enum: [openai, anthropic, zai, google, mistral, deepseek, qwen, xiaomi]
+    ProviderKeySummary:
+      type: object
+      description: A stored provider key, without the key.
+      required: [provider, hint, updated_at]
+      properties:
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        hint:
+          type: string
+          description: The key's last four characters.
+        updated_at:
+          type: string
+          format: date-time
+    SetProviderKeyRequest:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+          writeOnly: true
+          # The server trims surrounding whitespace, then requires 8 to 512
+          # characters with no whitespace; this pattern says the same.
+          pattern: '^\s*\S{8,512}\s*$'
+          description: The provider API key, 8 to 512 characters. Leading and trailing whitespace is trimmed; whitespace inside the key is rejected.
     WebhookToken:
       type: object
       properties:
@@ -10572,6 +10707,8 @@ components:
 tags:
   - name: System
     description: System health and status endpoints
+  - name: Provider Keys
+    description: An account's own model-provider API keys. Served only when the server takes keys from accounts.
   - name: Authentication
     description: User authentication and token management
   - name: User Management

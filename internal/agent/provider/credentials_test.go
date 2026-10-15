@@ -51,6 +51,19 @@ func TestCredentialHTTPClient_ChoosesCredentialByHost(t *testing.T) {
 	require.Empty(t, cap.last.Header.Get("Authorization"), "Anthropic takes its key in its own header")
 }
 
+// doWithHeaders sends a request already carrying headers, the way an SDK
+// client built without a key fills them from the process environment.
+func doWithHeaders(t *testing.T, c *http.Client, url string, headers map[string]string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	_, err = c.Do(req)
+	require.NoError(t, err)
+}
+
 // A host with no rule must be left exactly as the caller built it.
 func TestCredentialHTTPClient_LeavesUnknownHostsAlone(t *testing.T) {
 	t.Parallel()
@@ -59,20 +72,45 @@ func TestCredentialHTTPClient_LeavesUnknownHostsAlone(t *testing.T) {
 		{BaseURL: "https://api.openai.com/v1", Style: BearerAuthorization, Resolve: static("sk-openai")},
 	}, &http.Client{Transport: cap})
 
-	do(t, c, "https://example.invalid/whatever")
-	require.Empty(t, cap.last.Header.Get("Authorization"))
+	doWithHeaders(t, c, "https://example.invalid/whatever", map[string]string{"Authorization": "Bearer theirs"})
+	require.Equal(t, "Bearer theirs", cap.last.Header.Get("Authorization"))
 }
 
-// No credential is not an error. The provider's own 401 is a better failure
-// than a malformed empty header, and it must not inherit another provider's key.
-func TestCredentialHTTPClient_NoCredentialLeavesTheRequestUntouched(t *testing.T) {
+// With no credential for this caller the request goes out without one, even
+// when the SDK filled the header from the environment: that key is the
+// deployment's, and a caller without a key of its own must not spend it.
+func TestCredentialHTTPClient_NoCredentialSendsNone(t *testing.T) {
 	t.Parallel()
 	cap := &capturingTransport{}
 	c := CredentialHTTPClient([]CredentialRule{
 		{BaseURL: "https://api.openai.com/v1", Style: BearerAuthorization, Resolve: static("")},
+		{BaseURL: "https://api.anthropic.com", Style: AnthropicAPIKey, Resolve: static("")},
 	}, &http.Client{Transport: cap})
 
-	do(t, c, "https://api.openai.com/v1/responses")
+	doWithHeaders(t, c, "https://api.openai.com/v1/responses", map[string]string{"Authorization": "Bearer sk-from-env"})
+	require.Empty(t, cap.last.Header.Get("Authorization"))
+
+	doWithHeaders(t, c, "https://api.anthropic.com/v1/messages", map[string]string{
+		"x-api-key":     "sk-ant-from-env",
+		"Authorization": "Bearer token-from-env",
+	})
+	require.Empty(t, cap.last.Header.Get("x-api-key"))
+	require.Empty(t, cap.last.Header.Get("Authorization"))
+}
+
+// A resolved credential replaces whatever the SDK set, in either header.
+func TestCredentialHTTPClient_ResolvedCredentialReplacesTheSDKs(t *testing.T) {
+	t.Parallel()
+	cap := &capturingTransport{}
+	c := CredentialHTTPClient([]CredentialRule{
+		{BaseURL: "https://api.anthropic.com", Style: AnthropicAPIKey, Resolve: static("sk-account")},
+	}, &http.Client{Transport: cap})
+
+	doWithHeaders(t, c, "https://api.anthropic.com/v1/messages", map[string]string{
+		"x-api-key":     "sk-ant-from-env",
+		"Authorization": "Bearer token-from-env",
+	})
+	require.Equal(t, "sk-account", cap.last.Header.Get("x-api-key"))
 	require.Empty(t, cap.last.Header.Get("Authorization"))
 }
 

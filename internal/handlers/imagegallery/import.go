@@ -74,6 +74,7 @@ func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
 	handlerutils.UploadThumbnailFromPath(r.Context(), h.fileStore, h.logger, userID, createdAttachment.ID, tempFilePath)
 	handlerutils.TriggerAsyncFileChunking(
 		h.logger,
+		userID,
 		h.agent.ChunkPipeline(),
 		createdAttachment.ID,
 		tempFilePath,
