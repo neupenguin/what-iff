@@ -153,6 +153,11 @@ var fileTypes = map[string]FileTypeInfo{
 		Extension:     ".txt",
 		VectorSupport: true,
 	},
+	".webp": {
+		ContentType:   "image/webp",
+		Extension:     ".webp",
+		VectorSupport: false,
+	},
 	".xlsx": {
 		ContentType:   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		Extension:     ".xlsx",
