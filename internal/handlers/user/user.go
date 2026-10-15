@@ -45,6 +45,9 @@ type Handler struct {
 	// fileStore holds the user's uploads; account deletion removes users/{id}/ and exports/{id}/. Nil
 	// (no store configured) skips that cleanup.
 	fileStore storage.FileStore
+	// imageGenerationProviders lists the image vendors the caller holds a key for,
+	// reported with the user's preferences. Nil reports none.
+	imageGenerationProviders func(ctx context.Context) []string
 }
 
 // NewHandler creates a new Handler instance.
@@ -55,6 +58,13 @@ func NewHandler(store userStore, logger *zap.Logger, allowedEmails []string, env
 		allowedEmails: allowedEmails,
 		environment:   strings.ToLower(strings.TrimSpace(environment)),
 	}
+}
+
+// WithImageGenerationProviders sets how the image vendors reported as
+// image_generation_providers on the preferences responses are found for a request.
+func (h *Handler) WithImageGenerationProviders(providers func(ctx context.Context) []string) *Handler {
+	h.imageGenerationProviders = providers
+	return h
 }
 
 // WithFileStore sets the store DeleteUser purges the account's uploaded files from.

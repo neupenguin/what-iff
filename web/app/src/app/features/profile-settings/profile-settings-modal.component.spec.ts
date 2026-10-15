@@ -86,17 +86,21 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       updateUserPreferences: vi.fn().mockImplementation(updated => of(updated)),
     };
     const modelService = {
-      getModels: vi.fn().mockReturnValue(of([
-        { id: 'model-1', name: 'model-one', display_name: 'Model One', description: '', tool_support: true },
-        { id: 'model-2', name: 'model-two', display_name: 'Model Two', description: '', tool_support: true },
-      ])),
+      getModels: vi.fn().mockReturnValue(
+        of([
+          { id: 'model-1', name: 'model-one', display_name: 'Model One', description: '', tool_support: true },
+          { id: 'model-2', name: 'model-two', display_name: 'Model Two', description: '', tool_support: true },
+        ]),
+      ),
     };
     personalityService = {
-      listPersonalities: vi.fn().mockReturnValue(of({
-        results: [{ id: 'personality-1', name: 'Vera' }],
-        total_count: 1,
-        page: 1,
-      })),
+      listPersonalities: vi.fn().mockReturnValue(
+        of({
+          results: [{ id: 'personality-1', name: 'Vera' }],
+          total_count: 1,
+          page: 1,
+        }),
+      ),
     };
     router = { navigate: vi.fn().mockName('Router.navigate') };
 
@@ -172,12 +176,14 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
 
     await component.onDefaultModelChange('model-2');
 
-    expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      user_id: 'user-1',
-      default_model_id: 'model-2',
-      default_personality_id: 'personality-1',
-      favorite_model_ids: [],
-    }));
+    expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'user-1',
+        default_model_id: 'model-2',
+        default_personality_id: 'personality-1',
+        favorite_model_ids: [],
+      }),
+    );
   });
 
   it('clears the default personality by omitting it from the serialized update', async () => {
@@ -188,29 +194,33 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     await component.onDefaultPersonalityChange('');
 
     const update = preferencesService.updateUserPreferences.mock.calls.at(-1)?.[0];
-    expect(update).toEqual(expect.objectContaining({
-      user_id: 'user-1',
-      default_model_id: 'model-1',
-      favorite_model_ids: [],
-    }));
+    expect(update).toEqual(
+      expect.objectContaining({
+        user_id: 'user-1',
+        default_model_id: 'model-1',
+        favorite_model_ids: [],
+      }),
+    );
     expect(update).not.toHaveProperty('default_personality_id');
     expect(JSON.stringify(update)).not.toContain('default_personality_id');
   });
 
   it('loads every personality page for the default selector', async () => {
-    personalityService.listPersonalities.mockImplementation((page: number) => of(
-      page === 1
-        ? {
-            results: Array.from({ length: 100 }, (_, index) => ({ id: `personality-${index}`, name: `Personality ${index}` })),
-            total_count: 101,
-            page: 1,
-          }
-        : {
-            results: [{ id: 'personality-100', name: 'Personality 100' }],
-            total_count: 101,
-            page: 2,
-          },
-    ));
+    personalityService.listPersonalities.mockImplementation((page: number) =>
+      of(
+        page === 1
+          ? {
+              results: Array.from({ length: 100 }, (_, index) => ({ id: `personality-${index}`, name: `Personality ${index}` })),
+              total_count: 101,
+              page: 1,
+            }
+          : {
+              results: [{ id: 'personality-100', name: 'Personality 100' }],
+              total_count: 101,
+              page: 2,
+            },
+      ),
+    );
     const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
     const component = fixture.componentInstance;
 
@@ -241,12 +251,83 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/data']);
   });
 
+  describe('image generation', () => {
+    function withImageProviders(chosen: string, offered: string[]): void {
+      preferencesService.getUserPreferences.mockReturnValue(
+        of({
+          id: 'prefs-1',
+          user_id: 'user-1',
+          default_model_id: 'model-1',
+          default_personality_id: 'personality-1',
+          favorite_model_ids: [],
+          image_generation_provider: chosen,
+          image_generation_providers: offered,
+        }),
+      );
+    }
+
+    function imageSection(fixture: { nativeElement: HTMLElement }): HTMLElement | null {
+      return fixture.nativeElement.querySelector('[data-testid="image-generation"]');
+    }
+
+    it('is hidden when the deployment offers no choice of provider', async () => {
+      withImageProviders('openai', ['openai']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(imageSection(fixture)).toBeNull();
+    });
+
+    it('offers the configured providers with the stored pick selected', async () => {
+      withImageProviders('zai', ['openai', 'google', 'zai', 'qwen']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      const select = imageSection(fixture)?.querySelector('select') as HTMLSelectElement | null;
+      expect(select).not.toBeNull();
+      expect(Array.from(select!.options).map(o => o.textContent?.trim())).toEqual([
+        'OpenAI (GPT Image)',
+        'Google (Gemini image)',
+        'Z.ai (GLM-Image)',
+        'Qwen (Qwen-Image)',
+      ]);
+      expect(select!.value).toBe('zai');
+    });
+
+    it('shows the provider the server falls back to when the stored pick is not offered', async () => {
+      withImageProviders('qwen', ['google', 'zai']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      expect(fixture.componentInstance.imageGenerationProvider()).toBe('google');
+    });
+
+    it('saves a new provider without dropping other preferences', async () => {
+      withImageProviders('openai', ['openai', 'google']);
+      const fixture = TestBed.createComponent(ProfileSettingsModalComponent);
+      await openAndWaitForProfile(fixture);
+
+      await fixture.componentInstance.onImageGenerationProviderChange('google');
+
+      expect(preferencesService.updateUserPreferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          default_model_id: 'model-1',
+          default_personality_id: 'personality-1',
+          image_generation_provider: 'google',
+        }),
+      );
+      expect(fixture.componentInstance.imageGenerationProvider()).toBe('google');
+    });
+  });
+
   describe('timezone', () => {
     const timezoneInput = (fixture: ReturnType<typeof TestBed.createComponent<ProfileSettingsModalComponent>>) =>
       fixture.nativeElement.querySelector('select[formControlName="timezone"]') as HTMLSelectElement;
 
     const mockBrowserTimezone = (timeZone: string): void => {
-      vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ timeZone } as unknown as Intl.ResolvedDateTimeFormatOptions);
+      vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+        timeZone,
+      } as unknown as Intl.ResolvedDateTimeFormatOptions);
     };
 
     afterEach(() => {
@@ -272,7 +353,7 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       await openAndWaitForProfile(fixture);
 
       const select = timezoneInput(fixture);
-      const values = Array.from(select.options).map((option) => option.value);
+      const values = Array.from(select.options).map(option => option.value);
       expect(values).toContain('America/New_York');
       expect(values).toContain('UTC');
       expect(values).toContain('Legacy/Zone');
@@ -304,9 +385,7 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
       component.profileForm.patchValue({ first_name: 'Ada' });
       await component.saveProfile();
 
-      expect(authService.updateProfile).toHaveBeenCalledWith(
-        expect.objectContaining({ first_name: 'Ada', timezone: 'America/New_York' }),
-      );
+      expect(authService.updateProfile).toHaveBeenCalledWith(expect.objectContaining({ first_name: 'Ada', timezone: 'America/New_York' }));
     });
 
     it('offers nothing when the browser reports an unusable zone', async () => {
@@ -351,9 +430,7 @@ describe('ProfileSettingsModalComponent (open-source profile-only)', () => {
 
       await component.saveProfile();
 
-      expect(authService.updateProfile).toHaveBeenCalledWith(
-        expect.objectContaining({ timezone: 'Europe/Berlin' }),
-      );
+      expect(authService.updateProfile).toHaveBeenCalledWith(expect.objectContaining({ timezone: 'Europe/Berlin' }));
     });
 
     it('rejects an unknown timezone without calling the API', async () => {

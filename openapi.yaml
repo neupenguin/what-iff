@@ -7640,6 +7640,18 @@ components:
             an empty array means no favorites. Entries are not re-validated on read, so an
             ID may reference a model that has since been removed — clients should ignore
             IDs that do not match an available model rather than treating them as an error.
+        image_generation_provider:
+          $ref: '#/components/schemas/ImageGenerationProvider'
+        image_generation_providers:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/ImageGenerationProvider'
+          description: |
+            The image vendors the caller holds a key for (the deployment's, or the account's
+            own where accounts supply keys), in the order a settings UI should offer them. Read-only; ignored on update. When the stored
+            `image_generation_provider` is not in this list, image generation uses the first
+            entry instead.
       required:
         - id
         - user_id
@@ -7647,6 +7659,7 @@ components:
         - default_personality_id
         - theme
         - favorite_model_ids
+        - image_generation_provider
       example:
         id: "123e4567-e89b-12d3-a456-426614174000"
         user_id: "123e4567-e89b-12d3-a456-426614174001"
@@ -7656,6 +7669,16 @@ components:
         favorite_model_ids:
           - "123e4567-e89b-12d3-a456-426614174002"
           - "123e4567-e89b-12d3-a456-426614174004"
+        image_generation_provider: "openai"
+        image_generation_providers: ["openai", "google"]
+
+    ImageGenerationProvider:
+      type: string
+      enum: [openai, google, zai, qwen]
+      description: |
+        The vendor the generate_image tool and the image ritual call: OpenAI (GPT Image),
+        Google (Gemini image), z.ai (GLM-Image) or Qwen (Qwen-Image). Defaults to `openai`
+        for a user who never chose.
 
     UserPreferencesUpdateRequest:
       type: object
@@ -7703,6 +7726,14 @@ components:
             UUID, or that it resolves to a model the account can use. `format: uuid`
             describes the values the client is expected to send, not a constraint the API
             enforces. Unresolvable entries are inert — see the response schema.
+        image_generation_provider:
+          allOf:
+            - $ref: '#/components/schemas/ImageGenerationProvider'
+          description: |
+            The image vendor to use. Preserved when absent: omitting the field (or sending an
+            empty string) leaves the stored choice unchanged. Any value outside the enum is
+            rejected with 400. A vendor the caller has no key for is stored but
+            not used; see `image_generation_providers` on the response.
       required:
         - default_model_id
       example:

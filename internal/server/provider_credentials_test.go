@@ -38,11 +38,43 @@ func TestProviderEndpoints_FollowConfiguredBaseURLs(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{ZAIBaseURL: "https://llm-proxy.example/zai"}
 	byProvider := map[appmodels.ModelProvider]providerEndpoint{}
+	var scoped []providerEndpoint
 	for _, e := range cfg.providerEndpoints() {
+		if e.pathScoped {
+			scoped = append(scoped, e)
+			continue
+		}
 		byProvider[e.provider] = e
 	}
 
 	require.Equal(t, "https://llm-proxy.example/zai", byProvider[appmodels.ModelProviderZAI].baseURL)
 	require.Equal(t, provider.DefaultGeminiBaseURL, byProvider[appmodels.ModelProviderGoogle].baseURL, "unset base URLs fall back to the provider default")
 	require.Equal(t, provider.AnthropicAPIKey, byProvider[appmodels.ModelProviderZAI].style, "z.ai speaks the Anthropic Messages API")
+
+	require.Len(t, scoped, 1, "only Gemini's native API needs a path-scoped rule")
+	require.Equal(t, appmodels.ModelProviderGoogle, scoped[0].provider)
+	require.Equal(t, "https://generativelanguage.googleapis.com/v1beta/models", scoped[0].baseURL)
+	require.Equal(t, provider.GoogleAPIKey, scoped[0].style)
+}
+
+func TestProviderEndpoints_GeminiNativeFollowsConfiguredBaseURL(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{GeminiBaseURL: "https://gemini-proxy.example/v1beta/openai/"}
+	for _, e := range cfg.providerEndpoints() {
+		if e.pathScoped {
+			require.Equal(t, "https://gemini-proxy.example/v1beta/models", e.baseURL)
+			return
+		}
+	}
+	t.Fatal("no path-scoped Gemini endpoint")
+}
+
+func TestImageGenerationProviders_ListsOnlyConfiguredVendorsInOrder(t *testing.T) {
+	t.Parallel()
+	resolver := providerkeys.NewDeploymentResolver(map[appmodels.ModelProvider]string{
+		appmodels.ModelProviderQwen:     "q",
+		appmodels.ModelProviderOpenAI:   "o",
+		appmodels.ModelProviderDeepSeek: "d", // no image API
+	})
+	require.Equal(t, []string{"openai", "qwen"}, imageGenerationProviders(context.Background(), resolver))
 }

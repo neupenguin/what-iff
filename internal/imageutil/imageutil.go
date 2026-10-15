@@ -18,6 +18,7 @@ import (
 	"github.com/theimaginaryfoundation/what-iff/internal/storage"
 	"go.uber.org/zap"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp" // register WebP decoder: some image vendors return WebP
 )
 
 const (

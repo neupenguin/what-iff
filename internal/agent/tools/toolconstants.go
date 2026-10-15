@@ -188,7 +188,7 @@ var GenerateImageToolSpec = FunctionToolSpec{
 		},
 		"aspect_ratio": map[string]interface{}{
 			"type":        "string",
-			"description": "Image aspect ratio. square is 1024x1024, landscape is 1536x1024, portrait is 1024x1536. Defaults to square.",
+			"description": "Image aspect ratio: square (1:1), landscape (about 3:2) or portrait (about 2:3). Exact pixel sizes depend on the image provider. Defaults to square.",
 			"enum":        []string{"square", "landscape", "portrait"},
 		},
 		"filename_prefix": map[string]interface{}{

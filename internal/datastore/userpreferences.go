@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/theimaginaryfoundation/what-iff/ent"
 	"github.com/theimaginaryfoundation/what-iff/ent/user"
@@ -47,6 +48,11 @@ func toUserPreferencesModel(e *ent.UserPreference) *models.UserPreferences {
 		prefs.FavoriteModelIDs = e.FavoriteModelIds
 	} else {
 		prefs.FavoriteModelIDs = []string{}
+	}
+
+	prefs.ImageGenerationProvider = string(models.DefaultImageGenerationProvider)
+	if e.ImageGenerationProvider != nil {
+		prefs.ImageGenerationProvider = e.ImageGenerationProvider.String()
 	}
 
 	return &prefs
@@ -140,6 +146,20 @@ func (d *Datastore) UpdateUserPreferences(ctx context.Context, userID uuid.UUID,
 	// does not need the pointer treatment the scalar fields above would require.
 	if prefs.FavoriteModelIDs != nil {
 		update.SetFavoriteModelIds(prefs.FavoriteModelIDs)
+	}
+
+	// Absent ("") leaves the stored vendor alone, like theme. Unlike theme, an unknown
+	// value is refused rather than dropped: the caller is picking a vendor and should
+	// hear that the pick did not take.
+	if prefs.ImageGenerationProvider != "" {
+		p := userpreference.ImageGenerationProvider(prefs.ImageGenerationProvider)
+		if err := userpreference.ImageGenerationProviderValidator(p); err != nil {
+			if rerr := tx.Rollback(); rerr != nil {
+				d.logger.Error(i18n.T("tx.rollback_failed"), zap.Error(rerr))
+			}
+			return nil, fmt.Errorf("%w: unknown image_generation_provider %q", ErrInvalidRequestBody, prefs.ImageGenerationProvider)
+		}
+		update.SetImageGenerationProvider(p)
 	}
 
 	_, err = update.Save(ctx)

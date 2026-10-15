@@ -61,7 +61,7 @@ func (a *Agent) handleImageGenerateRitual(ctx context.Context, userID uuid.UUID,
 			CreatedAt: time.Now().Unix(),
 			Text:      prompt,
 		}
-		return a.saveImageRitualResult(ctx, userID, userMessage, prompt, mockRitualPNGBase64(), result)
+		return a.saveImageRitualResult(ctx, userID, userMessage, prompt, provider.GeneratedImage{Base64: mockRitualPNGBase64(), MIMEType: "image/png"}, result)
 	}
 
 	switch {
@@ -127,27 +127,30 @@ func (a *Agent) handleImageGenerateRitual(ctx context.Context, userID uuid.UUID,
 		return nil, nil, fmt.Errorf("empty image prompt from inference")
 	}
 
-	var imageB64 string
+	var image provider.GeneratedImage
 	var err error
 	if a.testHooks.ImageRitualGenerateImagePNG != nil {
-		imageB64, err = a.testHooks.ImageRitualGenerateImagePNG(ctx, prompt)
+		image.MIMEType = "image/png"
+		image.Base64, err = a.testHooks.ImageRitualGenerateImagePNG(ctx, prompt)
 	} else {
-		if a.OpenAIProvider == nil {
-			return nil, nil, fmt.Errorf("OpenAI provider is not configured for image generation")
+		var generator provider.ImageGenerator
+		generator, err = a.imageGeneratorForUser(ctx, userID)
+		if err == nil {
+			image, err = generator.GenerateImage(ctx, prompt, provider.ImageQualityLow, provider.ImageAspectRatioSquare)
 		}
-		imageB64, err = a.OpenAIProvider.GenerateImagePNGBase64(ctx, prompt)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate image: %w", err)
 	}
 
-	return a.saveImageRitualResult(ctx, userID, userMessage, prompt, imageB64, result)
+	return a.saveImageRitualResult(ctx, userID, userMessage, prompt, image, result)
 }
 
-// saveImageRitualResult persists the image-ritual assistant message and its PNG
+// saveImageRitualResult persists the image-ritual assistant message and its image
 // attachment. Shared by the real and mock ritual paths so both exercise the
 // same save pipeline.
-func (a *Agent) saveImageRitualResult(ctx context.Context, userID uuid.UUID, userMessage *models.ChatMessage, prompt, imageB64 string, result *provider.GenerateResponse) (*models.ChatMessage, *provider.GenerateResponse, error) {
+func (a *Agent) saveImageRitualResult(ctx context.Context, userID uuid.UUID, userMessage *models.ChatMessage, prompt string, image provider.GeneratedImage, result *provider.GenerateResponse) (*models.ChatMessage, *provider.GenerateResponse, error) {
+	imageB64 := image.Base64
 	toolCalls := []*models.ToolCall{
 		{
 			ToolName:   ImageGenerationToolName,
@@ -178,11 +181,12 @@ func (a *Agent) saveImageRitualResult(ctx context.Context, userID uuid.UUID, use
 	}
 
 	// Save image attachment.
-	imgName := fmt.Sprintf("image_%s.png", uuid.NewString())
+	fileType, ext := generatedImageFileType(image.MIMEType)
+	imgName := fmt.Sprintf("image_%s%s", uuid.NewString(), ext)
 	attachPayload := models.FileAttachment{
 		UserID:        userID,
 		Name:          imgName,
-		FileType:      "image/png",
+		FileType:      fileType,
 		ChatMessageID: &assistantMsg.ID,
 	}
 	var attachment *models.FileAttachment

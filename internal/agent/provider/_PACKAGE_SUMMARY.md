@@ -83,12 +83,16 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 | `BuildClaudeParams` | Anthropic `MessageNewParams`. |
 | `OpenAIAdapter` / `ClaudeAdapter` | Implements `AgentAdapter` for `agentloop`. |
 | `ClaudeFunctionTool` | Converts provider-neutral function specs into Anthropic tool params; selection stays in `internal/agent`. |
+| `ImageGenerator` / `GeneratedImage` | Vendor-neutral text-to-image: `GenerateImage(ctx, prompt, quality, aspect)` returns base64 plus the image's real MIME type (Gemini answers JPEG). |
+| `OpenAIProvider.ImageGenerator` / `GeminiImageGenerator` / `ZAIImageGenerator` / `QwenImageGenerator` | One adapter per vendor in `ImageGenerationProviders` (OpenAI first, the default).
+  OpenAI wraps the Images API path; Gemini calls native `generateContent` (`GeminiNativeBaseURL`); z.ai (`ZAIPaaSBaseURL`) and Qwen (`QwenNativeBaseURL`, DashScope sync) answer with a URL that is downloaded at once (https only) because it expires.
+  Each maps quality/aspect to its own sizes, retries 429/503 with a short backoff (`imageRetryDelays`), and turns its vendor's content refusal into a `SafetyViolationError`. |
 | `BuildOpenAITools` | Merges function tools; image tool when model supports it. |
 | `NewOpenAIProvider` / `NewClaudeProvider` | SDK clients; optional `*telemetry.Telemetry` (metrics + logger). All provider constructors take an optional `*http.Client` (nil = SDK default) so mock mode can inject the deny transport. |
 | `MockAdapter` / `NewMockAdapter` | In-process `AgentAdapter` fake for `LLM_BACKEND=mock` (echo/fixed/scripted modes, whitespace-preserving word-delta streaming, ctx cancellation). Built per request. |
 | `LocalProvider` / `LocalAdapter` | Real `AgentAdapter` for `LLM_BACKEND=local`: an OpenAI-compatible Chat Completions client pointed at a local server (Ollama default via `DefaultLocalBaseURL`; any compatible server via `LOCAL_LLM_BASE_URL`). Placeholder API key; non-streaming, mirrors the Mistral/DeepSeek adapter shape. |
 | `WithCallTimeouts` / `CallTimeouts` / `CallTimeoutError` | Wraps an `http.Client` so every provider HTTP attempt is bounded: `Request` until headers (and a non-streamed body), then `Stream` total and `StreamIdle` between bytes once a `text/event-stream` response starts. A fired limit surfaces as `CallTimeoutError`, which matches `context.DeadlineExceeded` (error.type `timeout`, not retried by `retryLLMCall`) and never `context.Canceled`, which the streaming paths read as a user stop. Defaults and their rationale are on `DefaultCallTimeouts`. |
-| `CredentialHTTPClient` / `CredentialRule` | Wraps an `http.Client` so each request carries its provider's credential, chosen by request host (from the base URL each client is built with) and set as `Authorization: Bearer` or `x-api-key`; the credential comes from a resolver function per request, it removes any `Authorization` or `x-api-key` the SDK set from the environment before setting its own, so an empty credential sends none, unknown hosts pass through untouched, and the base transport is preserved. |
+| `CredentialHTTPClient` / `CredentialRule` | Wraps an `http.Client` so each request carries its provider's credential, chosen by request host (from the base URL each client is built with) and set as `Authorization: Bearer`, `x-api-key` or `x-goog-api-key` (`GoogleAPIKey`); a `PathScoped` rule claims only requests under its base URL's path (whole segments, longest first) and the host's unscoped rule covers the rest, which is how Gemini's native image API and its OpenAI-compatible chat API share a host; the credential comes from a resolver function per request, it removes any `Authorization`, `x-api-key` or `x-goog-api-key` already on the request before setting its own, so an empty credential sends none, unknown hosts pass through untouched, and the base transport is preserved. |
 | `DenyNetworkHTTPClient` / `ErrNetworkDenied` | `http.Client` whose transport fails every request before egress; injected into all provider clients under mock mode ("no provider egress" guarantee). |
 
 ## Dependencies
@@ -163,6 +167,7 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 - `token_counter_test.go` — counting and carry-over selection.
 - `inference_metrics_test.go` — nil-safe usage recording.
 - `fileattachment_test.go`, `images_test.go` — helpers.
+- `image_generator_test.go` — each image adapter against a fake vendor (request shape, MIME, download, refusals), base-URL derivation, and the 429 retry.
 
 ## Related documentation
 

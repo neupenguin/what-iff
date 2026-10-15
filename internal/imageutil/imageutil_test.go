@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,28 @@ func TestNormalizeForUploadStreamsPNG(t *testing.T) {
 	require.Equal(t, "png", format)
 	require.Equal(t, 2048, normalized.Bounds().Dx())
 	require.Equal(t, 1024, normalized.Bounds().Dy())
+}
+
+// WebP uploads are accepted and stored as PNG like every other image, so
+// nothing downstream (thumbnails, vendors, gallery) ever sees a WebP upload.
+func TestNormalizeForUploadConvertsWebPToPNG(t *testing.T) {
+	t.Parallel()
+
+	webp, err := os.ReadFile("testdata/lossy.webp")
+	require.NoError(t, err)
+	src, format, err := image.Decode(bytes.NewReader(webp))
+	require.NoError(t, err, "the WebP decoder is registered")
+	require.Equal(t, "webp", format)
+
+	var output bytes.Buffer
+	fileName, err := NormalizeForUpload(bytes.NewReader(webp), &output, "sunset.webp", DefaultUploadImageMaxPx)
+	require.NoError(t, err)
+	require.Equal(t, "sunset.png", fileName)
+
+	normalized, format, err := image.Decode(&output)
+	require.NoError(t, err)
+	require.Equal(t, "png", format)
+	require.Equal(t, src.Bounds().Size(), normalized.Bounds().Size(), "small images keep their size")
 }
 
 func TestScaledDimensions(t *testing.T) {

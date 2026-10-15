@@ -399,6 +399,7 @@ func TestGenerateImageTool_BillsEachImageThroughTheMeter(t *testing.T) {
 		require.Equal(t, userID, u.UserID)
 		require.Equal(t, models.ActionTypeImageGeneration, u.ActionType)
 		require.Equal(t, "medium", u.ImageQuality)
+		require.Equal(t, "openai", u.ImageProvider)
 		require.Equal(t, chatID.String(), u.ChatID)
 		require.Equal(t, "tool", u.Metadata["path"])
 		require.Equal(t, i+1, u.Metadata["image_index"])
