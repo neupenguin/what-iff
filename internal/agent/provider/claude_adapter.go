@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"slices"
 	"strings"
 
@@ -195,6 +196,18 @@ func (a *ClaudeAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUse,
 
 	toolUses := extractClaudeToolUses(msg)
 	if len(toolUses) == 0 {
+		if msg != nil && msg.StopReason == anthropic.StopReasonToolUse {
+			// The model ended to call a tool but no tool_use block survived: the call is lost.
+			// It is still returned as the final answer rather than failing the turn (the text is
+			// the best reply there is); its StopReason stays "tool_use", which is the flag callers
+			// and the agent loop's per-round log see.
+			types := make([]string, 0, len(msg.Content))
+			for _, block := range msg.Content {
+				types = append(types, block.Type)
+			}
+			a.provider.zapLog().Warn("response stopped for tool use but carried no tool call",
+				zap.String("model", string(msg.Model)), zap.Strings("block_types", types))
+		}
 		return a.toGenerateResponse(msg), nil, nil
 	}
 
