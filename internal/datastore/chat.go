@@ -450,6 +450,9 @@ func (d *Datastore) UpdateChatContinuity(ctx context.Context, userID, chatID uui
 // typed while the first reply was generating. Like UpdateChatContinuity it writes nothing else.
 // It reports whether the name was written.
 func (d *Datastore) RenameChatIfNamed(ctx context.Context, userID, chatID uuid.UUID, name string, currentNames ...string) (bool, error) {
+	if len(currentNames) == 0 {
+		return false, nil
+	}
 	n, err := d.dbClient.Chat.Update().
 		Where(entchat.ID(chatID), entchat.HasOwnerWith(user.ID(userID)), entchat.NameIn(currentNames...)).
 		SetName(name).
