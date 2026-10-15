@@ -1,4 +1,5 @@
 import type { MockedObject } from 'vitest';
+import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject, of, throwError } from 'rxjs';
@@ -346,5 +347,41 @@ describe('MemoryViewService', () => {
     expect(service.associationFilterMode()).toBe('all');
     const filters = vi.mocked(memoryApi.getMemories).mock.lastCall?.[2];
     expect(filters?.global_only).toBeUndefined();
+  });
+  describe('moveScope', () => {
+    it('moves each memory through the scope endpoint and reports only the refusals', () => {
+      const moveMemoryScope = vi.fn((id: string) =>
+        id === 'm-2'
+          ? throwError(() => new HttpErrorResponse({ status: 409, error: { message: 'a thread summary stays with its thread' } }))
+          : of({} as Memory),
+      );
+      (memoryApi as unknown as { moveMemoryScope: typeof moveMemoryScope }).moveMemoryScope = moveMemoryScope;
+
+      let reasons: string[] | undefined;
+      service.moveScope(['m-1', 'm-2', 'm-3'], { level: 'global' }).subscribe(r => (reasons = r));
+
+      expect(moveMemoryScope.mock.calls.map(call => call[0])).toEqual(['m-1', 'm-2', 'm-3']);
+      expect(moveMemoryScope).toHaveBeenCalledWith('m-1', { level: 'global' });
+      expect(reasons).toEqual(['a thread summary stays with its thread']);
+      expect(service.mutating()).toBe(false);
+    });
+
+    it('is mutating while moves are in flight', () => {
+      const pending = new Subject<Memory>();
+      (memoryApi as unknown as { moveMemoryScope: () => Subject<Memory> }).moveMemoryScope = () => pending;
+
+      service.moveScope(['m-1'], { level: 'global' }).subscribe();
+      expect(service.mutating()).toBe(true);
+      pending.next({} as Memory);
+      pending.complete();
+      expect(service.mutating()).toBe(false);
+    });
+
+    it('does nothing for an empty selection', () => {
+      let reasons: string[] | undefined;
+      service.moveScope([], { level: 'global' }).subscribe(r => (reasons = r));
+      expect(reasons).toEqual([]);
+      expect(service.mutating()).toBe(false);
+    });
   });
 });

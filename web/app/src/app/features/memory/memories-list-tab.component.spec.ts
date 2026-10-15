@@ -4,6 +4,7 @@ import { ActivatedRoute, Params, Router } from '@angular/router';
 import { Observable, of, Subject, throwError } from 'rxjs';
 
 import { Memory, MemoryMergeEvent } from '../../core/models/memory.model';
+import { Chat } from '../../core/models/chat.model';
 import { ChatService } from '../../core/services/chat.service';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
@@ -96,6 +97,7 @@ function makeViewService(
     deleteSelected: vi.fn(),
     patchOne: vi.fn(),
     patchSelected: vi.fn(),
+    moveScope: vi.fn().mockReturnValue(of([])),
   };
 }
 
@@ -148,6 +150,8 @@ interface HarnessOptions {
   memoryService?: ReturnType<typeof makeMemoryService>;
   queryParams?: Observable<Params>;
   initialTab?: string | null;
+  /** Threads ChatService.listChatsPage returns (the promote menu looks up personalities). */
+  threads?: Chat[];
 }
 
 /**
@@ -189,7 +193,14 @@ async function createComponent(options: HarnessOptions = {}): Promise<{
       { provide: PersonalityService, useValue: personalityService },
       { provide: MemoryService, useValue: memoryService },
       // The scope dialog loads threads to pick from.
-      { provide: ChatService, useValue: { listChatsPage: vi.fn().mockReturnValue(of({ results: [], total_count: 0, page: 1 })) } },
+      {
+        provide: ChatService,
+        useValue: {
+          listChatsPage: vi
+            .fn()
+            .mockReturnValue(of({ results: options.threads ?? [], total_count: options.threads?.length ?? 0, page: 1 })),
+        },
+      },
       {
         provide: ActivatedRoute,
         useValue: {
@@ -323,7 +334,12 @@ describe('MemoriesListTabComponent bootstrap / ngOnInit', () => {
     const host = fixture.nativeElement as HTMLElement;
     const select = host.querySelectorAll('.memories-list__filters select')[0] as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
-    expect(options.map(o => o.textContent?.trim())).toEqual(['Any personality', 'Global (every personality)', PERSONALITY_A.name, PERSONALITY_B.name]);
+    expect(options.map(o => o.textContent?.trim())).toEqual([
+      'Any personality',
+      'Global (every personality)',
+      PERSONALITY_A.name,
+      PERSONALITY_B.name,
+    ]);
   });
 
   it('falls back to an empty personality list on load error', async () => {
@@ -704,16 +720,144 @@ describe('MemoriesListTabComponent selection and bulk toolbar', () => {
     expect(host.querySelector('.memories-list__bulk-count')?.textContent).toContain('1 selected');
   });
 
-  it('keeps Archive and Delete but hides Move in the Thread view', async () => {
+  it('offers Move, Archive and Delete in the Thread view', async () => {
     const view = makeViewService({ filters: { scope: 'chat' }, selectedIds: ['m-1'] });
     const { fixture } = await createComponent({ view });
     const buttons = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('.memories-list__bulk button'),
     ) as HTMLButtonElement[];
 
-    expect(buttons.some(button => button.textContent?.trim() === 'Move')).toBe(false);
+    expect(buttons.some(button => button.textContent?.trim() === 'Move')).toBe(true);
     expect(buttons.some(button => button.textContent?.trim() === 'Archive')).toBe(true);
     expect(buttons.some(button => button.textContent?.trim() === 'Delete')).toBe(true);
+  });
+
+  describe('Move in the Thread view', () => {
+    const threadMemory = (id: string, chatID: string): Memory => ({ ...SAMPLE_MEMORY, id, level: 'thread', chat_id: chatID });
+    const thread = (id: string, personalityID?: string, personalityName?: string): Chat =>
+      ({ id, name: `Thread ${id}`, personality_id: personalityID, personality_name: personalityName }) as Chat;
+
+    function menuButtons(fixture: ComponentFixture<MemoriesListTabComponent>): string[] {
+      fixture.detectChanges();
+      return Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('.memories-list__move-menu button')).map(
+        button => button.textContent?.trim() ?? '',
+      );
+    }
+
+    it("offers global and the threads' shared personality, by name", async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1', 't-2'],
+        memories: [threadMemory('t-1', 'chat-a'), threadMemory('t-2', 'chat-b')],
+      });
+      const { fixture, component } = await createComponent({
+        view,
+        personalities: [{ id: 'persona-a', name: 'Wren' } as Personality],
+        threads: [thread('chat-a', 'persona-a', 'Wren'), thread('chat-b', 'persona-a', 'Wren')],
+      });
+
+      component.onMoveSelected();
+
+      expect(component.moveMode()).toBe('promote');
+      expect(menuButtons(fixture)).toEqual(['Global (every personality)', 'Wren', 'Cancel']);
+      expect(menuButtons(fixture)).not.toContain('Back to a thread…');
+    });
+
+    it("says each thread's personality when the threads' personalities differ", async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1', 't-2'],
+        memories: [threadMemory('t-1', 'chat-a'), threadMemory('t-2', 'chat-b')],
+      });
+      const { fixture, component } = await createComponent({
+        view,
+        threads: [thread('chat-a', 'persona-a'), thread('chat-b', 'persona-b')],
+      });
+
+      component.onMoveSelected();
+
+      expect(menuButtons(fixture)).toContain("Each thread's personality");
+    });
+
+    it('offers only global when a thread has no personality', async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1'],
+        memories: [threadMemory('t-1', 'chat-a')],
+      });
+      const { fixture, component } = await createComponent({ view, threads: [thread('chat-a')] });
+
+      component.onMoveSelected();
+
+      expect(menuButtons(fixture)).toEqual(['Global (every personality)', 'Cancel']);
+    });
+
+    it('moves every selected memory through the scope endpoint, then reloads and closes', async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1', 't-2'],
+        memories: [threadMemory('t-1', 'chat-a'), threadMemory('t-2', 'chat-b')],
+      });
+      const { component } = await createComponent({
+        view,
+        threads: [thread('chat-a', 'persona-a'), thread('chat-b', 'persona-b')],
+      });
+
+      component.onMoveSelected();
+      component.promoteTo('global');
+      expect(view.moveScope).toHaveBeenCalledWith(['t-1', 't-2'], { level: 'global' });
+      expect(view.load).toHaveBeenCalledWith(1);
+      expect(component.moveMenuOpen()).toBe(false);
+
+      component.onMoveSelected();
+      component.promoteTo('personality');
+      // Mixed personalities: no id, so the server pins each to its own thread's personality.
+      expect(view.moveScope).toHaveBeenLastCalledWith(['t-1', 't-2'], { level: 'personality' });
+    });
+
+    it('pins to the shared personality by id', async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1'],
+        memories: [threadMemory('t-1', 'chat-a')],
+      });
+      const { component } = await createComponent({ view, threads: [thread('chat-a', 'persona-a')] });
+
+      component.onMoveSelected();
+      component.promoteTo('personality');
+
+      expect(view.moveScope).toHaveBeenCalledWith(['t-1'], { level: 'personality', personality_id: 'persona-a' });
+    });
+
+    it('keeps the menu open with the reason when some moves are refused', async () => {
+      const view = makeViewService({
+        filters: { scope: 'chat' },
+        selectedIds: ['t-1', 't-2'],
+        memories: [threadMemory('t-1', 'chat-a'), threadMemory('t-2', 'chat-b')],
+      });
+      view.moveScope.mockReturnValue(of(['a thread summary stays with its thread']));
+      const { fixture, component } = await createComponent({ view, threads: [thread('chat-a', 'p'), thread('chat-b', 'p')] });
+
+      component.onMoveSelected();
+      component.promoteTo('global');
+      fixture.detectChanges();
+
+      expect(component.moveMenuOpen()).toBe(true);
+      expect(view.load).toHaveBeenCalledWith(1);
+      const alert = (fixture.nativeElement as HTMLElement).querySelector('.memories-list__move-menu [role="alert"]');
+      expect(alert?.textContent).toContain('a thread summary stays with its thread');
+      expect(menuButtons(fixture)).toEqual(['Close']);
+    });
+
+    it('still opens the scope dialog from a single card', async () => {
+      const view = makeViewService({ filters: { scope: 'chat' }, memories: [threadMemory('t-1', 'chat-a')] });
+      const { component } = await createComponent({ view });
+
+      component.onMoveOne('t-1');
+
+      expect(component.scopeDialogMemory()?.id).toBe('t-1');
+      expect(component.moveMenuOpen()).toBe(false);
+    });
   });
 
   it('disables Move, Archive, and Delete while their operations are in-flight', async () => {
