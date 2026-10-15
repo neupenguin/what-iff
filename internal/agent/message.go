@@ -136,6 +136,9 @@ type Agent struct {
 	pushNotifier pushnotify.Notifier
 	// webSearch backs the first-party web search tools; nil when not configured (ADR 0x021).
 	webSearch *websearch.Service
+	// imageGenerators are the image vendors this deployment can call, keyed by
+	// vendor; the user's preference picks one (imageGeneratorForUser).
+	imageGenerators map[models.ModelProvider]provider.ImageGenerator
 	// pushEnabled is true when a real push implementation was wired (a non-nil
 	// PushNotifier). It lets the completion hook skip spawning a detached
 	// goroutine when push is off (the open-source default).
@@ -368,6 +371,8 @@ func NewAgent(ds *datastore.Datastore, logger *zap.Logger, tel *telemetry.Teleme
 	} else {
 		logger.Info("no Xiaomi MiMo credential configured; MiMo models will be unavailable")
 	}
+
+	a.imageGenerators = buildImageGenerators(cfg, a)
 
 	if a.localLLM {
 		// LocalProvider deliberately does NOT use cfg.HTTPClient: under

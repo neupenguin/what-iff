@@ -14,4 +14,14 @@ type UserPreferences struct {
 	// present in responses, so an empty list must serialize as [] rather than
 	// disappearing.
 	FavoriteModelIDs []string `json:"favorite_model_ids"`
+	// ImageGenerationProvider is the vendor the generate_image tool and image
+	// ritual call (a ModelProvider with an image generator). Responses always
+	// carry it, "openai" when the user never chose; on update "" leaves it alone.
+	ImageGenerationProvider string `json:"image_generation_provider"`
+	// ImageGenerationProviders is read-only: the vendors this deployment can
+	// generate images with, which is what the setting may be set to. Ignored on update.
+	ImageGenerationProviders []string `json:"image_generation_providers,omitempty"`
 }
+
+// DefaultImageGenerationProvider is the image vendor for a user who never chose one.
+const DefaultImageGenerationProvider = ModelProviderOpenAI

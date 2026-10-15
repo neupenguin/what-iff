@@ -27,6 +27,8 @@ type agentTestHooks struct {
 
 	// ChatTurnStore replaces the datastore behind the per-chat turn gate.
 	ChatTurnStore chatTurnStore
+	// ImageGenerationPreference replaces the read of the user's image vendor preference.
+	ImageGenerationPreference func(ctx context.Context, userID uuid.UUID) (models.ModelProvider, error)
 }
 
 func (h agentTestHooks) anySet() bool {
@@ -38,7 +40,8 @@ func (h agentTestHooks) anySet() bool {
 		h.ImageRitualCreateChatMessage != nil ||
 		h.ImageRitualCreateFileAttachment != nil ||
 		h.ImageRitualPersistImage != nil ||
-		h.ChatTurnStore != nil
+		h.ChatTurnStore != nil ||
+		h.ImageGenerationPreference != nil
 }
 
 // assertNoTestHooksInProduction panics if any test hook is set outside of `go test`.

@@ -10494,6 +10494,11 @@ export interface components {
          *       "favorite_model_ids": [
          *         "123e4567-e89b-12d3-a456-426614174002",
          *         "123e4567-e89b-12d3-a456-426614174004"
+         *       ],
+         *       "image_generation_provider": "openai",
+         *       "image_generation_providers": [
+         *         "openai",
+         *         "google"
          *       ]
          *     }
          */
@@ -10532,7 +10537,22 @@ export interface components {
              *     IDs that do not match an available model rather than treating them as an error.
              */
             favorite_model_ids: string[];
+            image_generation_provider: components["schemas"]["ImageGenerationProvider"];
+            /**
+             * @description The image vendors this deployment has credentials for, in the order a settings UI
+             *     should offer them. Read-only; ignored on update. When the stored
+             *     `image_generation_provider` is not in this list, image generation uses the first
+             *     entry instead.
+             */
+            readonly image_generation_providers?: components["schemas"]["ImageGenerationProvider"][];
         };
+        /**
+         * @description The vendor the generate_image tool and the image ritual call: OpenAI (GPT Image),
+         *     Google (Gemini image), z.ai (GLM-Image) or Qwen (Qwen-Image). Defaults to `openai`
+         *     for a user who never chose.
+         * @enum {string}
+         */
+        ImageGenerationProvider: "openai" | "google" | "zai" | "qwen";
         /**
          * @description The writable subset of user preferences.
          *
@@ -10584,6 +10604,13 @@ export interface components {
              *     enforces. Unresolvable entries are inert — see the response schema.
              */
             favorite_model_ids?: string[];
+            /**
+             * @description The image vendor to use. Preserved when absent: omitting the field (or sending an
+             *     empty string) leaves the stored choice unchanged. Any value outside the enum is
+             *     rejected with 400. A vendor this deployment has no credential for is stored but
+             *     not used; see `image_generation_providers` on the response.
+             */
+            image_generation_provider?: components["schemas"]["ImageGenerationProvider"];
         };
         /**
          * @example {

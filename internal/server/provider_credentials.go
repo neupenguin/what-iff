@@ -14,6 +14,9 @@ type providerEndpoint struct {
 	provider appmodels.ModelProvider
 	baseURL  string
 	style    provider.CredentialStyle
+	// pathScoped limits the endpoint to requests under baseURL's path; see
+	// provider.CredentialRule.PathScoped.
+	pathScoped bool
 }
 
 // providerEndpoints lists every provider the process can reach.
@@ -30,17 +33,20 @@ func (c *Config) providerEndpoints() []providerEndpoint {
 		return fallback
 	}
 	return []providerEndpoint{
-		{appmodels.ModelProviderOpenAI, provider.DefaultOpenAIBaseURL, provider.BearerAuthorization},
-		{appmodels.ModelProviderAnthropic, provider.DefaultAnthropicBaseURL, provider.AnthropicAPIKey},
+		{appmodels.ModelProviderOpenAI, provider.DefaultOpenAIBaseURL, provider.BearerAuthorization, false},
+		{appmodels.ModelProviderAnthropic, provider.DefaultAnthropicBaseURL, provider.AnthropicAPIKey, false},
 		// z.ai speaks the Anthropic Messages API, so it takes the Anthropic
 		// header with its own key — which is precisely why the rule has to be
 		// scoped to a host rather than to a wire format.
-		{appmodels.ModelProviderZAI, orDefault(c.ZAIBaseURL, provider.DefaultZAIBaseURL), provider.AnthropicAPIKey},
-		{appmodels.ModelProviderGoogle, orDefault(c.GeminiBaseURL, provider.DefaultGeminiBaseURL), provider.BearerAuthorization},
-		{appmodels.ModelProviderMistral, orDefault(c.MistralBaseURL, provider.DefaultMistralBaseURL), provider.BearerAuthorization},
-		{appmodels.ModelProviderDeepSeek, orDefault(c.DeepSeekBaseURL, provider.DefaultDeepSeekBaseURL), provider.BearerAuthorization},
-		{appmodels.ModelProviderQwen, orDefault(c.QwenBaseURL, provider.DefaultQwenBaseURL), provider.BearerAuthorization},
-		{appmodels.ModelProviderXiaomi, orDefault(c.XiaomiBaseURL, provider.DefaultXiaomiBaseURL), provider.BearerAuthorization},
+		{appmodels.ModelProviderZAI, orDefault(c.ZAIBaseURL, provider.DefaultZAIBaseURL), provider.AnthropicAPIKey, false},
+		{appmodels.ModelProviderGoogle, orDefault(c.GeminiBaseURL, provider.DefaultGeminiBaseURL), provider.BearerAuthorization, false},
+		// Gemini's native API (image generation) shares the host but takes the key
+		// as x-goog-api-key, and refuses a request that also carries it as Bearer.
+		{appmodels.ModelProviderGoogle, provider.GeminiNativeBaseURL(c.GeminiBaseURL) + "/models", provider.GoogleAPIKey, true},
+		{appmodels.ModelProviderMistral, orDefault(c.MistralBaseURL, provider.DefaultMistralBaseURL), provider.BearerAuthorization, false},
+		{appmodels.ModelProviderDeepSeek, orDefault(c.DeepSeekBaseURL, provider.DefaultDeepSeekBaseURL), provider.BearerAuthorization, false},
+		{appmodels.ModelProviderQwen, orDefault(c.QwenBaseURL, provider.DefaultQwenBaseURL), provider.BearerAuthorization, false},
+		{appmodels.ModelProviderXiaomi, orDefault(c.XiaomiBaseURL, provider.DefaultXiaomiBaseURL), provider.BearerAuthorization, false},
 	}
 }
 
@@ -64,10 +70,23 @@ func credentialRules(endpoints []providerEndpoint, resolver providerkeys.Resolve
 	rules := make([]provider.CredentialRule, 0, len(endpoints))
 	for _, e := range endpoints {
 		rules = append(rules, provider.CredentialRule{
-			BaseURL: e.baseURL,
-			Style:   e.style,
-			Resolve: func(ctx context.Context) string { return resolver.Key(ctx, e.provider) },
+			BaseURL:    e.baseURL,
+			Style:      e.style,
+			PathScoped: e.pathScoped,
+			Resolve:    func(ctx context.Context) string { return resolver.Key(ctx, e.provider) },
 		})
 	}
 	return rules
+}
+
+// imageGenerationProviders lists the image vendors this deployment has a
+// credential for, in the settings UI's order.
+func imageGenerationProviders(resolver providerkeys.Resolver) []string {
+	var out []string
+	for _, p := range provider.ImageGenerationProviders {
+		if resolver.Configured(p) {
+			out = append(out, string(p))
+		}
+	}
+	return out
 }

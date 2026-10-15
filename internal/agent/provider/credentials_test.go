@@ -123,3 +123,61 @@ func TestCredentialHTTPClient_PreservesTheBaseTransport(t *testing.T) {
 	require.ErrorIs(t, err, ErrNetworkDenied, "the refusal must come from the deny-network transport")
 	require.False(t, reached.Load(), "a request reached a server the deny-network transport should have blocked")
 }
+
+// Gemini serves its OpenAI-compatible API and its native API (image generation)
+// from one host, and the native API refuses a key sent as Bearer. A path-scoped
+// rule takes the native paths; the host's unscoped rule keeps everything else.
+func TestCredentialHTTPClient_PathScopedRuleClaimsItsPaths(t *testing.T) {
+	t.Parallel()
+	cap := &capturingTransport{}
+	c := CredentialHTTPClient([]CredentialRule{
+		{BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", Style: BearerAuthorization, Resolve: static("g-key")},
+		{BaseURL: "https://generativelanguage.googleapis.com/v1beta/models", Style: GoogleAPIKey, PathScoped: true, Resolve: static("g-key")},
+	}, &http.Client{Transport: cap})
+
+	do(t, c, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent")
+	require.Equal(t, "g-key", cap.last.Header.Get("x-goog-api-key"))
+	require.Empty(t, cap.last.Header.Get("Authorization"), "Google answers 401 when the key also arrives as Bearer")
+
+	do(t, c, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+	require.Equal(t, "Bearer g-key", cap.last.Header.Get("Authorization"))
+	require.Empty(t, cap.last.Header.Get("x-goog-api-key"))
+
+	do(t, c, "https://generativelanguage.googleapis.com/v1beta/files")
+	require.Equal(t, "Bearer g-key", cap.last.Header.Get("Authorization"), "paths no scoped rule claims use the host's rule")
+
+	do(t, c, "https://generativelanguage.googleapis.com/v1beta/modelsx")
+	require.Equal(t, "Bearer g-key", cap.last.Header.Get("Authorization"), "a scope matches whole path segments only")
+}
+
+// The GoogleAPIKey style also strips a Bearer header the SDK set itself.
+func TestCredentialHTTPClient_GoogleAPIKeyDropsAuthorization(t *testing.T) {
+	t.Parallel()
+	cap := &capturingTransport{}
+	c := CredentialHTTPClient([]CredentialRule{
+		{BaseURL: "https://generativelanguage.googleapis.com/v1beta/models", Style: GoogleAPIKey, PathScoped: true, Resolve: static("g-key")},
+	}, &http.Client{Transport: cap})
+
+	req, err := http.NewRequest(http.MethodPost, "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer stale")
+	_, err = c.Do(req)
+	require.NoError(t, err)
+	require.Empty(t, cap.last.Header.Get("Authorization"))
+	require.Equal(t, "g-key", cap.last.Header.Get("x-goog-api-key"))
+	require.Equal(t, "Bearer stale", req.Header.Get("Authorization"), "the caller's request is not modified")
+}
+
+// A host with only a scoped rule leaves requests outside the scope alone.
+func TestCredentialHTTPClient_ScopedRuleWithoutFallback(t *testing.T) {
+	t.Parallel()
+	cap := &capturingTransport{}
+	c := CredentialHTTPClient([]CredentialRule{
+		{BaseURL: "https://img.example/api/images", Style: BearerAuthorization, PathScoped: true, Resolve: static("k")},
+	}, &http.Client{Transport: cap})
+
+	do(t, c, "https://img.example/api/other")
+	require.Empty(t, cap.last.Header.Get("Authorization"))
+	do(t, c, "https://img.example/api/images/generate")
+	require.Equal(t, "Bearer k", cap.last.Header.Get("Authorization"))
+}

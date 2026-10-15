@@ -2,6 +2,7 @@ package user
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/datastore"
@@ -24,7 +25,7 @@ func (h *Handler) GetUserPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, prefs)
+	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(prefs))
 }
 
 func (h *Handler) UpdateUserPreferences(w http.ResponseWriter, r *http.Request) {
@@ -48,10 +49,23 @@ func (h *Handler) UpdateUserPreferences(w http.ResponseWriter, r *http.Request) 
 		handlerutils.RespondWithError(w, h.logger, http.StatusForbidden, handlerutils.CodeNotSet, "Experimental models are not enabled for this account", nil)
 		return
 	}
+	if errors.Is(err, datastore.ErrInvalidRequestBody) {
+		handlerutils.RespondWithError(w, h.logger, http.StatusBadRequest, handlerutils.CodeNotSet, err.Error(), err)
+		return
+	}
 	if err != nil {
 		handlerutils.RespondWithError(w, h.logger, http.StatusInternalServerError, handlerutils.CodeNotSet, "Error updating user preferences", err)
 		return
 	}
 
-	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, prefs)
+	handlerutils.RespondWithJSON(w, h.logger, http.StatusOK, h.withImageGenerationProviders(prefs))
+}
+
+// withImageGenerationProviders adds the deployment's image vendors, which the
+// settings UI offers as the choices for image_generation_provider.
+func (h *Handler) withImageGenerationProviders(prefs *models.UserPreferences) *models.UserPreferences {
+	if prefs != nil && len(h.imageGenerationProviders) > 0 {
+		prefs.ImageGenerationProviders = append([]string(nil), h.imageGenerationProviders...)
+	}
+	return prefs
 }
