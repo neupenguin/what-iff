@@ -955,39 +955,24 @@
     </div>
   }
 
-  @if (!collapsed()) {
-    <div class="app-sidebar__footer-search">
-      <button
-        type="button"
-        class="app-sidebar__palette-launcher"
-        aria-label="Open command palette"
-        aria-keyshortcuts="Meta+K Control+K"
-        uiTooltip="Search threads, personalities, skills, memories and images"
-        placement="top"
-        (click)="openPalette()"
-      >
-        <ui-search-icon [size]="12" />
-        <span class="app-sidebar__palette-launcher-label">Search…</span>
-        <span class="app-sidebar__palette-launcher-shortcut" aria-hidden="true">⌘K</span>
-      </button>
-    </div>
-  }
-
-  <div class="app-sidebar__collapse-handle">
-    <button
-      type="button"
-      class="app-sidebar__icon-btn app-sidebar__edge-toggle"
-      [attr.aria-label]="collapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
-      [attr.aria-expanded]="!collapsed()"
-      [uiTooltip]="collapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
-      placement="right"
-      (click)="toggleCollapsed()"
-    >
-      @if (collapsed()) {
-        <ui-arrow-right-icon [size]="14" />
-      } @else {
-        <ui-arrow-left-icon [size]="14" />
-      }
-    </button>
+  <div class="app-sidebar__footer">
+    @if (!collapsed()) {
+      <div class="app-sidebar__footer-search">
+        <button
+          type="button"
+          class="app-sidebar__palette-launcher"
+          aria-label="Open command palette"
+          aria-keyshortcuts="Meta+K Control+K"
+          uiTooltip="Search threads, personalities, skills, memories and images"
+          placement="top"
+          (click)="openPalette()"
+        >
+          <ui-search-icon [size]="12" />
+          <span class="app-sidebar__palette-launcher-label">Search…</span>
+          <span class="app-sidebar__palette-launcher-shortcut" aria-hidden="true">⌘K</span>
+        </button>
+      </div>
+    }
+    <app-sidebar-profile [collapsed]="collapsed()" />
   </div>
 </aside>

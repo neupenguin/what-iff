@@ -18,7 +18,7 @@
   margin: 0 auto;
 }
 
-.app-sidebar-header--collapsed .app-sidebar-header__profile-trigger {
+.app-sidebar-header--collapsed .app-sidebar-header__collapse-toggle {
   order: 1;
 }
 
@@ -63,7 +63,7 @@
 }
 
 .app-sidebar-header__help-trigger,
-.app-sidebar-header__profile-trigger {
+.app-sidebar-header__collapse-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -86,9 +86,17 @@
   }
 }
 
+/* Mobile (AppLayoutComponent: desktop starts at 1024px) opens and closes the drawer from the
+   layout's menu button and backdrop, so the desktop toggle is not offered there. */
+@media (max-width: 1023px) {
+  .app-sidebar-header__collapse-toggle {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar-header__help-trigger,
-  .app-sidebar-header__profile-trigger {
+  .app-sidebar-header__collapse-toggle {
     transition: none;
   }
 }

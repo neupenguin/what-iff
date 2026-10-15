@@ -18,6 +18,7 @@ import { PersonalityChange, PersonalityService } from '../../core/services/perso
 import { RitualViewService } from '../../core/services/ritual-view.service';
 import { ThreadListService } from '../../core/services/thread-list.service';
 import { ContextPanelService } from '../../features/chat/services/context-panel.service';
+import { ProfileSettingsModalService } from '../../features/profile-settings/profile-settings-modal.service';
 import { AppSidebarComponent } from './app-sidebar.component';
 
 describe('AppSidebarComponent', () => {
@@ -31,18 +32,20 @@ describe('AppSidebarComponent', () => {
     let router: Router;
     let routerUrlSpy: Mock;
     let navMode: 'app' | 'config';
+    let navCollapsed: boolean;
     let confirmationSpy: Pick<MockedObject<ConfirmationService>, 'confirm'>;
     let personalityService: { listPersonalities: Mock; changes$: Subject<PersonalityChange> };
 
     beforeEach(async () => {
         navMode = 'app';
+        navCollapsed = false;
 
         navSpy = {
             setMode: vi.fn().mockName("NavService.setMode"),
             toggleCollapsed: vi.fn().mockName("NavService.toggleCollapsed"),
             setCollapsed: vi.fn().mockName("NavService.setCollapsed"),
             mode: (() => navMode) as any,
-            collapsed: (() => false) as any
+            collapsed: (() => navCollapsed) as any
         } as unknown as Pick<MockedObject<NavService>, 'setMode' | 'toggleCollapsed' | 'setCollapsed' | 'mode' | 'collapsed'>;
 
         paletteSpy = {
@@ -189,15 +192,17 @@ describe('AppSidebarComponent', () => {
     }
 
     // A private build swaps nav-actions-outlet for its own action (a release-notes
-    // bell); the slot must sit between help and profile, and take no space while
-    // it is empty (the open-source stub). This spec also runs in the composed
-    // private build, where the slot is filled, so "hidden" is only asserted empty.
-    it('mounts the nav actions outlet between help and profile, hidden while empty', () => {
+    // bell); the slot must sit between help and the collapse toggle, and take no
+    // space while it is empty (the open-source stub). This spec also runs in the
+    // composed private build, where the slot is filled, so "hidden" is only
+    // asserted empty.
+    it('mounts the nav actions outlet between help and the collapse toggle, hidden while empty', () => {
         const fixture = create();
         const actions = fixture.nativeElement.querySelector('.app-sidebar-header__actions') as HTMLElement;
         const order = Array.from(actions.children).map(el =>
-            el.tagName.toLowerCase() === 'app-nav-actions-outlet' ? 'outlet' : el.className.includes('help') ? 'help' : 'profile');
-        expect(order).toEqual(['help', 'outlet', 'profile']);
+            el.tagName.toLowerCase() === 'app-nav-actions-outlet' ? 'outlet' : el.className.includes('help') ? 'help'
+                : el.className.includes('collapse-toggle') ? 'collapse' : el.className);
+        expect(order).toEqual(['help', 'outlet', 'collapse']);
         const outlet = actions.querySelector('app-nav-actions-outlet') as HTMLElement;
         if (outlet.childElementCount === 0) {
             expect(getComputedStyle(outlet).display).toBe('none');
@@ -235,12 +240,56 @@ describe('AppSidebarComponent', () => {
         expect(navSpy.setMode).toHaveBeenCalledWith('config');
     });
 
-    it('the collapse button still toggles collapsed state', () => {
+    it('the header panel toggle collapses the sidebar, replacing the mid-edge handle', () => {
         const fixture = create();
-        const collapse = fixture.nativeElement.querySelector('.app-sidebar__collapse-handle button') as HTMLButtonElement;
+        expect(fixture.nativeElement.querySelector('.app-sidebar__collapse-handle')).toBeNull();
+        const collapse = fixture.nativeElement.querySelector('.app-sidebar-header__collapse-toggle') as HTMLButtonElement;
+        expect(collapse.getAttribute('aria-label')).toBe('Collapse sidebar');
         expect(collapse.getAttribute('aria-expanded')).toBe('true');
         collapse.click();
         expect(navSpy.toggleCollapsed).toHaveBeenCalled();
+    });
+
+    it('labels the header panel toggle "Expand sidebar" and keeps it first on the collapsed rail', () => {
+        navCollapsed = true;
+        const fixture = create();
+        const collapse = fixture.nativeElement.querySelector('.app-sidebar-header__collapse-toggle') as HTMLButtonElement;
+        expect(collapse.getAttribute('aria-label')).toBe('Expand sidebar');
+        expect(collapse.getAttribute('aria-expanded')).toBe('false');
+        expect(fixture.nativeElement.querySelector('app-nav-actions-outlet')).not.toBeNull();
+    });
+
+    it('moves the profile trigger out of the header into the footer, below Search', () => {
+        const fixture = create();
+        const header = fixture.nativeElement.querySelector('app-sidebar-header') as HTMLElement;
+        expect(header.querySelector('[aria-label^="Open profile for"]')).toBeNull();
+
+        const footer = fixture.nativeElement.querySelector('.app-sidebar__footer') as HTMLElement;
+        const children = Array.from(footer.children).map(el => el.className || el.tagName.toLowerCase());
+        expect(children).toEqual(['app-sidebar__footer-search', 'app-sidebar-profile']);
+
+        const profile = footer.querySelector('button[aria-label="Open profile for jane"]') as HTMLButtonElement;
+        expect(profile.textContent?.trim()).toBe('jane');
+    });
+
+    it('opens the profile modal from the footer without touching the collapsed state', () => {
+        const modal = TestBed.inject(ProfileSettingsModalService);
+        const open = vi.spyOn(modal, 'open').mockImplementation(() => undefined);
+        const fixture = create();
+        (fixture.nativeElement.querySelector('.app-sidebar-profile') as HTMLButtonElement).click();
+        expect(open).toHaveBeenCalledWith('profile');
+        expect(navSpy.setCollapsed).not.toHaveBeenCalled();
+        expect(navSpy.toggleCollapsed).not.toHaveBeenCalled();
+    });
+
+    it('keeps an icon-only profile trigger on the collapsed rail', () => {
+        navCollapsed = true;
+        const fixture = create();
+        expect(fixture.nativeElement.querySelector('.app-sidebar__footer-search')).toBeNull();
+        const profile = fixture.nativeElement.querySelector('.app-sidebar-profile') as HTMLButtonElement;
+        expect(profile.classList).toContain('app-sidebar-profile--collapsed');
+        expect(profile.getAttribute('aria-label')).toBe('Open profile for jane');
+        expect(profile.querySelector('.app-sidebar-profile__name')).toBeNull();
     });
 
     it('renders starred threads and allows unstar-all after confirmation', async () => {

@@ -21,7 +21,6 @@ import { ModeViewService } from '../../core/services/mode-view.service';
 import { RitualViewService } from '../../core/services/ritual-view.service';
 import {
   ArrowLeftIconComponent,
-  ArrowRightIconComponent,
   GearIconComponent,
   PlusIconComponent,
   SearchIconComponent,
@@ -36,6 +35,7 @@ import { personalityAccent, personalityAccentSurface } from '../../features/pers
 import { AvatarComponent } from '../../shared/ui/avatar/avatar.component';
 import { PersonaAccentScopeComponent } from '../../features/personality/picker/persona-accent-scope.component';
 import { AppSidebarHeaderComponent } from './app-sidebar-header.component';
+import { AppSidebarProfileComponent } from './app-sidebar-profile.component';
 import { APP_MODE_HINT, CONFIG_MODE_HINT, appNavItems, configNavItems, NavItem, navTooltip } from './nav.helpers';
 
 const PORTRAIT_SOURCE_WIDTH = 200;
@@ -55,8 +55,9 @@ const SIDEBAR_LONG_PRESS_CLICK_WINDOW_MS = 700;
 const SIDEBAR_MOBILE_QUERY = '(max-width: 1023px)';
 
 /**
- * Concept-D dual-sidebar shell. Composes the header, the active nav list, the
- * mode-switch gear, the collapse toggle, and the palette launcher row. Mode
+ * Concept-D dual-sidebar shell. Composes the header (with the collapse toggle),
+ * the active nav list, the mode-switch gear, and the footer (palette launcher
+ * and profile). Mode
  * is route-derived (see {@link NavService}); this component is presentation
  * only.
  */
@@ -72,8 +73,8 @@ const SIDEBAR_MOBILE_QUERY = '(max-width: 1023px)';
     PersonaAccentScopeComponent,
     NgComponentOutlet,
     AppSidebarHeaderComponent,
+    AppSidebarProfileComponent,
     ArrowLeftIconComponent,
-    ArrowRightIconComponent,
     GearIconComponent,
     PlusIconComponent,
     SearchIconComponent,
@@ -446,10 +447,6 @@ export class AppSidebarComponent implements OnInit, OnDestroy {
 
   toggleMode(): void {
     this.nav.setMode(this.mode() === 'config' ? 'app' : 'config');
-  }
-
-  toggleCollapsed(): void {
-    this.nav.toggleCollapsed();
   }
 
   openPalette(): void {

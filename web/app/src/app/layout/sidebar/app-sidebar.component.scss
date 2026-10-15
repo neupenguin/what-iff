@@ -620,7 +620,10 @@
   text-align: center;
 }
 
-.app-sidebar__footer-search {
+.app-sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 8px;
   border-top: 1px solid var(--border);
   margin-top: auto;
@@ -652,14 +655,6 @@
   opacity: 0.6;
 }
 
-.app-sidebar__collapse-handle {
-  position: absolute;
-  right: -11px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 2;
-}
-
 .app-sidebar__icon-btn {
   display: inline-flex;
   align-items: center;
@@ -684,13 +679,6 @@
   }
 }
 
-.app-sidebar__edge-toggle {
-  width: 22px;
-  height: 44px;
-  background: var(--bg-secondary, var(--bg-elevated));
-  border: 1px solid var(--border);
-}
-
 @media (max-width: 1023px) {
   .app-sidebar {
     box-shadow: 0 12px 30px rgb(0 0 0 / 0.3);
@@ -699,18 +687,10 @@
     overflow: hidden;
   }
 
-  .app-sidebar__collapse-handle {
-    display: none;
-  }
-
   .app-sidebar__personality-search,
   .app-sidebar__personality-option,
   .app-sidebar__palette-launcher-label {
     font-size: 1rem;
-  }
-
-  .app-sidebar:not(.app-sidebar--collapsed) .app-sidebar__collapse-handle {
-    right: -14px;
   }
 
   .app-sidebar--collapsed {
