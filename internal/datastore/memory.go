@@ -2428,6 +2428,8 @@ func (d *Datastore) GetRelatedMemories(ctx context.Context, userId, chatId uuid.
 // Chat-scoped memories and, outside a sandbox, the account's User-scoped ones that are unpinned or
 // pinned to the active personality. Scope, pin and chat edge are all it reads, so a memory moved to
 // another scope (MoveMemoryScope) is retrieved under its new scope with its existing embedding.
+// A change to what counts as readable here must keep TestMoveMemoryScope_RetrievalFollowsTheNewScope
+// passing, and may need matching rules in MoveMemoryScope.
 func relatedMemoryReadable(chatID, activePersonalityID uuid.UUID, sandboxed bool) predicate.Memory {
 	chatScoped := memory.And(
 		memory.ScopeEQ(memory.ScopeChat),

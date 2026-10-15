@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
@@ -160,6 +161,34 @@ describe('MemoryScopeDialogComponent', () => {
 
       expect(moved).not.toHaveBeenCalled();
       expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('different personality');
+    });
+
+    it('reads the refusal reason off an HTTP error envelope', async () => {
+      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src')] });
+      moveMemoryScope.mockReturnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              status: 409,
+              error: { code: 'conflict', message: 'a sandboxed thread only takes back its own memories' },
+            }),
+        ),
+      );
+
+      component.submit();
+      fixture.detectChanges();
+
+      expect(component.error()).toBe('a sandboxed thread only takes back its own memories');
+    });
+
+    it('falls back to generic copy when the failure has no envelope', async () => {
+      await setup(promoted, { source: chat('chat-src'), threads: [chat('chat-src')] });
+      moveMemoryScope.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 502, error: '<html>Bad Gateway</html>' })));
+
+      component.submit();
+      fixture.detectChanges();
+
+      expect(component.error()).toBe('Failed to move memory');
     });
   });
 });

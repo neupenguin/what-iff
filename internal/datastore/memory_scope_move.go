@@ -40,6 +40,10 @@ type memoryScopeTarget struct {
 
 // MoveMemoryScope moves one of userID's memories to move.Level and records the move in the audit
 // log. A move to where the memory already is returns it unchanged.
+//
+// Every DB write the move makes happens inside its transaction. Anything after Commit (today only
+// the audit row) must stay best-effort: it may fail without undoing the move, and it must not
+// depend on state the transaction could have rolled back.
 func (d *Datastore) MoveMemoryScope(ctx context.Context, userID, memoryID uuid.UUID, move models.MemoryScopeMove) (*models.Memory, error) {
 	tx, err := d.dbClient.Tx(ctx)
 	if err != nil {

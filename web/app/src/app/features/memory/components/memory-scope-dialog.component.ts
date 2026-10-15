@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, OnInit, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, input, OnInit, output, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { catchError, map, Observable, of, switchMap } from 'rxjs';
 
@@ -6,6 +7,7 @@ import { Chat, isSandboxed } from '../../../core/models/chat.model';
 import { Memory, MemoryScopeMoveInput } from '../../../core/models/memory.model';
 import { ChatService } from '../../../core/services/chat.service';
 import { MemoryService } from '../../../core/services/memory.service';
+import { apiErrorMessage } from '../../../core/utils/api-error.helpers';
 import { ModalComponent } from '../../../shared/ui/modal/modal.component';
 import { GLOBAL_SCOPE_LABEL } from '../helpers/memory-vm.helpers';
 import { MemoryPersonalityOption } from './memory-form.component';
@@ -21,6 +23,10 @@ const THREAD_PICKER_LIMIT = 100;
  * Back to thread preselects the thread the memory came from (its `chat_id`) when that thread
  * still exists and belongs to the memory's personality. Otherwise nothing is preselected and the
  * user must pick one: a memory is never attached to a thread it was not explicitly sent to.
+ *
+ * The personality and sandbox rules here only shape what the dialog offers; the server
+ * (datastore.MoveMemoryScope) is authoritative and refuses anything else with a 409, whose reason
+ * is shown as is. A rule change belongs in both places and in both test suites.
  */
 @Component({
   selector: 'app-memory-scope-dialog',
@@ -33,6 +39,7 @@ const THREAD_PICKER_LIMIT = 100;
 export class MemoryScopeDialogComponent implements OnInit {
   private readonly memoryService = inject(MemoryService);
   private readonly chatService = inject(ChatService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly memory = input.required<Memory>();
   readonly personalities = input<MemoryPersonalityOption[]>([]);
@@ -85,6 +92,7 @@ export class MemoryScopeDialogComponent implements OnInit {
           this.sourceThread.set(source);
           return this.isThreadMemory() ? of<Chat[]>([]) : this.loadThreads(this.personalityId());
         }),
+        takeUntilDestroyed(this.destroyRef),
       )
       .subscribe(threads => {
         this.threads.set(threads);
@@ -105,7 +113,7 @@ export class MemoryScopeDialogComponent implements OnInit {
       },
       error: error => {
         this.saving.set(false);
-        this.error.set(error instanceof Error ? error.message : 'Failed to move memory');
+        this.error.set(apiErrorMessage(error, 'Failed to move memory'));
       },
     });
   }
