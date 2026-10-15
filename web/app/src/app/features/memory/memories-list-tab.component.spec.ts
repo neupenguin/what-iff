@@ -4,6 +4,8 @@ import { ActivatedRoute, Params, Router } from '@angular/router';
 import { Observable, of, Subject, throwError } from 'rxjs';
 
 import { Memory, MemoryMergeEvent } from '../../core/models/memory.model';
+import { Chat } from '../../core/models/chat.model';
+import { ChatService } from '../../core/services/chat.service';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
@@ -95,6 +97,7 @@ function makeViewService(
     deleteSelected: vi.fn(),
     patchOne: vi.fn(),
     patchSelected: vi.fn(),
+    moveScope: vi.fn().mockReturnValue(of([])),
   };
 }
 
@@ -147,6 +150,8 @@ interface HarnessOptions {
   memoryService?: ReturnType<typeof makeMemoryService>;
   queryParams?: Observable<Params>;
   initialTab?: string | null;
+  /** Threads ChatService.listChatsPage returns (the promote menu looks up personalities). */
+  threads?: Chat[];
 }
 
 /**
@@ -187,6 +192,15 @@ async function createComponent(options: HarnessOptions = {}): Promise<{
       { provide: MemoryViewService, useValue: view },
       { provide: PersonalityService, useValue: personalityService },
       { provide: MemoryService, useValue: memoryService },
+      // The scope dialog loads threads to pick from.
+      {
+        provide: ChatService,
+        useValue: {
+          listChatsPage: vi
+            .fn()
+            .mockReturnValue(of({ results: options.threads ?? [], total_count: options.threads?.length ?? 0, page: 1 })),
+        },
+      },
       {
         provide: ActivatedRoute,
         useValue: {
@@ -320,7 +334,12 @@ describe('MemoriesListTabComponent bootstrap / ngOnInit', () => {
     const host = fixture.nativeElement as HTMLElement;
     const select = host.querySelectorAll('.memories-list__filters select')[0] as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
-    expect(options.map(o => o.textContent?.trim())).toEqual(['Any personality', 'Global (every personality)', PERSONALITY_A.name, PERSONALITY_B.name]);
+    expect(options.map(o => o.textContent?.trim())).toEqual([
+      'Any personality',
+      'Global (every personality)',
+      PERSONALITY_A.name,
+      PERSONALITY_B.name,
+    ]);
   });
 
   it('falls back to an empty personality list on load error', async () => {
@@ -701,16 +720,114 @@ describe('MemoriesListTabComponent selection and bulk toolbar', () => {
     expect(host.querySelector('.memories-list__bulk-count')?.textContent).toContain('1 selected');
   });
 
-  it('keeps Archive and Delete but hides Move in the Thread view', async () => {
+  it('offers Move, Archive and Delete in the Thread view', async () => {
     const view = makeViewService({ filters: { scope: 'chat' }, selectedIds: ['m-1'] });
     const { fixture } = await createComponent({ view });
     const buttons = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('.memories-list__bulk button'),
     ) as HTMLButtonElement[];
 
-    expect(buttons.some(button => button.textContent?.trim() === 'Move')).toBe(false);
+    expect(buttons.some(button => button.textContent?.trim() === 'Move')).toBe(true);
     expect(buttons.some(button => button.textContent?.trim() === 'Archive')).toBe(true);
     expect(buttons.some(button => button.textContent?.trim() === 'Delete')).toBe(true);
+  });
+
+  describe('one Move menu for every level', () => {
+    const threadMemory = (id: string, chatID = 'chat-a'): Memory => ({ ...SAMPLE_MEMORY, id, level: 'thread', chat_id: chatID });
+    const personalityMemory = (id: string): Memory => ({ ...SAMPLE_MEMORY, id, level: 'personality', pinned_personality_id: 'persona-1' });
+
+    function menuButtons(fixture: ComponentFixture<MemoriesListTabComponent>): string[] {
+      fixture.detectChanges();
+      return Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('.memories-list__move-menu button')).map(
+        button => button.textContent?.trim() ?? '',
+      );
+    }
+
+    it('offers global, every personality and a thread for thread, global and personality memories alike', async () => {
+      for (const mem of [threadMemory('m-1'), SAMPLE_MEMORY, personalityMemory('m-1')]) {
+        const view = makeViewService({ memories: [mem] });
+        const { fixture, component } = await createComponent({
+          view,
+          personalities: [{ id: 'persona-1', name: 'Wren' } as Personality, { id: 'persona-2', name: 'Basil' } as Personality],
+        });
+
+        component.onMoveOne('m-1');
+
+        expect(menuButtons(fixture)).toEqual(['Global (every personality)', 'Wren', 'Basil', 'A thread…', 'Cancel']);
+      }
+    });
+
+    it('keeps a mixed selection whole but drops summaries', async () => {
+      const summary: Memory = { ...SAMPLE_MEMORY, id: 's-1', level: 'summary' };
+      const view = makeViewService({
+        selectedIds: ['t-1', 'm-1', 'p-1', 's-1'],
+        memories: [threadMemory('t-1'), SAMPLE_MEMORY, personalityMemory('p-1'), summary],
+      });
+      const { component } = await createComponent({ view });
+
+      component.onMoveSelected();
+
+      expect(component.moveTargetIds()).toEqual(['t-1', 'm-1', 'p-1']);
+      expect(view.setSelectedIds).toHaveBeenCalledWith(['t-1', 'm-1', 'p-1']);
+    });
+
+    it('moves to a personality or global through the scope endpoint, then reloads and closes', async () => {
+      const view = makeViewService({ selectedIds: ['t-1', 'm-1'], memories: [threadMemory('t-1'), SAMPLE_MEMORY] });
+      const { component } = await createComponent({ view });
+
+      component.onMoveSelected();
+      component.moveToPersonality('persona-2');
+      expect(view.moveScope).toHaveBeenCalledWith(['t-1', 'm-1'], { level: 'personality', personality_id: 'persona-2' });
+      expect(view.load).toHaveBeenCalledWith(1);
+      expect(component.moveMenuOpen()).toBe(false);
+
+      component.onMoveSelected();
+      component.moveToPersonality(null);
+      expect(view.moveScope).toHaveBeenLastCalledWith(['t-1', 'm-1'], { level: 'global' });
+      expect(view.patchSelected).not.toHaveBeenCalled();
+    });
+
+    it('keeps the menu open with the reason when some moves are refused', async () => {
+      const view = makeViewService({ selectedIds: ['t-1', 't-2'], memories: [threadMemory('t-1'), threadMemory('t-2')] });
+      view.moveScope.mockReturnValue(of(['a thread summary stays with its thread']));
+      const { fixture, component } = await createComponent({ view });
+
+      component.onMoveSelected();
+      component.moveToPersonality(null);
+      fixture.detectChanges();
+
+      expect(component.moveMenuOpen()).toBe(true);
+      expect(view.load).toHaveBeenCalledWith(1);
+      const alert = (fixture.nativeElement as HTMLElement).querySelector('.memories-list__move-menu [role="alert"]');
+      expect(alert?.textContent).toContain('Some memories could not be moved');
+      expect(alert?.textContent).toContain('a thread summary stays with its thread');
+      expect(menuButtons(fixture)).toEqual(['Close']);
+    });
+
+    it('opens the thread picker for every memory in the menu', async () => {
+      const view = makeViewService({ selectedIds: ['t-1', 'm-1'], memories: [threadMemory('t-1'), SAMPLE_MEMORY] });
+      const { fixture, component } = await createComponent({ view });
+
+      component.onMoveSelected();
+      component.moveToThread();
+      fixture.detectChanges();
+
+      expect(component.moveMenuOpen()).toBe(false);
+      expect(component.threadDialogMemories()?.map(m => m.id)).toEqual(['t-1', 'm-1']);
+      expect(fixture.nativeElement.querySelector('app-memory-scope-dialog')).toBeTruthy();
+    });
+
+    it('closes the thread picker and reloads the page after a move', async () => {
+      const view = makeViewService();
+      const { component } = await createComponent({ view });
+      component.threadDialogMemories.set([SAMPLE_MEMORY]);
+      view.load.mockClear();
+
+      component.onThreadMoved();
+
+      expect(component.threadDialogMemories()).toBeNull();
+      expect(view.load).toHaveBeenCalledWith(1);
+    });
   });
 
   it('disables Move, Archive, and Delete while their operations are in-flight', async () => {
@@ -875,7 +992,7 @@ describe('MemoriesListTabComponent bulk actions', () => {
   });
 
   it('opens the move menu with a snapshot copy of the selection, not a live reference', async () => {
-    const view = makeViewService({ selectedIds: ['m-1', 'm-2'] });
+    const view = makeViewService({ selectedIds: ['m-1', 'm-2'], memories: [SAMPLE_MEMORY, { ...SAMPLE_MEMORY, id: 'm-2' }] });
     const { component } = await createComponent({ view });
 
     component.onMoveSelected();
@@ -883,65 +1000,6 @@ describe('MemoriesListTabComponent bulk actions', () => {
 
     view.selectedIds.set(['m-3']);
     expect(component.moveTargetIds()).toEqual(['m-1', 'm-2']);
-  });
-
-  it('removes thread memories from the selection before opening the move menu', async () => {
-    const threadMemory: Memory = { ...SAMPLE_MEMORY, id: 'thread-1', level: 'thread' };
-    const view = makeViewService({ selectedIds: ['m-1', 'thread-1'], memories: [SAMPLE_MEMORY, threadMemory] });
-    const { component } = await createComponent({ view });
-
-    component.onMoveSelected();
-
-    expect(component.moveTargetIds()).toEqual(['m-1']);
-    expect(view.setSelectedIds).toHaveBeenCalledWith(['m-1']);
-  });
-
-  it('moves multiple selected memories by calling setSelectedIds before patchSelected', async () => {
-    const view = makeViewService({ selectedIds: ['m-1', 'm-2'] });
-    const { component } = await createComponent({ view });
-
-    const order: string[] = [];
-    view.setSelectedIds.mockImplementation(() => order.push('setSelectedIds'));
-    view.patchSelected.mockImplementation(() => {
-      order.push('patchSelected');
-      return of(void 0);
-    });
-
-    component.onMoveSelected();
-    component.moveToPersonality('persona-1');
-
-    expect(order).toEqual(['setSelectedIds', 'patchSelected']);
-    expect(view.setSelectedIds).toHaveBeenCalledWith(['m-1', 'm-2']);
-    expect(view.patchSelected).toHaveBeenCalledWith({ level: 'personality', pinned_personality_id: 'persona-1' });
-  });
-
-  it('moves to Global/shared with a null personality pin', async () => {
-    const view = makeViewService({ selectedIds: ['m-1', 'm-2'] });
-    view.patchSelected.mockReturnValue(of(void 0));
-    const { component } = await createComponent({ view });
-
-    component.onMoveSelected();
-    component.moveToPersonality(null);
-
-    expect(view.patchSelected).toHaveBeenCalledWith({ level: 'global', pinned_personality_id: null });
-  });
-
-  it('closes the move menu and reloads on success; closes only (no reload) on error', async () => {
-    const view = makeViewService({ selectedIds: ['m-1'] });
-    const { component } = await createComponent({ view });
-
-    view.patchOne.mockReturnValue(of(void 0));
-    component.onMoveOne('m-1');
-    component.moveToPersonality('persona-1');
-    expect(component.moveMenuOpen()).toBe(false);
-    expect(view.load).toHaveBeenCalledWith(1);
-
-    view.load.mockClear();
-    view.patchOne.mockReturnValue(throwError(() => new Error('nope')));
-    component.onMoveOne('m-1');
-    component.moveToPersonality('persona-1');
-    expect(component.moveMenuOpen()).toBe(false);
-    expect(view.load).not.toHaveBeenCalled();
   });
 
   it('closes the move menu when clicking the backdrop overlay', async () => {
@@ -1062,19 +1120,6 @@ describe('MemoriesListTabComponent per-card single actions', () => {
     view.load.mockClear();
     component.onArchiveOne('m-1');
     expect(view.load).toHaveBeenCalledWith(1);
-  });
-
-  it('opens the move menu for a single id and moves it via patchOne, without touching setSelectedIds', async () => {
-    const view = makeViewService();
-    view.patchOne.mockReturnValue(of(void 0));
-    const { component } = await createComponent({ view });
-
-    component.onMoveOne('m-1');
-    expect(component.moveTargetIds()).toEqual(['m-1']);
-
-    component.moveToPersonality('persona-1');
-    expect(view.patchOne).toHaveBeenCalledWith('m-1', { level: 'personality', pinned_personality_id: 'persona-1' });
-    expect(view.setSelectedIds).not.toHaveBeenCalled();
   });
 });
 

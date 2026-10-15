@@ -3418,6 +3418,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /memory/{id}/scope:
+    post:
+      summary: Move memory to another scope
+      description: |
+        Moves one memory to global, to any of the user's personalities, or to any of their
+        threads, whatever level it is at now (thread to another thread included). The record itself moves (same id,
+        content and embedding), so no duplicate is created and nothing is re-embedded; retrieval
+        follows the new scope. A promoted memory keeps the thread it came from as `chat_id`
+        (provenance), which the memory manager preselects when moving it back.
+
+        The one destination refused is a sandboxed thread the memory was not made in: moving an
+        account memory there would expose it to the people in that thread. Each move is
+        written to the audit log.
+      tags: [Memory Management]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Memory ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryScopeMoveRequest'
+      responses:
+        '200':
+          description: Memory moved (or already there)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '400':
+          description: Malformed move (unknown level, or a field the level does not take)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Memory, destination thread or personality not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            The move is not allowed: a summary, a sandboxed thread the memory was not made in,
+            a missing destination thread, or a personality move with no personality to use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /memory/export:
     get:
       summary: Export all memories
@@ -9628,7 +9690,9 @@ components:
         chat_id:
           type: string
           format: uuid
-          description: ID of the chat this memory belongs to (optional for User-scoped memories)
+          description: >
+            The thread of a thread memory. For a global or personality memory, the thread it was
+            created in or promoted from (provenance), absent when it has none or that thread was deleted
         chat_name:
           type: string
           description: Name of the chat this memory belongs to (if applicable)
@@ -10110,6 +10174,25 @@ components:
           enum: [low, medium, high]
         provenance:
           $ref: '#/components/schemas/MemoryProvenance'
+
+    MemoryScopeMoveRequest:
+      type: object
+      required: [level]
+      properties:
+        level:
+          type: string
+          enum: [global, personality, thread]
+          description: The level to move the memory to
+        chat_id:
+          type: string
+          format: uuid
+          description: Destination thread; required for `thread`, never defaulted
+        personality_id:
+          type: string
+          format: uuid
+          description: >
+            Personality to pin to for `personality`. Omitted, a thread memory is pinned to its
+            thread's personality.
 
     MemoryMergeEvent:
       type: object

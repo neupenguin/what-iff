@@ -6,6 +6,7 @@ import { MemoryMergeEvent } from '../../../core/models/memory.model';
 import {
   associationLabel,
   levelDescription,
+  MOVE_ACTION_HINT,
   MemoryCardVm,
   mergeTypeDescription,
   mergeTypeLabel,
@@ -69,6 +70,9 @@ export class MemoryFocusPanelComponent {
   readonly mergeTypeDescription = mergeTypeDescription;
   readonly verifiedHint = VERIFIED_HINT;
   readonly levelHint = computed(() => levelDescription(this.memory().level));
+  readonly moveHint = MOVE_ACTION_HINT;
+  /** The thread a global/personality memory came from (its provenance); a thread memory's is its scope chip. */
+  readonly sourceThreadName = computed(() => (this.memory().level === 'thread' ? null : this.memory().chatName));
 
   sourceCount(event: MemoryMergeEvent): number {
     const fromMembers = event.source_members?.length ?? 0;
