@@ -11,6 +11,7 @@ import {
   AccountImportSelection,
 } from '../../core/services/account-export.service';
 import { ConfirmationService } from '../../core/services/confirmation.service';
+import { PersonalityService } from '../../core/services/personality.service';
 import { AccountArchiveService, ArchiveContents } from './account-archive.service';
 import { ChatImportModalComponent } from '../chat/components/chat-import-modal/chat-import-modal.component';
 import { XIconComponent } from '../../shared/ui/icons/icons';
@@ -39,6 +40,7 @@ export class DataPortabilityPageComponent {
   private readonly accountExportService = inject(AccountExportService);
   private readonly archiveService = inject(AccountArchiveService);
   private readonly confirmationService = inject(ConfirmationService);
+  private readonly personalityService = inject(PersonalityService);
   /** Build swap-point: hosted overlays replace the public/local delivery copy. */
   readonly exportDelivery = inject(ExportDeliveryService);
   private readonly destroyRef = inject(DestroyRef);
@@ -278,6 +280,8 @@ export class DataPortabilityPageComponent {
           const progress = this.parseImportProgress(job.progress);
           if (job.status === 'complete') {
             this.accountExportService.clearActiveImport();
+            // The restore may have added personalities: refresh the pickers and sidebar filter (#318).
+            this.personalityService.invalidate();
             this.importing.set(false);
             this.importPhase.set('complete');
             this.importResult.set(progress?.result ?? progress ?? {});

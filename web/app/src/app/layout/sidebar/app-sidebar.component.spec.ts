@@ -5,7 +5,7 @@ import { provideHttpClient, withXhr } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { provideRouter, Router } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subject, of, throwError } from 'rxjs';
 
 import { AuthService } from '../../core/services/auth.service';
 import { ConfirmationService } from '../../core/services/confirmation.service';
@@ -14,7 +14,7 @@ import { GalleryViewService } from '../../core/services/gallery-view.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { ModeViewService } from '../../core/services/mode-view.service';
 import { NavService } from '../../core/services/nav.service';
-import { PersonalityService } from '../../core/services/personality.service';
+import { PersonalityChange, PersonalityService } from '../../core/services/personality.service';
 import { RitualViewService } from '../../core/services/ritual-view.service';
 import { ThreadListService } from '../../core/services/thread-list.service';
 import { ContextPanelService } from '../../features/chat/services/context-panel.service';
@@ -32,6 +32,7 @@ describe('AppSidebarComponent', () => {
     let routerUrlSpy: Mock;
     let navMode: 'app' | 'config';
     let confirmationSpy: Pick<MockedObject<ConfirmationService>, 'confirm'>;
+    let personalityService: { listPersonalities: Mock; changes$: Subject<PersonalityChange> };
 
     beforeEach(async () => {
         navMode = 'app';
@@ -62,8 +63,9 @@ describe('AppSidebarComponent', () => {
         const authSpy = {
             currentUser: (() => ({ id: '1', username: 'jane', email: 'j@x.io' })) as any
         };
-        const personalityService = {
-            listPersonalities: vi.fn().mockName("PersonalityService.listPersonalities")
+        personalityService = {
+            listPersonalities: vi.fn().mockName("PersonalityService.listPersonalities"),
+            changes$: new Subject<PersonalityChange>(),
         };
         personalityService.listPersonalities.mockReturnValue(new BehaviorSubject({
             results: [
@@ -313,6 +315,42 @@ describe('AppSidebarComponent', () => {
         const carousel = fixture.nativeElement.querySelector('.app-sidebar__personality-carousel');
         expect(carousel).toBeTruthy();
     });
+
+    it('refetches the personality filter list when a personality is created elsewhere (#318)', () => {
+        const fixture = create();
+        const input = fixture.nativeElement.querySelector('.app-sidebar__personality-search') as HTMLInputElement;
+        input.dispatchEvent(new Event('focus'));
+        fixture.detectChanges();
+        expect(optionLabels(fixture)).toEqual(['Ada']);
+
+        const imported = { id: 'persona-3', name: 'Imported Card', system_prompt: '', auto_pin_memories: false, expressions_enabled: true, image_style: 'auto', cover_image_id: null, cover_image_url: null, created_at: '', updated_at: '' };
+        personalityService.listPersonalities.mockReturnValue(of({ results: [...currentCatalog(fixture), imported], total_count: 3, page: 1 }));
+        personalityService.changes$.next({ kind: 'created', personality: imported as any });
+        fixture.detectChanges();
+
+        expect(personalityService.listPersonalities).toHaveBeenCalledTimes(2);
+        expect(optionLabels(fixture)).toEqual(['Ada', 'Imported Card']);
+    });
+
+    it('keeps the last personality list when a refresh fails', () => {
+        const fixture = create();
+        const before = currentCatalog(fixture);
+        expect(before.map(p => p.name)).toEqual(['Ada']);
+        personalityService.listPersonalities.mockReturnValue(throwError(() => new Error('offline')));
+        personalityService.changes$.next({ kind: 'invalidated' });
+        fixture.detectChanges();
+
+        expect(currentCatalog(fixture)).toEqual(before);
+    });
+
+    function currentCatalog(fixture: ReturnType<typeof create>) {
+        return [...fixture.componentInstance.personalityCatalog()];
+    }
+
+    function optionLabels(fixture: ReturnType<typeof create>): string[] {
+        return Array.from(fixture.nativeElement.querySelectorAll('.app-sidebar__personality-option-label') as NodeListOf<HTMLElement>)
+            .map(el => el.textContent?.trim() ?? '');
+    }
 
     it('the footer search launcher opens the palette', () => {
         const fixture = create();

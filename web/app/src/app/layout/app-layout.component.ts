@@ -21,6 +21,8 @@ import { RightPanelService } from '../core/services/right-panel.service';
 import { SearchApiService } from '../core/services/search-api.service';
 import { ThemeService } from '../core/services/theme.service';
 import { GeneratePersonalityModalService } from '../core/services/generate-personality-modal.service';
+import { PersonalityService } from '../core/services/personality.service';
+import { startChatFailureAlert } from '../features/personality/helpers/start-chat-failure.helpers';
 import { ProfileSettingsModalService } from '../features/profile-settings/profile-settings-modal.service';
 import { Personality } from '../core/models/personality.model';
 import { Chat, DEFAULT_THREAD_NAME } from '../core/models/chat.model';
@@ -84,6 +86,7 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   readonly generatePersonalityModal = inject(GeneratePersonalityModalService);
   readonly profileSettingsModal = inject(ProfileSettingsModalService);
   private readonly confirmation = inject(ConfirmationService);
+  private readonly personalityService = inject(PersonalityService);
 
   readonly personaPickerOpen = signal(false);
   readonly showRightPanel = signal(false);
@@ -229,7 +232,14 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
         this.closeMobileSidebar();
       }
     } catch (error) {
+      // Never fail silently (#318): a stale picker entry for a deleted personality used to look like
+      // a dead click. Refresh every cached personality list and say what happened.
       console.error('Failed to start chat with personality', error);
+      this.personalityService.invalidate();
+      await this.confirmation.alert({
+        ...startChatFailureAlert(personality.name, error),
+        type: 'danger',
+      });
     }
   }
 
