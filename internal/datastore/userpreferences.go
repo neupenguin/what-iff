@@ -119,14 +119,31 @@ func (d *Datastore) UpdateUserPreferences(ctx context.Context, userID uuid.UUID,
 	// after the value had already been staged, so it gated the permission check but not the
 	// write. Absent now means "leave the current default alone", matching how theme
 	// already behaves.
+	//
+	// Only a change is validated and written. Every caller sends the whole record back (PUT
+	// replaces it), so the stored default rides along with a theme, favorites or personality
+	// save; re-validating it then meant that once that model was retired, or the account lost
+	// experimental access, every other preference save failed too (#347).
 	if prefs.DefaultModelID != uuid.Nil {
-		if err := d.assertUserCanUseModel(ctx, tx, userID, prefs.DefaultModelID); err != nil {
+		stored, err := tx.UserPreference.Query().
+			Where(userpreference.HasUserWith(user.ID(userID))).
+			Only(ctx)
+		if err != nil {
 			if rerr := tx.Rollback(); rerr != nil {
 				d.logger.Error(i18n.T("tx.rollback_failed"), zap.Error(rerr))
 			}
+			d.logger.Error(i18n.T1("query.failed", "Entity", "user preferences"), zap.Error(err))
 			return nil, err
 		}
-		update.SetModelID(prefs.DefaultModelID).SetDefaultModel(prefs.DefaultModelID)
+		if prefs.DefaultModelID != stored.DefaultModel {
+			if err := d.assertUserCanUseModel(ctx, tx, userID, prefs.DefaultModelID); err != nil {
+				if rerr := tx.Rollback(); rerr != nil {
+					d.logger.Error(i18n.T("tx.rollback_failed"), zap.Error(rerr))
+				}
+				return nil, err
+			}
+			update.SetModelID(prefs.DefaultModelID).SetDefaultModel(prefs.DefaultModelID)
+		}
 	}
 
 	if prefs.Theme == "dark" || prefs.Theme == "light" || prefs.Theme == "system" {
