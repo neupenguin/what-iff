@@ -10,7 +10,15 @@ import {
 import { DOCUMENT } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
-import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
+import {
+  NavigationCancel,
+  NavigationEnd,
+  NavigationError,
+  NavigationSkipped,
+  NavigationStart,
+  Router,
+  RouterOutlet,
+} from '@angular/router';
 import { map } from 'rxjs/operators';
 
 import { ChatService } from '../core/services/chat.service';
@@ -92,6 +100,15 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   readonly showRightPanel = signal(false);
   readonly showMobileSheet = signal(false);
   readonly isMobileNav = signal(false);
+  /**
+   * True while a router navigation is pending (guards, lazy chunk). Drives the thin progress bar
+   * at the top of the page, so a tap always gets a visible response even when the next screen
+   * takes a moment (#348). The bar only appears after a short CSS delay, so instant navigations
+   * don't flash it.
+   */
+  readonly navigating = signal(false);
+  /** Path (no query or fragment) of the last completed navigation; see closeMobileSidebarOnPathChange. */
+  private lastPath = AppLayoutComponent.pathOf(this.router.url);
   readonly rightPanelService = inject(RightPanelService);
   readonly rightPanelContext = inject(ContextPanelService);
   private readonly document = inject(DOCUMENT);
@@ -124,8 +141,19 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
     this.setRightPanelVisibility(this.router.url);
     this.subscriptions.add(
       this.router.events.subscribe(event => {
+        if (event instanceof NavigationStart) {
+          this.navigating.set(true);
+        } else if (
+          event instanceof NavigationEnd ||
+          event instanceof NavigationCancel ||
+          event instanceof NavigationError ||
+          event instanceof NavigationSkipped
+        ) {
+          this.navigating.set(false);
+        }
         if (event instanceof NavigationEnd) {
           this.setRightPanelVisibility(event.urlAfterRedirects);
+          this.closeMobileSidebarOnPathChange(event.urlAfterRedirects);
         }
       }),
     );
@@ -280,6 +308,24 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
 
   closeMobileSidebar(): void {
     this.nav.setCollapsed(true);
+  }
+
+  /**
+   * On mobile the sidebar is a drawer over the page. Picking a destination in it has to close it:
+   * otherwise the new screen loads underneath and the tap reads as having done nothing (#348).
+   * Only a change of path counts; query-only navigations (filters inside the drawer) keep it open.
+   */
+  private closeMobileSidebarOnPathChange(url: string): void {
+    const path = AppLayoutComponent.pathOf(url);
+    const changed = path !== this.lastPath;
+    this.lastPath = path;
+    if (changed && this.isMobileNav() && !this.nav.collapsed()) {
+      this.closeMobileSidebar();
+    }
+  }
+
+  private static pathOf(url: string): string {
+    return url.split('?')[0].split('#')[0];
   }
 
   private setRightPanelVisibility(url: string): void {

@@ -1,3 +1,6 @@
+@if (navigating()) {
+  <div class="app-layout__nav-progress" role="progressbar" aria-label="Loading page"></div>
+}
 <div class="app-layout" [class.app-layout--collapsed]="nav.collapsed()">
   <app-sidebar
     class="app-layout__sidebar"
