@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
+	"github.com/theimaginaryfoundation/what-iff/internal/models"
+	"github.com/theimaginaryfoundation/what-iff/internal/modeltypes"
 )
 
 // retryWithoutImagesOnRefusal runs call, one model request of the agent loop. When the provider
@@ -17,8 +20,8 @@ import (
 // filter, and the text around it is usually fine. Retrying the one refused request keeps the
 // tools that already ran from running again, which a whole-turn retry would not.
 //
-// The count of images left out accumulates on chatCtx so the reply's context breakdown can say
-// so. A refusal with no images to strip, or a second refusal, is returned as before and handled
+// The count of images left out accumulates on chatCtx (withholdImages) so the reply's context
+// breakdown can say so. A refusal with no images to strip, or a second refusal, is returned as before and handled
 // by the turn's existing safety-violation path.
 func (a *Agent) retryWithoutImagesOnRefusal(ctx context.Context, chatCtx *chatContext, adapter provider.AgentAdapter, call func() error) error {
 	err := call()
@@ -42,8 +45,29 @@ func (a *Agent) retryWithoutImagesOnRefusal(ctx context.Context, chatCtx *chatCo
 		fields = append(fields, zap.String("chat_id", chatCtx.chat.ID.String()))
 	}
 	a.logger.Warn("provider refused a request with images on safety grounds; retrying without them", fields...)
-	if chatCtx != nil {
-		chatCtx.imagesWithheld += withheld
-	}
+	chatCtx.withholdImages(withheld, modeltypes.ImagesWithheldSafetyRefusal)
 	return call()
+}
+
+// withholdImages records n images this turn's model did not see. The first reason recorded
+// stands: a model that cannot see images never sends any to be refused.
+func (c *chatContext) withholdImages(n int, reason string) {
+	if c == nil || n <= 0 {
+		return
+	}
+	c.imagesWithheld += n
+	if c.imagesWithheldReason == "" {
+		c.imagesWithheldReason = reason
+	}
+}
+
+// countImageAttachments counts the image attachments on a message.
+func countImageAttachments(attachments []*models.FileAttachment) int {
+	n := 0
+	for _, att := range attachments {
+		if att != nil && strings.HasPrefix(att.FileType, models.ImageMIMEPrefix) {
+			n++
+		}
+	}
+	return n
 }

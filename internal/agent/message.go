@@ -838,10 +838,11 @@ type chatContext struct {
 	liveMemories           []*models.Memory
 	prefetchedMemoryCount  int // leading liveMemories from enrichment; the rest came from tools
 	memoryEnrichmentFailed bool
-	// imagesWithheld counts images the agent loop left out of a request this turn after the
-	// provider refused it on safety grounds (retryWithoutImagesOnRefusal); recorded on the
-	// reply's context breakdown.
-	imagesWithheld int
+	// imagesWithheld counts images this turn's model did not see, for imagesWithheldReason:
+	// the model cannot see images, or the provider refused a request that carried them
+	// (retryWithoutImagesOnRefusal). Recorded on the reply's context breakdown.
+	imagesWithheld       int
+	imagesWithheldReason string
 	// userNameLine is this turn's profile line naming the user (the first line of memories on a
 	// chat's first message), recorded explicitly so it can be persisted as its own context item
 	// type instead of being recognised by its text. Empty when the turn has no such line.
@@ -1002,6 +1003,9 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	// holds a copy of the file for us to reference.
 	if chatCtx.modelVisionSupport {
 		imageBytes = a.loadImageBytesForVision(ctx, chatJob.UserID, chatMessage)
+	} else {
+		// The images stay in the gallery but this model never sees them; say so on the reply.
+		chatCtx.withholdImages(countImageAttachments(chatMessage.Attachments), modeltypes.ImagesWithheldNoVision)
 	}
 	modelContext, err := a.buildModelContextForChatMessage(ctx, chatJob.UserID, chatMessage, chatCtx, imageBytes)
 	doneBuildContext()
@@ -1785,6 +1789,9 @@ func (a *Agent) buildContextBreakdown(chatCtx *chatContext, modelContext *provid
 		breakdown.Model = chatCtx.model
 		breakdown.Provider = chatCtx.modelProvider
 		breakdown.ImagesWithheld = chatCtx.imagesWithheld
+		if chatCtx.imagesWithheld > 0 {
+			breakdown.ImagesWithheldReason = chatCtx.imagesWithheldReason
+		}
 	}
 	return breakdown
 }

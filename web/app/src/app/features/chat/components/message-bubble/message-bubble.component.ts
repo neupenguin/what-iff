@@ -507,7 +507,13 @@ export class MessageBubbleComponent {
   });
   readonly imagesWithheldHint = computed(() => {
     const withheld = this.imagesWithheld();
-    return withheld === 1
+    const one = withheld === 1;
+    if (this.message().context_breakdown?.images_withheld_reason === 'no_vision') {
+      return one
+        ? "This model can't see images, so the image you attached wasn't sent. It's still in your gallery."
+        : `This model can't see images, so the ${withheld} images you attached weren't sent. They're still in your gallery.`;
+    }
+    return one
       ? "An image was left out of this reply: the provider's safety filter refused a request that included it, so the reply was written without it."
       : `${withheld} images were left out of this reply: the provider's safety filter refused a request that included them, so the reply was written without them.`;
   });

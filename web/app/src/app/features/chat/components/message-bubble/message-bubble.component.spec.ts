@@ -232,6 +232,15 @@ describe('MessageBubbleComponent', () => {
         expect(hint?.textContent?.trim()).toBe('Images left out');
         const labels = Array.from(fixture.nativeElement.querySelector('.bubble__meta-end')?.children ?? [], (element: Element) => element.textContent?.trim());
         expect(labels[0]).toBe('Images left out');
+        expect(fixture.componentInstance.imagesWithheldHint()).toContain("safety filter");
+
+        fixture.componentRef.setInput('message', {
+            ...message('Assistant'),
+            context_breakdown: { ...breakdown, images_withheld: 1, images_withheld_reason: 'no_vision' as const },
+        });
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('[data-testid="images-withheld"]')).toBeTruthy();
+        expect(fixture.componentInstance.imagesWithheldHint()).toContain("can't see images");
     });
 
     it('shows skill name pills for user messages with rituals', () => {

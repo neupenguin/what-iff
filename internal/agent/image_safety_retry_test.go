@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
+	"github.com/theimaginaryfoundation/what-iff/internal/modeltypes"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +83,7 @@ func TestAgentLoop_RetriesARefusedCallWithoutImages(t *testing.T) {
 	require.Equal(t, "ok", result.Text)
 	require.Equal(t, 2, adapter.calls, "the refused call is retried once")
 	require.Equal(t, 2, chatCtx.imagesWithheld, "recorded for the reply's context breakdown")
+	require.Equal(t, modeltypes.ImagesWithheldSafetyRefusal, chatCtx.imagesWithheldReason)
 }
 
 func TestAgentLoop_RefusalWithoutImagesIsReturned(t *testing.T) {
@@ -130,6 +132,38 @@ func TestBuildContextBreakdown_RecordsImagesWithheld(t *testing.T) {
 
 	require.NotNil(t, breakdown)
 	require.Equal(t, 2, breakdown.ImagesWithheld)
+	require.Empty(t, breakdown.ImagesWithheldReason, "set directly here; withholdImages records the reason")
+
+	chatCtx = loopChatContext()
+	chatCtx.withholdImages(2, modeltypes.ImagesWithheldNoVision)
+	breakdown = a.buildContextBreakdown(chatCtx, mc, 0, nil)
+	require.Equal(t, 2, breakdown.ImagesWithheld)
+	require.Equal(t, modeltypes.ImagesWithheldNoVision, breakdown.ImagesWithheldReason)
+
+	breakdown = a.buildContextBreakdown(loopChatContext(), mc, 0, nil)
+	require.Zero(t, breakdown.ImagesWithheld)
+	require.Empty(t, breakdown.ImagesWithheldReason)
+}
+
+func TestWithholdImages_FirstReasonStands(t *testing.T) {
+	t.Parallel()
+	chatCtx := loopChatContext()
+	chatCtx.withholdImages(0, modeltypes.ImagesWithheldNoVision)
+	require.Zero(t, chatCtx.imagesWithheld)
+	require.Empty(t, chatCtx.imagesWithheldReason, "nothing withheld, no reason")
+
+	chatCtx.withholdImages(1, modeltypes.ImagesWithheldSafetyRefusal)
+	chatCtx.withholdImages(2, modeltypes.ImagesWithheldNoVision)
+	require.Equal(t, 3, chatCtx.imagesWithheld)
+	require.Equal(t, modeltypes.ImagesWithheldSafetyRefusal, chatCtx.imagesWithheldReason)
+}
+
+func TestCountImageAttachments(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, 2, countImageAttachments([]*models.FileAttachment{
+		{FileType: "image/png"}, {FileType: "application/pdf"}, nil, {FileType: "image/jpeg"},
+	}))
+	require.Zero(t, countImageAttachments(nil))
 }
 
 func TestCheckpointSummaryWithoutImages(t *testing.T) {

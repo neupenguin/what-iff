@@ -35,6 +35,7 @@ Orchestrates assistant behavior: user turns, OpenAI/Anthropic calls, tool execut
   Both backfills are idempotent and only log failures; a pass stops early when the provider is unreachable (e.g. the deny-network client under mock/local backends).
 - **Image safety retries (`image_safety_retry.go`):** when a model call in the agent loop is refused on safety grounds and its adapter is a `provider.ImageStripper` with images to drop, `retryWithoutImagesOnRefusal` strips them and retries that one call (tools already run are not re-run).
   The count lands on the reply's context breakdown as `images_withheld`; a refusal with nothing to strip, or a second refusal, goes to the existing safety-violation path.
+  A chat model without vision records the user's image attachments the same way (`withholdImages`, reason `no_vision` instead of `safety_refusal`), so the reply can say its images were not seen.
   A refused checkpoint summary is retried once from the turn's own context without images (`checkpointSummaryWithoutImages`), since a chained `previous_response_id` keeps them out of reach and a stuck summary would be retried every turn.
 - **Rituals:** User and system rituals, image ritual flow, registry of built-in system rituals.
 - **Image vendor (`image_generators.go`):** `NewAgent` builds a `provider.ImageGenerator` for each image vendor with a credential.

@@ -33,8 +33,10 @@ export interface ContextBreakdown {
   model?: string;
   provider?: string;
   captured_at: string;
-  /** Images left out of this reply's requests after the provider's safety filter refused one that carried them. */
+  /** Images the model did not see for this reply, for images_withheld_reason. */
   images_withheld?: number;
+  /** no_vision: the model cannot see images. safety_refusal: a request carrying them was refused and retried without them. */
+  images_withheld_reason?: 'no_vision' | 'safety_refusal';
 }
 
 export interface ChatMessage {
