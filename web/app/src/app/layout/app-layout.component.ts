@@ -329,7 +329,7 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   }
 
   private setRightPanelVisibility(url: string): void {
-    const path = url.split('?')[0].split('#')[0];
+    const path = AppLayoutComponent.pathOf(url);
     const isDesktop = this.document.defaultView?.matchMedia('(min-width: 1024px)').matches ?? true;
     this.isMobileNav.set(!isDesktop);
     if (!isDesktop && !this.mobileNavInitialized) {
