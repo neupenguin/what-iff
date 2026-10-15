@@ -293,6 +293,13 @@ describe('AppLayoutComponent', () => {
                 'Previous step: edit your answers',
                 'Regenerate',
             ]);
+
+            // In the modal the in-body review actions hide on phones (the footer has them),
+            // without losing their own layout classes.
+            const editAnswers = [...host.querySelectorAll('button')].find(b => labelOf(b) === 'Edit answers')!;
+            const inBodyActions = editAnswers.closest('div.border-t') as HTMLElement;
+            expect(inBodyActions.classList).toContain('max-sm:hidden');
+            expect(inBodyActions.classList).toContain('justify-between');
         });
     });
 
