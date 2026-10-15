@@ -155,6 +155,7 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
   `streamChatCompletion` therefore captures the usage from the **last chunk that carries any** (`chunkCarriesUsage`) and overwrites `acc.ChatCompletion.Usage` with it before returning, so `chatCompletionTokenUsage` (telemetry + `GenerateResponse.InputTokens`) reports the true totals for every OpenAI-compatible provider (Gemini, Mistral, DeepSeek, Qwen, Xiaomi).
   Pinned by `TestStreamChatCompletion_DoesNotSumRepeatedUsage`.
 - **Subagent call path:** Delegated `run_subagent` calls are labeled `call_path=subagent` so telemetry can separate orchestrator traffic from normal chat turns and scheduled jobs.
+- **No sampling knobs:** requests never set `temperature`/`top_p`/`top_k` (see the architecture summary); `buildClaudeBetaMCPParams` drops them when converting to Beta params, and there is no temperature constant to reach for.
 
 ## Testing
 
@@ -164,6 +165,7 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 - `model_context_test.go`, `model_context_hydrate_test.go`, `model_context_openai_test.go` — segment assembly, hydration helpers, OpenAI/Claude rendering (including Claude text fallback when image bytes absent).
 - `model_context_breakdown_test.go` — `SegmentBreakdown` aggregation, first-appearance ordering, cacheable-any / image counting, and nil-receiver/nil-counter guards.
 - `openai_test.go`, `openai_tools_test.go`, `claude_test.go`, `claude_adapter_test.go`, `claude_adapter_more_test.go` — output shape and tool compatibility (including Beta MCP adapter mode).
+- `no_sampling_params_test.go` — source scan failing on any `Temperature`/`TopP`/`TopK` set in non-test `internal/` code; Beta MCP conversion drops sampling params.
 - `token_counter_test.go` — counting and carry-over selection.
 - `inference_metrics_test.go` — nil-safe usage recording.
 - `fileattachment_test.go`, `images_test.go` — helpers.

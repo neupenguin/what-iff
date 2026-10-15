@@ -564,13 +564,12 @@ func BuildClaudeBetaMCPParams(params anthropic.MessageNewParams, mcpConfig *Clau
 }
 
 func buildClaudeBetaMCPParams(params anthropic.MessageNewParams, mcpConfig *ClaudeMCPConfig) (anthropic.BetaMessageNewParams, error) {
+	// Sampling knobs (temperature, top_k, top_p) are deliberately not carried over: requests
+	// never set them (see docs/ARCHITECTURE_SUMMARY.md, "No sampling knobs").
 	out := anthropic.BetaMessageNewParams{
 		MaxTokens:     params.MaxTokens,
 		Model:         params.Model,
 		InferenceGeo:  params.InferenceGeo,
-		Temperature:   params.Temperature,
-		TopK:          params.TopK,
-		TopP:          params.TopP,
 		StopSequences: append([]string(nil), params.StopSequences...),
 	}
 
