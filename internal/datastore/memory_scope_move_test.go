@@ -122,7 +122,7 @@ func TestMoveMemoryScope_PromoteThreadMemoryMovesTheRecordAndKeepsItsOrigin(t *t
 	require.NotContains(t, audit[0], "likes rain", "the audit log never holds memory content")
 }
 
-func TestMoveMemoryScope_PromoteToPersonalityPinsTheThreadsOwnPersonality(t *testing.T) {
+func TestMoveMemoryScope_PromoteToPersonality(t *testing.T) {
 	f := newScopeMoveFixture(t)
 
 	pinned, err := f.move(t, f.threadMemory(t, f.threadA).ID, models.MemoryScopeMove{Level: models.MemoryLevelPersonality})
@@ -131,8 +131,10 @@ func TestMoveMemoryScope_PromoteToPersonalityPinsTheThreadsOwnPersonality(t *tes
 	require.Equal(t, f.personaA, *pinned.PinnedPersonalityID)
 	require.Equal(t, f.threadA, pinned.ChatID)
 
-	_, err = f.move(t, f.threadMemory(t, f.threadA).ID, models.MemoryScopeMove{Level: models.MemoryLevelPersonality, PersonalityID: &f.personaB})
-	require.ErrorIs(t, err, ErrMemoryScopeMove, "a thread memory cannot cross to another personality")
+	crossed, err := f.move(t, f.threadMemory(t, f.threadA).ID, models.MemoryScopeMove{Level: models.MemoryLevelPersonality, PersonalityID: &f.personaB})
+	require.NoError(t, err, "the user may pin a thread memory to any of their personalities")
+	require.Equal(t, f.personaB, *crossed.PinnedPersonalityID)
+	require.Equal(t, f.threadA, crossed.ChatID, "it still remembers the thread it came from")
 
 	// A thread with no personality has none to default to: the caller must name one.
 	loose := f.threadMemory(t, f.unassigned)
@@ -167,11 +169,25 @@ func TestMoveMemoryScope_BackToThread(t *testing.T) {
 		require.Equal(t, f.otherA, back.ChatID)
 	})
 
-	t.Run("never to a thread of another personality", func(t *testing.T) {
+	t.Run("to a thread of another personality", func(t *testing.T) {
 		for _, level := range []models.MemoryLevel{models.MemoryLevelGlobal, models.MemoryLevelPersonality} {
-			_, err := f.move(t, promoted(level), models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadB})
-			require.ErrorIs(t, err, ErrMemoryScopeMove, level)
+			back, err := f.move(t, promoted(level), models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadB})
+			require.NoError(t, err, level)
+			require.Equal(t, f.threadB, back.ChatID, level)
+			require.Nil(t, back.PinnedPersonalityID, "a thread memory carries no pin")
 		}
+	})
+
+	t.Run("from one thread to another", func(t *testing.T) {
+		mem := f.threadMemory(t, f.threadA)
+		moved, err := f.move(t, mem.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadB})
+		require.NoError(t, err)
+		require.Equal(t, models.MemoryLevelThread, moved.Level)
+		require.Equal(t, f.threadB, moved.ChatID)
+
+		same, err := f.move(t, mem.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadB})
+		require.NoError(t, err, "a move to its own thread is a no-op")
+		require.Equal(t, moved.UpdatedAt, same.UpdatedAt)
 	})
 
 	t.Run("the destination is never defaulted", func(t *testing.T) {
@@ -191,7 +207,7 @@ func TestMoveMemoryScope_BackToThread(t *testing.T) {
 		require.Equal(t, f.sandboxedA, back.ChatID)
 	})
 
-	t.Run("a memory with no origin goes to the thread the caller picks, within its pin", func(t *testing.T) {
+	t.Run("a memory with no origin goes to the thread the caller picks, whatever its pin", func(t *testing.T) {
 		global, err := f.ds.CreateMemoryFromInput(context.Background(), f.userID, models.CreateMemoryInput{Content: "no origin", Level: models.MemoryLevelGlobal})
 		require.NoError(t, err)
 		back, err := f.move(t, global.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadB})
@@ -202,8 +218,9 @@ func TestMoveMemoryScope_BackToThread(t *testing.T) {
 			Content: "pinned, no origin", Level: models.MemoryLevelPersonality, PinnedPersonalityID: &f.personaB,
 		})
 		require.NoError(t, err)
-		_, err = f.move(t, pinned.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadA})
-		require.ErrorIs(t, err, ErrMemoryScopeMove)
+		moved, err := f.move(t, pinned.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.threadA})
+		require.NoError(t, err)
+		require.Equal(t, f.threadA, moved.ChatID)
 	})
 }
 
@@ -254,8 +271,8 @@ func TestMoveMemoryScope_RejectsSummariesAndMalformedMoves(t *testing.T) {
 		_, err := f.move(t, mem.ID, move)
 		require.ErrorIs(t, err, ErrInvalidRequestBody, name)
 	}
-	_, err = f.move(t, mem.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread, ChatID: &f.otherA})
-	require.ErrorIs(t, err, ErrMemoryScopeMove, "a thread memory is already a thread memory")
+	_, err = f.move(t, mem.ID, models.MemoryScopeMove{Level: models.MemoryLevelThread})
+	require.ErrorIs(t, err, ErrMemoryScopeMove, "the destination thread is never defaulted")
 }
 
 func TestMoveMemoryScope_NoOpIsNotAudited(t *testing.T) {

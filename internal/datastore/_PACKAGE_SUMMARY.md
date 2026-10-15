@@ -146,10 +146,11 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
   Their embeddings were hard-deleted by the old fold, so undo logs that they need a re-embed backfill.
 - **Memory scope versus source chat:** `Memory.Scope` controls retrieval scope (`User`, `Chat`, or `Summary`); the optional `chat` edge records a memory's source conversation and is valid for User-scoped Global and Personality memories too.
   Moves preserve that provenance edge.
-  **`MoveMemoryScope`** (`memory_scope_move.go`) moves one memory across the thread boundary: thread to global or personality, or global/personality back to a thread.
+  **`MoveMemoryScope`** (`memory_scope_move.go`) moves one memory to global, any of the user's personalities, or any of their threads, from any level (thread to thread included).
   The record moves (same id, content, embedding), so nothing is duplicated or re-embedded; `relatedMemoryReadable` is the scope filter `GetRelatedMemories` retrieves through, so retrieval follows the new scope.
-  A promoted memory keeps its chat edge as its source thread; the destination of a move back is always named by the caller (never defaulted), and must be a thread of the memory's personality (its pin, else its source thread's).
-  A thread memory promoted to personality is pinned to its thread's personality; a sandboxed thread takes back only memories made in it; refusals wrap `ErrMemoryScopeMove`.
+  A promoted memory keeps its chat edge as its source thread; the destination thread is always named by the caller (never defaulted).
+  Personalities may be crossed; a personality move without an id pins a thread memory to its thread's personality.
+  The one refused destination is a sandboxed thread the memory was not made in (moving in would expose it to that thread's people); refusals wrap `ErrMemoryScopeMove`.
   `PatchMemoriesBatch` rejects changes to actual Chat-scoped Thread memories before individual updates begin, preventing a mixed bulk Move from partially moving User memories.
   In partial (`all_or_none=false`) mode, only `ErrMemoryNotFound` is skipped; other errors abort the batch so operators are not told a row was merely "missing" when the datastore failed.
 - **Account-activity audit projection:** audit rows use distinct `account_export`, `account_import`, and `chat_import` categories.
@@ -199,7 +200,7 @@ Application **repository layer** over Ent: CRUD, ownership checks, pagination, v
 - `compaction_event_test.go`, `memory_merge_test.go`, `memory_merge_fold_test.go` — SQLite harness mirrors ent FK semantics (`memory_merge_events.compaction_event_id` → `compaction_events` ON DELETE SET NULL); compaction tests cover content-addressed snapshots, merge grouping, page-size cap, and FK null-on-delete.
   `memory_merge_fold_test.go` covers the fold rewrite rule (same content, rewrite, starred) and exact fold undo, including legacy events.
   `TestAutoPin_AppliesToEveryMemoryCreationPath` covers the auto-pin rule on each creation path.
-- `memory_scope_move_test.go` — scope moves: record moved not copied, source thread and embedding kept, audit row, personality and sandbox rules, ownership, and that `relatedMemoryReadable` follows each move.
+- `memory_scope_move_test.go` — scope moves: record moved not copied, source thread and embedding kept, audit row, moves across personalities and threads, the sandbox rule, ownership, and that `relatedMemoryReadable` follows each move.
 - `accountbackup_test.go` — backup JSONL parsing edge cases such as large records and optional sections.
 - `accountexport_test.go` — conversation export’s timestamp/ID cursor covers a batch boundary where all messages share a timestamp.
 - `token_crypto_test.go` — round-trip encryption.

@@ -5159,16 +5159,15 @@ export interface paths {
         put?: never;
         /**
          * Move memory to another scope
-         * @description Moves one memory across the thread boundary: a thread memory to global or personality,
-         *     or a global/personality memory back to a thread. The record itself moves (same id,
+         * @description Moves one memory to global, to any of the user's personalities, or to any of their
+         *     threads, whatever level it is at now (thread to another thread included). The record itself moves (same id,
          *     content and embedding), so no duplicate is created and nothing is re-embedded; retrieval
          *     follows the new scope. A promoted memory keeps the thread it came from as `chat_id`
          *     (provenance), which the memory manager preselects when moving it back.
          *
-         *     Personalities are not crossed: a thread memory moved to personality is pinned to its
-         *     thread's personality, and a memory moved to a thread must go to a thread of its
-         *     personality (its pin, else its source thread's). A sandboxed thread accepts only
-         *     memories that were made in it. Each move is written to the audit log.
+         *     The one destination refused is a sandboxed thread the memory was not made in: moving an
+         *     account memory there would expose it to the people in that thread. Each move is
+         *     written to the audit log.
          */
         post: {
             parameters: {
@@ -5222,7 +5221,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description The move is not allowed: a summary, a thread of another personality, a sandboxed thread the memory was not made in, a missing destination thread, or a thread memory pinned to a personality other than its thread's */
+                /** @description The move is not allowed: a summary, a sandboxed thread the memory was not made in, a missing destination thread, or a personality move with no personality to use */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -12119,7 +12118,7 @@ export interface components {
             chat_id?: string;
             /**
              * Format: uuid
-             * @description Personality to pin to for `personality`. A thread memory defaults to, and may only use, its thread's personality.
+             * @description Personality to pin to for `personality`. Omitted, a thread memory is pinned to its thread's personality.
              */
             personality_id?: string;
         };

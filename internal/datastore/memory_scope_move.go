@@ -25,11 +25,14 @@ import (
 // keeps the edge to the thread it came from, which is where "back to thread" returns it by default.
 // The edge is cleared only when that thread is deleted, and then the memory has no origin.
 //
-// Personalities are not crossed. A thread memory promoted to personality is pinned to its thread's
-// personality. A memory moved back to a thread must land in a thread of its personality: its pin,
-// else its origin thread's personality; an unpinned memory with no origin may go to any thread.
-// A sandboxed thread takes back only its own memories, since an account memory moved into it would
-// become readable to the people in that thread.
+// Any memory can go anywhere the user sends it: global, any of their personalities, or any of their
+// threads, including another thread for a thread memory. The user picks the destination by hand,
+// and every move can be moved back. A personality move with no personality_id pins a thread
+// memory to its thread's personality.
+//
+// The one refusal is a sandboxed thread: it takes back only memories made in it, because an
+// account memory moved into it would become readable to the people in that thread, and that
+// cannot be undone by moving it out again.
 
 // memoryScopeTarget is where a move puts a memory: scope, chat edge and pin, all written.
 type memoryScopeTarget struct {
@@ -131,14 +134,8 @@ func (d *Datastore) memoryScopeMoveTarget(ctx context.Context, tx *ent.Tx, userI
 			return memoryScopeTarget{}, fmt.Errorf("%w: a move to personality takes no chat_id", ErrInvalidRequestBody)
 		}
 		personalityID := move.PersonalityID
-		if from == models.MemoryLevelThread {
-			threadPersonality := memoryChatPersonalityID(existing)
-			switch {
-			case threadPersonality != nil && personalityID == nil:
-				personalityID = threadPersonality
-			case threadPersonality != nil && *personalityID != *threadPersonality:
-				return memoryScopeTarget{}, fmt.Errorf("%w: a thread memory can only be pinned to its thread's personality", ErrMemoryScopeMove)
-			}
+		if personalityID == nil && from == models.MemoryLevelThread {
+			personalityID = memoryChatPersonalityID(existing)
 		}
 		if personalityID == nil || *personalityID == uuid.Nil {
 			return memoryScopeTarget{}, fmt.Errorf("%w: choose the personality to pin the memory to", ErrMemoryScopeMove)
@@ -156,9 +153,6 @@ func (d *Datastore) memoryScopeMoveTarget(ctx context.Context, tx *ent.Tx, userI
 		if move.PersonalityID != nil {
 			return memoryScopeTarget{}, fmt.Errorf("%w: a move to thread takes no personality_id", ErrInvalidRequestBody)
 		}
-		if from == models.MemoryLevelThread {
-			return memoryScopeTarget{}, fmt.Errorf("%w: it is already a thread memory", ErrMemoryScopeMove)
-		}
 		// Never defaulted, not even to the origin: the caller names the thread.
 		if move.ChatID == nil || *move.ChatID == uuid.Nil {
 			return memoryScopeTarget{}, fmt.Errorf("%w: choose the thread to move the memory to", ErrMemoryScopeMove)
@@ -172,13 +166,6 @@ func (d *Datastore) memoryScopeMoveTarget(ctx context.Context, tx *ent.Tx, userI
 		}
 		if err != nil {
 			return memoryScopeTarget{}, err
-		}
-		affinity := existing.PinnedPersonalityID
-		if affinity == nil {
-			affinity = memoryChatPersonalityID(existing)
-		}
-		if affinity != nil && (dest.Edges.Personality == nil || dest.Edges.Personality.ID != *affinity) {
-			return memoryScopeTarget{}, fmt.Errorf("%w: that thread belongs to a different personality", ErrMemoryScopeMove)
 		}
 		isOrigin := origin != nil && *origin == dest.ID
 		if dest.ContextScope == entchat.ContextScopeSandbox && !isOrigin {
