@@ -23,11 +23,11 @@ func (r *paramsRecorder) CallWithRetry(_ context.Context, params responses.Respo
 	return nil, errors.New("recorded")
 }
 
-func TestParse_UtilityModelOmitsTemperature(t *testing.T) {
+func TestParse_OmitsTemperature(t *testing.T) {
 	t.Parallel()
 	rec := &paramsRecorder{}
 	_, err := Parse(context.Background(), rec, uuid.New(), "every day at 9am", "UTC", time.Now())
 	require.Error(t, err)
 	require.Equal(t, models.UtilityModelName, rec.params.Model)
-	require.False(t, rec.params.Temperature.Valid(), "the utility model rejects temperature")
+	require.False(t, rec.params.Temperature.Valid(), "requests never set temperature")
 }

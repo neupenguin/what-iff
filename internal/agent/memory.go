@@ -165,7 +165,6 @@ func (a *Agent) getMemoryQuery(ctx context.Context, userID uuid.UUID, prompt str
 	params := responses.ResponseNewParams{
 		Model:            models.UtilityModelName,
 		SafetyIdentifier: openai.String(userID.String()),
-		Temperature:      provider.TemperatureFor(models.UtilityModelName, provider.DefaultTemperature),
 		MaxOutputTokens:  openai.Int(provider.DefaultMaxContentLength),
 		Instructions:     openai.String(prompt),
 		Input: responses.ResponseNewParamsInputUnion{

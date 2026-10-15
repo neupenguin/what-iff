@@ -41,14 +41,16 @@ func capturingResponsesServer(t *testing.T, body string) (*httptest.Server, func
 	}
 }
 
-// requireNoTemperature asserts every captured request targeted the utility model without a
-// temperature param; the utility model 400s on any temperature value.
+// requireNoTemperature asserts every captured request left sampling at the provider default.
+// Requests never set temperature: models increasingly reject it (gpt-5.6-luna 400s on any
+// value), so sending it turns a model upgrade into a silent outage of that call site.
 func requireNoTemperature(t *testing.T, reqs []map[string]any) {
 	t.Helper()
 	require.NotEmpty(t, reqs, "expected at least one Responses API call")
 	for _, req := range reqs {
 		require.Equal(t, models.UtilityModelName, req["model"])
 		require.NotContains(t, req, "temperature")
+		require.NotContains(t, req, "top_p")
 	}
 }
 

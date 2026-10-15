@@ -108,7 +108,6 @@ func Parse(ctx context.Context, caller openAICaller, userID uuid.UUID, scheduleI
 	params := responses.ResponseNewParams{
 		Model:            models.UtilityModelName,
 		SafetyIdentifier: openai.String(userID.String()),
-		Temperature:      provider.TemperatureFor(models.UtilityModelName, 0.2),
 		MaxOutputTokens:  openai.Int(800),
 		Instructions:     openai.String(instructions),
 		Input: responses.ResponseNewParamsInputUnion{

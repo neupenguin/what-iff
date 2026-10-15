@@ -183,26 +183,3 @@ func TestDefaultModelIsSeeded(t *testing.T) {
 	require.NotNil(t, m, "AvailableModels must not be empty")
 	require.Equal(t, DefaultModelName, m.Name, "DefaultModelName must name an entry in AvailableModels")
 }
-
-func TestSupportsTemperature(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		model string
-		want  bool
-	}{
-		{name: "utility model rejects temperature", model: UtilityModelName, want: false},
-		{name: "default model", model: DefaultModelName, want: true},
-		{name: "older openai model", model: "gpt-4o", want: true},
-		{name: "unknown model", model: "not-a-model", want: true},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, SupportsTemperature(tt.model))
-		})
-	}
-}

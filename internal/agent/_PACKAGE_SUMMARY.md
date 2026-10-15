@@ -220,6 +220,7 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 - `message_context_builder_test.go` — builder ordering; `mergeAdditionalContextItems` dedupe.
 - `expression_generation_test.go` — expression picker JSON / markdown-fence parsing helpers.
 - `expression_grid_generation_test.go` — 3×3 PNG grid splice (`SlicePNGGrid3x3`), key-driven canvas prompt.
+- `no_temperature_test.go` — wire-level check that the expression picker (both branches), grid likeness and chat name requests carry no `temperature`/`top_p`.
 - `message_context_builder_expression_test.go` — prior-turn expression snapshot selection for continuity text.
 - `conversation_summary_test.go`, `scratchpad_test.go`, `memory_test.go`, `postprocessing_policy_test.go` — maintenance prompts and checkpoints.
 - `thread_rehydration_test.go` — imported-thread split at n-5 turns, assistant counting, char-budget chunking, and transcript rendering.
