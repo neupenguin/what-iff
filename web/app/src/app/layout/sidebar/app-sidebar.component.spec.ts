@@ -788,7 +788,9 @@ describe('AppSidebarComponent', () => {
 
                 row('Cooking').click();
                 expect(navSpy.setCollapsed).toHaveBeenCalledWith(true);
-                vi.runAllTimers();
+                // Pending timers only: the private build's header outlet runs a refresh setInterval,
+                // which runAllTimers would keep firing until Vitest aborts.
+                vi.runOnlyPendingTimers();
                 expect(focusSpy).toHaveBeenCalled();
                 expect(threadsStub.setActiveThreadId).toHaveBeenCalledWith('thread-2');
             } finally {
