@@ -25,12 +25,16 @@ class NoopComponent {
 }
 
 describe('AppLayoutComponent', () => {
+    /** Holds the /slow route's guard open until the test emits, to observe a pending navigation. */
+    let slowGate: Promise<boolean>;
+    let releaseSlowGate: (allow: boolean) => void;
     let unregister: Mock;
     let unregisterCommand: Mock;
     let unregisterShortcut: Mock;
     let paletteSpy: Pick<MockedObject<CommandPaletteService>, 'open' | 'close' | 'toggle' | 'setQuery' | 'register' | 'registerCommand' | 'runCommand' | 'visible' | 'query' | 'sections' | 'loading' | 'commandResults'>;
 
     beforeEach(async () => {
+        slowGate = new Promise<boolean>(resolve => (releaseSlowGate = resolve));
         unregister = vi.fn().mockName('unregister');
         unregisterCommand = vi.fn().mockName('unregisterCommand');
         unregisterShortcut = vi.fn().mockName('unregisterShortcut');
@@ -84,6 +88,7 @@ describe('AppLayoutComponent', () => {
                     { path: 'chat', component: NoopComponent },
                     { path: 'chat/:id', component: NoopComponent },
                     { path: 'memories', component: NoopComponent },
+                    { path: 'slow', component: NoopComponent, canActivate: [() => slowGate] },
                     { path: '**', component: NoopComponent },
                 ]),
                 { provide: AuthService, useValue: authSpy },
@@ -189,6 +194,73 @@ describe('AppLayoutComponent', () => {
 
         expect(router.url).toBe('/chat/ba83002b-fa33-4bff-a13a-6399376fc798');
         expect(nav.setCollapsed).toHaveBeenCalledWith(true);
+    });
+
+    it('closes the mobile drawer when a nav pick changes the page (#348)', async () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, false));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        const nav = TestBed.inject(NavService) as MockedObject<NavService>;
+        fixture.detectChanges();
+        await router.navigateByUrl('/chat');
+        vi.mocked(nav.setCollapsed).mockClear();
+
+        await router.navigateByUrl('/gallery');
+        expect(nav.setCollapsed).toHaveBeenCalledWith(true);
+
+        vi.mocked(nav.setCollapsed).mockClear();
+        await router.navigateByUrl('/gallery?filter=mine');
+        expect(nav.setCollapsed).not.toHaveBeenCalled();
+    });
+
+    it('keeps the mobile drawer open when the Config toggle switches modes', async () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, false));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        const nav = TestBed.inject(NavService) as MockedObject<NavService> & { isSwitchingMode: boolean };
+        fixture.detectChanges();
+        await router.navigateByUrl('/chat');
+        vi.mocked(nav.setCollapsed).mockClear();
+
+        // The toggle only swaps the drawer's menu, so its navigation must not close the drawer.
+        nav.isSwitchingMode = true;
+        await router.navigateByUrl('/memories');
+        nav.isSwitchingMode = false;
+        expect(nav.setCollapsed).not.toHaveBeenCalled();
+
+        // A page picked from the config menu afterwards still closes it.
+        await router.navigateByUrl('/gallery');
+        expect(nav.setCollapsed).toHaveBeenCalledWith(true);
+    });
+
+    it('leaves the desktop sidebar alone on navigation', async () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, true));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        const nav = TestBed.inject(NavService) as MockedObject<NavService>;
+        fixture.detectChanges();
+        await router.navigateByUrl('/chat');
+
+        await router.navigateByUrl('/gallery');
+        expect(nav.setCollapsed).not.toHaveBeenCalled();
+    });
+
+    it('shows the progress bar while a navigation is pending', async () => {
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        fixture.detectChanges();
+        await router.navigateByUrl('/chat');
+
+        const pending = router.navigateByUrl('/slow');
+        await vi.waitFor(() => expect(fixture.componentInstance.navigating()).toBe(true));
+        fixture.detectChanges();
+        expect((fixture.nativeElement as HTMLElement).querySelector('.app-layout__nav-progress')).not.toBeNull();
+
+        releaseSlowGate(true);
+        await pending;
+        fixture.detectChanges();
+        expect(fixture.componentInstance.navigating()).toBe(false);
+        expect((fixture.nativeElement as HTMLElement).querySelector('.app-layout__nav-progress')).toBeNull();
     });
 
     it('does not collapse the desktop sidebar after a successful New chat creation', async () => {
