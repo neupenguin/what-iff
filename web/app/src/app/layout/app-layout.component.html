@@ -3,7 +3,9 @@
 }
 <div class="app-layout" [class.app-layout--collapsed]="nav.collapsed()">
   <app-sidebar
+    id="app-sidebar"
     class="app-layout__sidebar"
+    [attr.inert]="isMobileNav() && nav.collapsed() ? '' : null"
     (newThread)="openPersonaPicker()"
     (generatePersonality)="openGeneratePersonality()"
   />
@@ -15,11 +17,13 @@
       (click)="closeMobileSidebar()"
     ></button>
   }
-  <main class="app-layout__main" id="main-content">
+  <main class="app-layout__main" id="main-content" tabindex="-1">
     @if (isMobileNav()) {
       <button
+        #mobileMenu
         type="button"
         class="app-layout__mobile-menu"
+        aria-controls="app-sidebar"
         [attr.aria-label]="nav.collapsed() ? 'Open navigation menu' : 'Close navigation menu'"
         [attr.aria-expanded]="!nav.collapsed()"
         (click)="toggleMobileSidebar()"
