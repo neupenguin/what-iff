@@ -313,13 +313,14 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   /**
    * On mobile the sidebar is a drawer over the page. Picking a destination in it has to close it:
    * otherwise the new screen loads underneath and the tap reads as having done nothing (#348).
-   * Only a change of path counts; query-only navigations (filters inside the drawer) keep it open.
+   * Only a change of path counts; query-only navigations (filters inside the drawer) keep it open,
+   * and so does the Config / exit-config toggle, which navigates but only swaps the drawer's menu.
    */
   private closeMobileSidebarOnPathChange(url: string): void {
     const path = AppLayoutComponent.pathOf(url);
     const changed = path !== this.lastPath;
     this.lastPath = path;
-    if (changed && this.isMobileNav() && !this.nav.collapsed()) {
+    if (changed && !this.nav.isSwitchingMode && this.isMobileNav() && !this.nav.collapsed()) {
       this.closeMobileSidebar();
     }
   }

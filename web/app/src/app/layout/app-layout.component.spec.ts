@@ -211,6 +211,26 @@ describe('AppLayoutComponent', () => {
         expect(nav.setCollapsed).not.toHaveBeenCalled();
     });
 
+    it('keeps the mobile drawer open when the Config toggle switches modes', async () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, false));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const router = TestBed.inject(Router);
+        const nav = TestBed.inject(NavService) as MockedObject<NavService> & { isSwitchingMode: boolean };
+        fixture.detectChanges();
+        await router.navigateByUrl('/chat');
+        vi.mocked(nav.setCollapsed).mockClear();
+
+        // The toggle only swaps the drawer's menu, so its navigation must not close the drawer.
+        nav.isSwitchingMode = true;
+        await router.navigateByUrl('/memories');
+        nav.isSwitchingMode = false;
+        expect(nav.setCollapsed).not.toHaveBeenCalled();
+
+        // A page picked from the config menu afterwards still closes it.
+        await router.navigateByUrl('/gallery');
+        expect(nav.setCollapsed).toHaveBeenCalledWith(true);
+    });
+
     it('leaves the desktop sidebar alone on navigation', async () => {
         vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, true));
         const fixture = TestBed.createComponent(AppLayoutComponent);
