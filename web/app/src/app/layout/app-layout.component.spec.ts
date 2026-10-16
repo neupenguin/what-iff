@@ -42,12 +42,15 @@ describe('AppLayoutComponent', () => {
             theme: (() => 'light') as any
         };
 
+        let navCollapsed = false;
         const navSpy = {
             setMode: vi.fn().mockName("NavService.setMode"),
             toggleCollapsed: vi.fn().mockName("NavService.toggleCollapsed"),
-            setCollapsed: vi.fn().mockName("NavService.setCollapsed"),
+            setCollapsed: vi.fn().mockName("NavService.setCollapsed").mockImplementation((value: boolean) => {
+                navCollapsed = value;
+            }),
             mode: (() => 'app') as any,
-            collapsed: (() => false) as any
+            collapsed: (() => navCollapsed) as any
         };
 
         paletteSpy = {
@@ -234,6 +237,37 @@ describe('AppLayoutComponent', () => {
         expect(unregisterShortcut).toHaveBeenCalled();
         expect(unregister).toHaveBeenCalled();
         expect(unregisterCommand).toHaveBeenCalled();
+    });
+
+    it('wires mobile drawer a11y: sidebar id, menu aria-controls, main tabindex, inert when closed', () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, false));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        fixture.detectChanges();
+        const host = fixture.nativeElement as HTMLElement;
+
+        const sidebar = host.querySelector('#app-sidebar') as HTMLElement;
+        expect(sidebar).toBeTruthy();
+        expect(sidebar.hasAttribute('inert')).toBe(true);
+
+        const main = host.querySelector('#main-content') as HTMLElement;
+        expect(main.getAttribute('tabindex')).toBe('-1');
+
+        const menu = host.querySelector('.app-layout__mobile-menu') as HTMLButtonElement;
+        expect(menu.getAttribute('aria-controls')).toBe('app-sidebar');
+        expect(menu.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('closes the mobile drawer on Escape', () => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => fakeMediaQueryList(query, false));
+        const fixture = TestBed.createComponent(AppLayoutComponent);
+        const nav = TestBed.inject(NavService) as MockedObject<NavService>;
+        fixture.detectChanges();
+        nav.setCollapsed(false);
+        fixture.detectChanges();
+        vi.mocked(nav.setCollapsed).mockClear();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(nav.setCollapsed).toHaveBeenCalledWith(true);
     });
 });
 

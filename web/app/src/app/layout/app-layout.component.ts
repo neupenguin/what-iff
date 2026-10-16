@@ -1,11 +1,14 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   HostListener,
   OnDestroy,
   OnInit,
+  effect,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 import { Subscription } from 'rxjs';
@@ -38,6 +41,8 @@ import { ContextPanelComponent } from '../features/chat/components/context-panel
 import { ModalComponent, ModalDismissReason } from '../shared/ui/modal/modal.component';
 import { ConfirmationService } from '../core/services/confirmation.service';
 import { SheetComponent } from '../shared/ui/sheet/sheet.component';
+import { createFocusTrap, releaseFocusTrap, type FocusTrapHandle } from '../shared/ui/helpers/focus-trap.helpers';
+import { isEscapeKey } from '../shared/ui/helpers/keyboard.helpers';
 import {
   MenuIconComponent,
   ChatIconComponent,
@@ -95,13 +100,26 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   readonly rightPanelService = inject(RightPanelService);
   readonly rightPanelContext = inject(ContextPanelService);
   private readonly document = inject(DOCUMENT);
+  private readonly mobileMenu = viewChild<ElementRef<HTMLButtonElement>>('mobileMenu');
   private mobileNavInitialized = false;
+  private mobileNavTrap: FocusTrapHandle | null = null;
 
   private shortcutHandle: ShortcutHandle | null = null;
   private disposers: Array<() => void> = [];
   private recentThreadCommandDisposers: Array<() => void> = [];
   private readonly subscriptions = new Subscription();
   private static readonly CHAT_THREAD_PATH_PATTERN = /^\/chat\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  constructor() {
+    effect(() => {
+      const drawerOpen = this.isMobileNav() && !this.nav.collapsed();
+      if (drawerOpen) {
+        setTimeout(() => this.activateMobileNavTrap(), 0);
+      } else {
+        this.releaseMobileNavTrap();
+      }
+    });
+  }
 
   ngOnInit(): void {
     this.shortcutHandle = this.shortcuts.register(
@@ -181,6 +199,7 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.releaseMobileNavTrap();
     this.subscriptions.unsubscribe();
     this.shortcutHandle?.();
     this.shortcutHandle = null;
@@ -188,6 +207,14 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
       dispose();
     }
     this.clearRecentThreadCommands();
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    if (!this.isMobileNav() || this.nav.collapsed()) return;
+    if (!isEscapeKey(event)) return;
+    event.preventDefault();
+    this.closeMobileSidebar();
   }
 
   openPersonaPicker(): void {
@@ -280,6 +307,20 @@ export class AppLayoutComponent implements OnInit, OnDestroy {
 
   closeMobileSidebar(): void {
     this.nav.setCollapsed(true);
+  }
+
+  private activateMobileNavTrap(): void {
+    if (!this.isMobileNav() || this.nav.collapsed() || this.mobileNavTrap) return;
+    const sidebar = this.document.getElementById('app-sidebar');
+    if (!sidebar) return;
+    this.mobileNavTrap = createFocusTrap(sidebar, {
+      restoreTo: this.mobileMenu()?.nativeElement ?? null,
+    });
+  }
+
+  private releaseMobileNavTrap(): void {
+    releaseFocusTrap(this.mobileNavTrap);
+    this.mobileNavTrap = null;
   }
 
   private setRightPanelVisibility(url: string): void {

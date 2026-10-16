@@ -250,12 +250,24 @@ describe('AppSidebarComponent', () => {
         expect(navSpy.toggleCollapsed).toHaveBeenCalled();
     });
 
-    it('labels the header panel toggle "Expand sidebar" and keeps it first on the collapsed rail', () => {
+    it('keeps the IF logo topmost on the collapsed rail with Expand just below it', () => {
         navCollapsed = true;
         const fixture = create();
-        const collapse = fixture.nativeElement.querySelector('.app-sidebar-header__collapse-toggle') as HTMLButtonElement;
+        const header = fixture.nativeElement.querySelector('.app-sidebar-header') as HTMLElement;
+        expect(header.classList).toContain('app-sidebar-header--collapsed');
+
+        const logo = header.querySelector('.app-sidebar-header__logo') as HTMLImageElement;
+        expect(logo).toBeTruthy();
+        expect(header.querySelector('.app-sidebar-header__brand')).toBeNull();
+
+        const collapse = header.querySelector('.app-sidebar-header__collapse-toggle') as HTMLButtonElement;
         expect(collapse.getAttribute('aria-label')).toBe('Expand sidebar');
         expect(collapse.getAttribute('aria-expanded')).toBe('false');
+
+        // Logo is a direct header child above the actions stack; toggle is first in that stack.
+        expect(logo.nextElementSibling?.classList.contains('app-sidebar-header__actions')).toBe(true);
+        const actions = header.querySelector('.app-sidebar-header__actions') as HTMLElement;
+        expect(actions.querySelector('.app-sidebar-header__collapse-toggle')).toBe(collapse);
         expect(fixture.nativeElement.querySelector('app-nav-actions-outlet')).not.toBeNull();
     });
 
@@ -378,14 +390,72 @@ describe('AppSidebarComponent', () => {
         expect(text.indexOf('Archived Chat')).toBeLessThan(text.indexOf('Recent One'));
     });
 
-    it('shows personality search input and opens dropdown on focus', () => {
+    it('shows the personality picker with people icon and opens the searchable dropdown on focus', () => {
         const fixture = create();
+        const picker = fixture.nativeElement.querySelector('.app-sidebar__personality-picker') as HTMLElement;
+        expect(picker.querySelector('ui-users-icon')).toBeTruthy();
+        expect(picker.querySelector('ui-search-icon')).toBeNull();
         const input = fixture.nativeElement.querySelector('.app-sidebar__personality-search') as HTMLInputElement;
-        expect(input?.getAttribute('placeholder')).toBe('Add more…');
+        expect(input?.getAttribute('placeholder')).toBe('Pick Personalities');
+        expect(input?.getAttribute('aria-label')).toBe('Pick personalities');
+        expect(input?.getAttribute('role')).toBeNull();
+        expect(picker.querySelector('button.app-sidebar__personality-chevron')).toBeNull();
+        expect(picker.querySelector('span.app-sidebar__personality-chevron')).toBeTruthy();
         input.dispatchEvent(new Event('focus'));
         fixture.detectChanges();
         const dropdown = fixture.nativeElement.querySelector('.app-sidebar__personality-dropdown');
         expect(dropdown).toBeTruthy();
+    });
+
+    it('names the Chat control by Thread Manager state and the All pill by its open action', () => {
+        vi.spyOn(router, 'navigate').mockResolvedValue(true);
+        const fixture = create();
+        const chat = fixture.nativeElement.querySelector('.app-sidebar__tab[aria-label="Open Thread Manager"]') as HTMLButtonElement;
+        expect(chat).toBeTruthy();
+        expect(chat.hasAttribute('aria-pressed')).toBe(false);
+
+        const all = fixture.nativeElement.querySelector('.app-sidebar__pill.app-sidebar__pill--active') as HTMLButtonElement;
+        expect(all.getAttribute('aria-label')).toBe('Open Thread Manager');
+
+        chat.click();
+        fixture.detectChanges();
+        threadsStub.activeThreadId.set(null);
+        fixture.detectChanges();
+        expect(
+            (fixture.nativeElement.querySelector('.app-sidebar__tab[aria-label="Back to thread"]') as HTMLButtonElement),
+        ).toBeTruthy();
+    });
+
+    it('filters personality options by typed name while keeping the picker open', () => {
+        personalityService.listPersonalities.mockReturnValue(of({
+            results: [
+                { id: 'persona-1', name: 'Ada', system_prompt: '', auto_pin_memories: false, expressions_enabled: true, image_style: 'auto', cover_image_id: null, cover_image_url: null, created_at: '', updated_at: '' },
+                { id: 'persona-2', name: 'Vera', system_prompt: '', auto_pin_memories: false, expressions_enabled: true, image_style: 'auto', cover_image_id: null, cover_image_url: null, created_at: '', updated_at: '' },
+            ],
+            total_count: 2,
+            page: 1,
+        }));
+        const fixture = create();
+        const input = fixture.nativeElement.querySelector('.app-sidebar__personality-search') as HTMLInputElement;
+        input.value = 'ver';
+        input.dispatchEvent(new Event('input'));
+        fixture.detectChanges();
+        expect(optionLabels(fixture)).toEqual(['Vera']);
+    });
+
+    it('clears Pick Personalities and closes the dropdown on Escape', () => {
+        const fixture = create();
+        const input = fixture.nativeElement.querySelector('.app-sidebar__personality-search') as HTMLInputElement;
+        input.value = 'Ada';
+        input.dispatchEvent(new Event('input'));
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('.app-sidebar__personality-dropdown')).toBeTruthy();
+
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        fixture.detectChanges();
+        expect(input.value).toBe('');
+        expect(fixture.componentInstance.personalityQuery()).toBe('');
+        expect(fixture.nativeElement.querySelector('.app-sidebar__personality-dropdown')).toBeNull();
     });
 
     it('toggles personality selection from dropdown options', () => {
@@ -700,6 +770,30 @@ describe('AppSidebarComponent', () => {
                 expect(navSpy.setCollapsed).toHaveBeenCalledWith(true);
                 expect(fixture.nativeElement.querySelector('.app-sidebar__ref-bar')).toBeNull();
             } finally {
+                restore();
+            }
+        });
+
+        it('closes the mobile drawer and focuses main content after opening a thread', () => {
+            const restore = stubViewport(true);
+            const main = document.createElement('main');
+            main.id = 'main-content';
+            main.tabIndex = -1;
+            document.body.appendChild(main);
+            const focusSpy = vi.spyOn(main, 'focus');
+            try {
+                const { row } = setup();
+                vi.spyOn(router, 'navigate').mockResolvedValue(true);
+                vi.mocked(navSpy.setCollapsed).mockClear();
+
+                row('Cooking').click();
+                expect(navSpy.setCollapsed).toHaveBeenCalledWith(true);
+                vi.runAllTimers();
+                expect(focusSpy).toHaveBeenCalled();
+                expect(threadsStub.setActiveThreadId).toHaveBeenCalledWith('thread-2');
+            } finally {
+                focusSpy.mockRestore();
+                main.remove();
                 restore();
             }
         });

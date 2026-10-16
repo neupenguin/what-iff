@@ -3,7 +3,7 @@
   class="app-sidebar-profile"
   [class.app-sidebar-profile--collapsed]="collapsed()"
   [attr.aria-label]="'Open profile for ' + fullName()"
-  [uiTooltip]="collapsed() ? 'Profile & settings' : ''"
+  [uiTooltip]="collapsed() ? fullName() : ''"
   placement="right"
   (click)="openProfile()"
 >

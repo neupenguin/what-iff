@@ -26,6 +26,7 @@ import {
   SearchIconComponent,
   SparkleIconComponent,
   UserIconComponent,
+  UsersIconComponent,
 } from '../../shared/ui/icons/icons';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
 import { AuthImagePipe } from '../../core/pipes/auth-image.pipe';
@@ -80,6 +81,7 @@ const SIDEBAR_MOBILE_QUERY = '(max-width: 1023px)';
     SearchIconComponent,
     SparkleIconComponent,
     UserIconComponent,
+    UsersIconComponent,
     TooltipDirective,
   ],
   templateUrl: './app-sidebar.component.html',
@@ -467,6 +469,14 @@ export class AppSidebarComponent implements OnInit, OnDestroy {
     return this.isChatView() && !this.threads.activeThreadId();
   }
 
+  /** Accessible name for the Chat control: reflects Thread Manager open/return, not a silent pressed state. */
+  chatNavAriaLabel(): string {
+    if (this.isThreadManagerView()) {
+      return this.threadManagerReturnId ? 'Back to thread' : 'Chat';
+    }
+    return 'Open Thread Manager';
+  }
+
   /**
    * Chat nav button: toggles the Thread Manager instead of re-navigating to (and reloading) the
    * currently open thread. From a thread — or any other view — it opens the manager; from the manager
@@ -637,6 +647,12 @@ export class AppSidebarComponent implements OnInit, OnDestroy {
     }
     this.threads.setActiveThreadId(threadId);
     void this.router.navigate(['/chat', threadId]);
+    if (this.isMobileViewport()) {
+      this.nav.setCollapsed(true);
+      setTimeout(() => {
+        (this.document.getElementById('main-content') as HTMLElement | null)?.focus();
+      }, 0);
+    }
   }
 
   threadAvatarMeta(threadId: string): { coverUrl: string | null; transform: string | null; accentColor: string | null; accentSurface: string | null } {
@@ -689,6 +705,18 @@ export class AppSidebarComponent implements OnInit, OnDestroy {
 
   closePersonalityDropdown(): void {
     setTimeout(() => this.personalityDropdownOpen.set(false), 100);
+  }
+
+  /** Escape clears the query and closes the combobox (matches thread search / persona picker). */
+  onPersonalitySearchEscape(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.personalityQuery.set('');
+    this.personalityDropdownOpen.set(false);
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      target.blur();
+    }
   }
 
   togglePersonalityFilter(personalityId: string, event?: Event): void {

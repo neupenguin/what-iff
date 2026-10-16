@@ -267,11 +267,24 @@
   transform: translateY(-50%);
   color: var(--text-muted);
   pointer-events: none;
+  display: inline-flex;
+}
+
+.app-sidebar__personality-chevron {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
 }
 
 .app-sidebar__personality-search {
   width: 100%;
-  padding: 5px 8px 5px 26px;
+  padding: 5px 26px 5px 26px;
   border-radius: 5px;
   box-sizing: border-box;
   border: 1px solid var(--border);
