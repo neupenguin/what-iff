@@ -281,10 +281,8 @@ func (a *Agent) handleEphemeralPrompt(
 		return nil, err
 	}
 
-	// Values stored on the Chat row — overrides apply only to this run; must not be written back.
-	persistedModelID := chatCtx.chat.ModelID
-	persistedPersonalityID := chatCtx.chat.PersonalityID
-
+	// Overrides below apply only to this run; the save after inference writes continuity only, so
+	// they never reach the Chat row.
 	if modelOverrideID != nil {
 		model, err := a.ds.GetModel(ctx, *modelOverrideID)
 		if err == nil && model != nil {
@@ -342,11 +340,9 @@ func (a *Agent) handleEphemeralPrompt(
 	lastMessageTime := time.Unix(resp.CreatedAt, 0)
 	chatCtx.chat.LastMessageTime = &lastMessageTime
 
-	// Persist only thread metadata; keep the chat's saved model/personality (do not store job overrides).
-	chatForDB := *chatCtx.chat
-	chatForDB.ModelID = persistedModelID
-	chatForDB.PersonalityID = persistedPersonalityID
-	if _, err := a.ds.UpdateChat(ctx, userID, chatForDB); err != nil {
+	// Persist only thread continuity: chatCtx.chat carries this job's model/personality overrides
+	// and the turn-start copy of everything else, none of which may be written back (#347).
+	if err := a.ds.UpdateChatContinuity(ctx, userID, chatCtx.chat.ID, resp.ID, &lastMessageTime); err != nil {
 		return nil, fmt.Errorf("failed to update chat metadata: %w", err)
 	}
 

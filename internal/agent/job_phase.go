@@ -82,7 +82,9 @@ func (a *Agent) persistUserTurnAndChatAfterInference(ctx context.Context, userID
 		chat.ResponseID = &result.ID
 		lastMessageTime := time.Unix(result.CreatedAt, 0)
 		chat.LastMessageTime = &lastMessageTime
-		if _, err := a.ds.UpdateChat(ctx, userID, *chat); err != nil {
+		// Continuity only: chat is the turn-start copy, and saving it whole reverted any model,
+		// personality or setting change the user made while the turn ran (#347).
+		if err := a.ds.UpdateChatContinuity(ctx, userID, chat.ID, result.ID, &lastMessageTime); err != nil {
 			a.logger.Warn("failed to update chat continuity after inference", zap.Error(err))
 		}
 	}
