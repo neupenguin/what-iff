@@ -2567,14 +2567,14 @@ func (a *Agent) finalizeChat(ctx context.Context, userID uuid.UUID, chatMessage,
 		if err != nil {
 			a.logger.Error("failed to generate chat name", zap.Error(err))
 		} else {
-			chatCtx.chat.Name = chatName
-			// Write only the name: leave the response chain this turn saved at inference alone
-			// (UpdateChat skips nil fields).
-			named := *chatCtx.chat
-			named.ResponseID, named.LastMessageTime = nil, nil
-			_, err = a.ds.UpdateChat(ctx, userID, named)
+			// Write only the name, and only over the placeholder: the rest of chatCtx.chat is the
+			// turn-start copy, and the user may have renamed the thread or changed its model or
+			// personality while this reply generated (#347).
+			renamed, err := a.ds.RenameChatIfNamed(ctx, userID, chatCtx.chat.ID, chatName, defaultChatName, legacyDefaultChatName)
 			if err != nil {
 				a.logger.Error("failed to update chat name", zap.Error(err))
+			} else if renamed {
+				chatCtx.chat.Name = chatName
 			}
 		}
 	}
