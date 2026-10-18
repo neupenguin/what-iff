@@ -74,18 +74,19 @@
     clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
   }
 
-  // `--on` is the ax level 2+ div checkbox, whose checked state is only this class.
-  &:checked,
-  &.memory-card__checkbox--on,
-  &[class*='memory-card__checkbox--on-ax'] {
+  &:checked {
     background: var(--color-accent);
     border-color: var(--color-accent);
   }
 
-  &:checked::before,
-  &.memory-card__checkbox--on::before,
-  &[class*='memory-card__checkbox--on-ax']::before {
+  &:checked::before {
     transform: scale(1);
+  }
+
+  // The ax level 2+ div checkbox, whose checked state is only this class.
+  &.memory-card__checkbox--on,
+  &[class*='memory-card__checkbox--on-ax'] {
+    @include ax-checked-checkbox-look;
   }
 
   &:focus-visible {

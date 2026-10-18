@@ -301,15 +301,18 @@
   clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
 }
 
-.memories-list__checkbox:checked,
-.memories-list__checkbox--on {
+.memories-list__checkbox:checked {
   background: var(--color-accent);
   border-color: var(--color-accent);
 }
 
-.memories-list__checkbox:checked::before,
-.memories-list__checkbox--on::before {
+.memories-list__checkbox:checked::before {
   transform: scale(1);
+}
+
+// The ax level 2+ div "Select all" checkbox (see ./_ax.scss).
+.memories-list__checkbox--on {
+  @include ax-checked-checkbox-look;
 }
 
 .memories-list__bulk-count {

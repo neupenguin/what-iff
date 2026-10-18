@@ -31,3 +31,19 @@
     user-select: none;
   }
 }
+
+// What a checked native checkbox actually paints here: the component's own
+// scaled `::before` tick over Flowbite's form reset, whose brand-colour fill
+// is `!important` and so beats the component's accent background (see
+// flowbite/plugin.js; the reset's SVG tick loses to the component's
+// `background` shorthand). The level 2+ div checkbox reproduces that, so it
+// renders the same pixels.
+@mixin ax-checked-checkbox-look {
+  color: var(--color-brand);
+  background: currentColor;
+  border-color: currentColor;
+
+  &::before {
+    transform: scale(1);
+  }
+}
