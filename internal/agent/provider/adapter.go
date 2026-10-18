@@ -90,6 +90,10 @@ type AgentAdapter interface {
 type ReasoningStream struct {
 	OnDelta func(delta string)
 	OnReset func()
+	// OnDiscardCall, when set, replaces OnReset and the re-send: it means "discard what the
+	// current call streamed" and nothing is re-sent. For consumers that keep their own record of
+	// earlier calls (the Advanced loop's transcript, which interleaves them with reply text).
+	OnDiscardCall func()
 }
 
 // ReasoningStreamer is implemented by adapters that can stream reasoning live

@@ -866,6 +866,10 @@ type chatContext struct {
 	// callInputTokens are the input tokens of every model call an Advanced run has made so far,
 	// appended as they complete so a cancelled run still reports them (metering.Usage).
 	callInputTokens []int64
+	// plan is an Advanced run's checklist (update_plan); planVersion counts its changes, so the
+	// loop can tell whether a step made progress.
+	plan        []models.PlanItem
+	planVersion int
 	// expressionsEnabled mirrors personality.ExpressionsEnabled; when false,
 	// expression picking is skipped for this turn.
 	expressionsEnabled bool
@@ -1106,6 +1110,11 @@ func (a *Agent) generateAssistantForMessage(ctx context.Context, userID uuid.UUI
 		a.recordTurnStage(ctx, turnStageInference, time.Since(start))
 	}()
 
+	if chatCtx.turnSettings.Advanced() && modelContext != nil {
+		// Advanced turns are told how the loop works (ADR 0x026). Added to the turn's own context so
+		// the Context X-ray shows it.
+		modelContext.InsertBeforeLastUserMessage(provider.SegmentKindDeveloperContext, provider.RoleDeveloper, advancedLoopInstructions, false)
+	}
 	a.recordModelContextSegmentEstimates(ctx, modelContext)
 
 	agentMessage, result, err := a.dispatchAssistantGeneration(ctx, userID, chatJob, chatMessage, chatCtx, modelContext)
@@ -1150,6 +1159,11 @@ type generationOptions struct {
 	provider       string
 	mergeToolCalls func(toolCalls []*models.ToolCall) []*models.ToolCall
 	afterSave      func(ctx context.Context, agentMessage *models.ChatMessage)
+	// rebuild builds a fresh adapter for the turn from a ModelContext, and modelContext is the
+	// turn's original one: the Advanced loop compacts a long run by starting again from it
+	// (ADR 0x026). Nil rebuild disables compaction.
+	rebuild      func(mc *provider.ModelContext) (provider.AgentAdapter, error)
+	modelContext *provider.ModelContext
 }
 
 // runGeneration drives an already-configured AgentAdapter through the shared
@@ -1161,6 +1175,13 @@ type generationOptions struct {
 // persistence, draft/final reconciliation, save shape): callers differ only
 // in how their AgentAdapter and generationOptions are constructed.
 func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, adapter provider.AgentAdapter, opts generationOptions) (*models.ChatMessage, *provider.GenerateResponse, error) {
+	if chatCtx.turnSettings.Advanced() {
+		if _, ok := adapter.(provider.Continuer); ok {
+			return a.runAdvancedGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, opts)
+		}
+		a.logger.Warn("adapter cannot run the Advanced loop; running the Standard loop",
+			zap.String("provider", opts.provider), zap.String("model", chatCtx.model))
+	}
 	draftBuffer := newJobDraftDeltaBuffer(a.lifecycleCtx, a.ds, a.logger, chatJob, jobDraftDeltaFlushMinChars, jobDraftDeltaFlushMaxWait)
 	adapter.SetTextDeltaHandler(draftBuffer.HandleDelta)
 	defer draftBuffer.Flush()
@@ -1205,6 +1226,12 @@ func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *mo
 	if streamed := strings.TrimSpace(draftBuffer.allText); streamed != "" {
 		result.Text = streamed
 	}
+	return a.finishGeneration(ctx, userID, chatMessage, chatCtx, adapter, opts, result, toolCalls, generatedAttachments)
+}
+
+// finishGeneration is runGeneration after the loop, shared with the Advanced loop: web-search
+// accounting, tool-call merge and metrics, the empty-turn guard, and the save.
+func (a *Agent) finishGeneration(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage, chatCtx *chatContext, adapter provider.AgentAdapter, opts generationOptions, result *provider.GenerateResponse, toolCalls []*models.ToolCall, generatedAttachments []*models.FileAttachment) (*models.ChatMessage, *provider.GenerateResponse, error) {
 	chatCtx.webSearchCount = a.turnWebSearchCount(adapter, toolCalls)
 
 	if opts.mergeToolCalls != nil {
@@ -1245,13 +1272,16 @@ func (a *Agent) generateAssistantForMessageMock(ctx context.Context, userID uuid
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
 	chatCtx.setOfferedTools(policy.offeredAgentToolNames())
 
-	adapter := provider.NewMockAdapter(provider.MockAdapterConfig{
-		Mode:           a.mockLLMMode,
-		EchoText:       chatMessage.Message,
-		FixedResponses: a.mockFixedResponses,
-		ChunkDelay:     a.mockStreamDelay,
-	})
-	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: "mock"})
+	build := func(*provider.ModelContext) (provider.AgentAdapter, error) {
+		return provider.NewMockAdapter(provider.MockAdapterConfig{
+			Mode:           a.mockLLMMode,
+			EchoText:       chatMessage.Message,
+			FixedResponses: a.mockFixedResponses,
+			ChunkDelay:     a.mockStreamDelay,
+		}), nil
+	}
+	adapter, _ := build(modelContext)
+	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: "mock", rebuild: build, modelContext: modelContext})
 }
 
 func mergedRitualIDsForTools(chatMessage *models.ChatMessage, activeMood *models.Mood) []uuid.UUID {
@@ -1304,10 +1334,12 @@ func (a *Agent) openAIResponseParamsForChat(ctx context.Context, chatCtx *chatCo
 			NativeWebSearch: policy.nativeWebSearch,
 		})
 		agentTools := getAgentToolsList(policy.disabledTools, policy.showMoodTools)
+		turnSpecs := turnOnlyToolSpecs(chatCtx)
+		agentTools = append(agentTools, tools.OpenAIFunctionTools(turnSpecs)...)
 		mcpSpecs := a.prepareTurnMCPToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy.ritualIDs)
 		mcpTools := tools.OpenAIFunctionTools(mcpSpecs)
 		toolParams = provider.BuildOpenAITools(chatCtx.model, chatTools, agentTools, mcpTools)
-		offered := offeredToolNames(append(tools.AgentFunctionToolSpecs(policy.showMoodTools), mcpSpecs...), policy.disabledTools)
+		offered := offeredToolNames(append(append(tools.AgentFunctionToolSpecs(policy.showMoodTools), turnSpecs...), mcpSpecs...), policy.disabledTools)
 		chatCtx.setOfferedTools(offered)
 		a.prepareTurnLoadableTools(ctx, chatCtx, offered)
 	} else {
@@ -1333,13 +1365,22 @@ func (a *Agent) openAIResponseParamsForChat(ctx context.Context, chatCtx *chatCo
 }
 
 func (a *Agent) generateAssistantForMessageOpenAI(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	params := a.openAIResponseParamsForChat(ctx, chatCtx, userID, chatMessage, modelContext)
-	// A selected reasoning effort (ADR 0x026); none leaves the request as it was.
-	provider.ApplyOpenAIReasoning(&params, chatCtx.reasoningEffort)
-	adapter := provider.NewOpenAIAdapter(a.OpenAIProvider, params)
+	// adapter is the turn's current adapter: the Advanced loop may replace it (rebuild), and the
+	// hooks below read whichever is current.
+	var adapter *provider.OpenAIAdapter
+	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
+		params := a.openAIResponseParamsForChat(ctx, chatCtx, userID, chatMessage, mc)
+		// A selected reasoning effort (ADR 0x026); none leaves the request as it was.
+		provider.ApplyOpenAIReasoning(&params, chatCtx.reasoningEffort)
+		adapter = provider.NewOpenAIAdapter(a.OpenAIProvider, params)
+		return adapter, nil
+	}
+	first, _ := build(modelContext)
 
 	opts := generationOptions{
-		provider: "OpenAI",
+		provider:     "OpenAI",
+		rebuild:      build,
+		modelContext: modelContext,
 		// Persist any image/code-interpreter attachments (OpenAI-specific). The
 		// unified loop returns a provider-agnostic GenerateResponse, so we
 		// retrieve the raw response from the adapter to pass provider-specific
@@ -1355,7 +1396,7 @@ func (a *Agent) generateAssistantForMessageOpenAI(ctx context.Context, userID uu
 			return mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromOpenAIResponses(adapter.AllRawResponses()...))
 		}
 	}
-	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, opts)
+	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, first, opts)
 }
 
 // claudeProviderForModel selects the Anthropic-Messages-API provider for the model
@@ -1382,49 +1423,55 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 		return nil, nil, err
 	}
 
-	// Build the full message list from DB history + context injections.
-	// User images use base64 blocks when `UserMessageImage.RawBytes` is populated
-	// (see `loadImageBytesForVision`); otherwise the user turn falls back to text-only.
-	claudeParams := visionRenderContext(chatCtx, modelContext).BuildClaudeParams(chatCtx.model)
-
-	// GLM/z.ai models always think and ignore a thinking budget; left alone, reasoning
-	// can eat the whole output cap and the turn truncates before any answer. Bound it
-	// with output_config.effort and a raised cap (see provider.ZAIReasoningEffort).
-	// A selected reasoning effort maps onto it (ADR 0x026); with none, GLM keeps its fixed effort.
+	// adapter is the turn's current adapter: the Advanced loop may replace it (rebuild), and the
+	// hooks below read whichever is current.
 	zai := models.IsZAIModel(chatCtx.modelProvider, chatCtx.model)
-	replayThinking := false
-	if zai {
-		provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffortFor(chatCtx.reasoningEffort))
-	} else {
-		replayThinking = provider.ApplyClaudeReasoning(&claudeParams, chatCtx.reasoningEffort)
-	}
+	var adapter *provider.ClaudeAdapter
+	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
+		// Build the full message list from DB history + context injections.
+		// User images use base64 blocks when `UserMessageImage.RawBytes` is populated
+		// (see `loadImageBytesForVision`); otherwise the user turn falls back to text-only.
+		claudeParams := visionRenderContext(chatCtx, mc).BuildClaudeParams(chatCtx.model)
 
-	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
-	a.recordToolDefinitionEstimate(modelContext, claudeFunctionTools(chatCtx.visibleToolSpecs(specs)))
-	claudeFunctionTools := claudeFunctionTools(specs)
-	webSearchEnabled := nativeAnthropic && policy.nativeWebSearch
-	adapter := provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools, webSearchEnabled, nil, policy.disabledTools)
-	adapter.SetReplayThinking(replayThinking)
-	if zai {
-		adapter.SetTruncationFallback(func(params *anthropic.MessageNewParams) {
-			a.logger.Warn("z.ai response truncated before any reply text; retrying at lower reasoning effort",
-				zap.String("model", chatCtx.model),
-				zap.String("chat_id", chatMessage.ChatID.String()),
-				zap.String("effort", provider.ZAIFallbackReasoningEffort),
-			)
-			provider.ApplyZAIReasoningEffort(params, provider.ZAIFallbackReasoningEffort)
-		})
-	}
+		// GLM/z.ai models always think and ignore a thinking budget; left alone, reasoning
+		// can eat the whole output cap and the turn truncates before any answer. Bound it
+		// with output_config.effort and a raised cap (see provider.ZAIReasoningEffort).
+		// A selected reasoning effort maps onto it (ADR 0x026); with none, GLM keeps its fixed effort.
+		replayThinking := false
+		if zai {
+			provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffortFor(chatCtx.reasoningEffort))
+		} else {
+			replayThinking = provider.ApplyClaudeReasoning(&claudeParams, chatCtx.reasoningEffort)
+		}
 
-	opts := generationOptions{provider: "Claude"}
+		policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
+		specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
+		a.recordToolDefinitionEstimate(mc, claudeFunctionTools(chatCtx.visibleToolSpecs(specs)))
+		webSearchEnabled := nativeAnthropic && policy.nativeWebSearch
+		adapter = provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools(specs), webSearchEnabled, nil, policy.disabledTools)
+		adapter.SetReplayThinking(replayThinking)
+		if zai {
+			adapter.SetTruncationFallback(func(params *anthropic.MessageNewParams) {
+				a.logger.Warn("z.ai response truncated before any reply text; retrying at lower reasoning effort",
+					zap.String("model", chatCtx.model),
+					zap.String("chat_id", chatMessage.ChatID.String()),
+					zap.String("effort", provider.ZAIFallbackReasoningEffort),
+				)
+				provider.ApplyZAIReasoningEffort(params, provider.ZAIFallbackReasoningEffort)
+			})
+		}
+		return adapter, nil
+	}
+	first, _ := build(modelContext)
+
+	opts := generationOptions{provider: "Claude", rebuild: build, modelContext: modelContext}
 	if !a.FirstPartyWebSearch() {
 		opts.mergeToolCalls = func(toolCalls []*models.ToolCall) []*models.ToolCall {
 			toolCalls = mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeMessages(adapter.AllRawMessages()...))
 			return mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeBetaMessages(adapter.AllRawBetaMessages()...))
 		}
 	}
-	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, opts)
+	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, first, opts)
 }
 
 // generateAssistantForMessageGemini drives a chat turn through Google's
@@ -1435,26 +1482,29 @@ func (a *Agent) generateAssistantForMessageGemini(ctx context.Context, userID uu
 		return nil, nil, fmt.Errorf("Gemini model %q requested but GEMINI_API_KEY is not configured", chatCtx.model)
 	}
 
-	geminiParams := visionRenderContext(chatCtx, modelContext).BuildGeminiParams(chatCtx.model)
+	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
+		geminiParams := visionRenderContext(chatCtx, mc).BuildGeminiParams(chatCtx.model)
 
-	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
-	a.recordToolDefinitionEstimate(modelContext, geminiFunctionTools(chatCtx.visibleToolSpecs(specs)))
-	geminiFunctionTools := geminiFunctionTools(specs)
-	toolNames := make([]string, 0, len(geminiFunctionTools))
-	for _, t := range geminiFunctionTools {
-		if t.OfFunction != nil {
-			toolNames = append(toolNames, t.OfFunction.Function.Name)
+		policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
+		specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
+		a.recordToolDefinitionEstimate(mc, geminiFunctionTools(chatCtx.visibleToolSpecs(specs)))
+		geminiFunctionTools := geminiFunctionTools(specs)
+		toolNames := make([]string, 0, len(geminiFunctionTools))
+		for _, t := range geminiFunctionTools {
+			if t.OfFunction != nil {
+				toolNames = append(toolNames, t.OfFunction.Function.Name)
+			}
 		}
+		a.logger.Info("gemini turn starting",
+			zap.String("model", chatCtx.model),
+			zap.String("chat_id", chatMessage.ChatID.String()),
+			zap.Strings("tools", toolNames),
+		)
+		return provider.NewGeminiAdapter(a.GeminiProvider, geminiParams, geminiFunctionTools, policy.disabledTools, a.logger), nil
 	}
-	a.logger.Info("gemini turn starting",
-		zap.String("model", chatCtx.model),
-		zap.String("chat_id", chatMessage.ChatID.String()),
-		zap.Strings("tools", toolNames),
-	)
-	adapter := provider.NewGeminiAdapter(a.GeminiProvider, geminiParams, geminiFunctionTools, policy.disabledTools, a.logger)
+	adapter, _ := build(modelContext)
 
-	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: "Gemini"})
+	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: "Gemini", rebuild: build, modelContext: modelContext})
 }
 
 // generateAssistantForMessageLocal drives a chat turn through a real local
@@ -1524,19 +1574,22 @@ func (a *Agent) generateAssistantForMessageLocal(ctx context.Context, userID uui
 // OpenAI-compatible Chat Completions API (Mistral, DeepSeek, Qwen, Xiaomi MiMo).
 // Gemini uses a separate path for tool-call compatibility.
 func (a *Agent) generateAssistantForMessageOpenAIChatCompletions(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	params := buildOpenAIChatCompletionsParams(chatCtx, modelContext)
+	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
+		params := buildOpenAIChatCompletionsParams(chatCtx, mc)
 
-	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
-	specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
-	functionTools := openAIChatCompletionFunctionTools(specs)
-	a.recordToolDefinitionEstimate(modelContext, openAIChatCompletionFunctionTools(chatCtx.visibleToolSpecs(specs)))
+		policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
+		specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
+		functionTools := openAIChatCompletionFunctionTools(specs)
+		a.recordToolDefinitionEstimate(mc, openAIChatCompletionFunctionTools(chatCtx.visibleToolSpecs(specs)))
 
-	adapter, err := a.openAIChatCompletionsAdapter(chatCtx, params, functionTools, policy.disabledTools)
+		return a.openAIChatCompletionsAdapter(chatCtx, params, functionTools, policy.disabledTools)
+	}
+	adapter, err := build(modelContext)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: string(chatCtx.modelProvider)})
+	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, adapter, generationOptions{provider: string(chatCtx.modelProvider), rebuild: build, modelContext: modelContext})
 }
 
 func buildOpenAIChatCompletionsParams(chatCtx *chatContext, modelContext *provider.ModelContext) openai.ChatCompletionNewParams {
