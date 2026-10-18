@@ -82,7 +82,16 @@ type chatCompletionsFinal struct {
 // echoed) and then text as a user turn.
 func (f *chatCompletionsFinal) continueWith(messages *[]openai.ChatCompletionMessageParamUnion, text, reasoning string) {
 	if f.last != nil && len(f.last.Choices) > 0 {
-		*messages = append(*messages, chatCompletionAssistantReplay(f.last.Choices[0].Message, reasoning))
+		// Built from the extracted text rather than the SDK's ToAssistantMessageParam, which can
+		// lose the content of a message the stream accumulator assembled (see
+		// chatCompletionAssistantReplay).
+		p := openai.ChatCompletionAssistantMessageParam{
+			Content: openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(ExtractChatCompletionText(f.last))},
+		}
+		if strings.TrimSpace(reasoning) != "" {
+			p.SetExtraFields(map[string]any{"reasoning_content": reasoning})
+		}
+		*messages = append(*messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &p})
 		f.last = nil
 	}
 	*messages = append(*messages, openai.UserMessage(text))

@@ -167,6 +167,7 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 
 - `mock_adapter_test.go` — echo/fixed/scripted modes, delta concatenation (unicode, no-space, newline-heavy), mid-stream cancellation.
 - `reasoning_effort_test.go` — the effort mappings per provider, OpenAI summary extraction, and streamed summary deltas.
+- `continuation_test.go`, `chat_completions_replay_test.go` — `ContinueWith` on the Claude (with and without thinking replay), OpenAI and Chat Completions adapters.
   `call_timeouts_test.go` — each limit against `httptest` servers (slow response, stalled and endless streams), a healthy stream outliving `Request`, caller cancel staying a cancel, and a stalled Claude stream timing out after one attempt.
   `deny_transport_test.go` — proves an `httptest` server is never reached, including through a real openai-go client built on the deny client.
 - `model_context_test.go`, `model_context_hydrate_test.go`, `model_context_openai_test.go` — segment assembly, hydration helpers, OpenAI/Claude rendering (including Claude text fallback when image bytes absent).

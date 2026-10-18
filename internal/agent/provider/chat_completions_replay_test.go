@@ -2,12 +2,15 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -112,4 +115,30 @@ func TestExtractChatCompletionToolUses_EmptyArgumentsBecomeEmptyObject(t *testin
 	require.NoError(t, err)
 	require.Len(t, uses, 1)
 	require.JSONEq(t, `{}`, string(uses[0].Input))
+}
+
+// ContinueWith records the final reply as plain assistant text (with MiMo's reasoning echoed)
+// before the next user turn.
+func TestChatCompletionsFinal_ContinueWithAppendsReplyThenUser(t *testing.T) {
+	var resp openai.ChatCompletion
+	if err := json.Unmarshal([]byte(`{"id":"c1","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"partial answer"}}]}`), &resp); err != nil {
+		t.Fatal(err)
+	}
+	f := chatCompletionsFinal{last: &resp}
+	var msgs []openai.ChatCompletionMessageParamUnion
+	f.continueWith(&msgs, "keep going", "my reasoning")
+
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{`"role":"assistant"`, `"content":"partial answer"`, `"reasoning_content":"my reasoning"`, `"role":"user"`, `"content":"keep going"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	if f.last != nil {
+		t.Errorf("the reply is recorded once")
+	}
 }
