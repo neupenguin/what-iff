@@ -6,7 +6,16 @@ import { ChatStreamingService } from '../../core/services/chat-streaming.service
 import { JobService } from '../../core/services/job.service';
 import { MessageService } from '../../core/services/message.service';
 import { ChatMessage } from '../../core/models/message.model';
-import { CHAT_TURN_WAITING_STATES, ChatTurnProgress, ChatTurnToolCall, ChatTurnWaiting, Job } from '../../core/models/job.model';
+import {
+  CHAT_TURN_PLAN_STATUSES,
+  CHAT_TURN_WAITING_STATES,
+  ChatTurnAdvancedProgress,
+  ChatTurnPlanItem,
+  ChatTurnProgress,
+  ChatTurnToolCall,
+  ChatTurnWaiting,
+  Job,
+} from '../../core/models/job.model';
 import { apiErrorMessage } from '../../core/utils/api-error.helpers';
 import { CHAT_JOB_POLL_INTERVAL_MS, CHAT_PENDING_ASSISTANT_MESSAGE_ID } from './chat.constants';
 import { ChatSendGate } from './services/chat-send-gate';
@@ -51,6 +60,7 @@ export class AssistantTurn {
   private readonly _pendingAssistantDraftText = signal('');
   private readonly _liveToolCalls = signal<readonly ChatTurnToolCall[]>([]);
   private readonly _waitingOn = signal<ChatTurnWaiting | null>(null);
+  private readonly _advancedProgress = signal<ChatTurnAdvancedProgress | null>(null);
   /** Live model reasoning for the pending reply; replaced wholesale on each job snapshot. */
   private readonly _pendingAssistantDraftReasoning = signal('');
 
@@ -79,6 +89,8 @@ export class AssistantTurn {
   readonly liveToolCalls = this._liveToolCalls.asReadonly();
   /** Why the active turn has not started: queued behind an earlier turn in the chat; null otherwise. */
   readonly waitingOn = this._waitingOn.asReadonly();
+  /** An Advanced turn's current step and plan (ADR 0x026); null on Standard turns and when idle. */
+  readonly advancedProgress = this._advancedProgress.asReadonly();
   readonly pendingAssistantDraftReasoning = this._pendingAssistantDraftReasoning.asReadonly();
   /** True while a chat_message job is in flight (after send) but not yet finished. */
   readonly jobPending = computed(() => this._activeChatJobId() !== null);
@@ -126,8 +138,7 @@ export class AssistantTurn {
     this._activeJobPhase.set(null);
     this._cancelRequestedJobId.set(null);
     this._streamingMessageId.set(null);
-    this._liveToolCalls.set([]);
-    this._waitingOn.set(null);
+    this.clearLiveProgress();
   }
 
   dispose(): void {
@@ -141,8 +152,7 @@ export class AssistantTurn {
     this._cancelRequestedJobId.set(null);
     this._activeChatJobId.set(AssistantTurn.PENDING_SEND_JOB_ID);
     // The placeholder shows from here; it must not carry the previous turn's tool rows.
-    this._liveToolCalls.set([]);
-    this._waitingOn.set(null);
+    this.clearLiveProgress();
   }
 
   sendFailed(): void {
@@ -166,8 +176,7 @@ export class AssistantTurn {
   }
 
   beginRetry(userMessageId: string): void {
-    this._liveToolCalls.set([]);
-    this._waitingOn.set(null);
+    this.clearLiveProgress();
     this.expectingAssistantResponse = true;
     this.expectedAssistantAfterUserMessageId = userMessageId;
   }
@@ -205,8 +214,7 @@ export class AssistantTurn {
     this.expectingAssistantResponse = true;
     this._activeChatJobId.set(jobId);
     this._activeJobPhase.set(null);
-    this._liveToolCalls.set([]);
-    this._waitingOn.set(null);
+    this.clearLiveProgress();
     if (this._cancelRequestedJobId() !== jobId) {
       this._pendingAssistantDraftText.set('');
       this._pendingAssistantDraftReasoning.set('');
@@ -232,8 +240,7 @@ export class AssistantTurn {
             if (!this.isActiveThread(chatId)) return;
             this.deps.onJobSettled?.(chatId);
             if (this._activeChatJobId() === jobId) {
-              this._liveToolCalls.set([]);
-    this._waitingOn.set(null);
+              this.clearLiveProgress();
               this._activeChatJobId.set(null);
               this._activeJobPhase.set(null);
             }
@@ -346,6 +353,7 @@ export class AssistantTurn {
       const toolCalls = parseChatTurnToolCalls(job.progress);
       if (toolCalls) this._liveToolCalls.set(toolCalls);
       this._waitingOn.set(parseChatTurnWaiting(job.progress));
+      this._advancedProgress.set(parseChatTurnAdvancedProgress(job.progress));
     }
     const cancelPendingForJob = this._cancelRequestedJobId() === job.id;
     if (cancelPendingForJob && job.status === 'cancelled') {
@@ -427,6 +435,13 @@ export class AssistantTurn {
     );
   }
 
+  /** Drops the live timeline (tool calls, queue state, Advanced step and plan). */
+  private clearLiveProgress(): void {
+    this._liveToolCalls.set([]);
+    this._waitingOn.set(null);
+    this._advancedProgress.set(null);
+  }
+
   /** Ends the current thread's job polls (the server-side jobs keep running). */
   private stopPolling(): void {
     this.jobSubscriptions.unsubscribe();
@@ -457,6 +472,30 @@ export function parseChatTurnWaiting(progress: string | undefined): ChatTurnWait
   try {
     const waiting = (JSON.parse(progress) as Partial<ChatTurnProgress>).waiting_on;
     return typeof waiting === 'string' && CHAT_TURN_WAITING.has(waiting) ? waiting : null;
+  } catch {
+    return null;
+  }
+}
+
+const CHAT_TURN_PLAN_STATUS = new Set<string>(CHAT_TURN_PLAN_STATUSES);
+
+/**
+ * An Advanced turn's step and plan from a chat_message job's progress payload; null on a Standard
+ * turn (no step) or when the payload is absent or unreadable. Malformed plan items are dropped.
+ */
+export function parseChatTurnAdvancedProgress(progress: string | undefined): ChatTurnAdvancedProgress | null {
+  if (!progress) return null;
+  try {
+    const parsed = JSON.parse(progress) as Partial<ChatTurnProgress>;
+    const step = parsed.step;
+    if (typeof step !== 'number' || !Number.isFinite(step) || step < 1) return null;
+    const plan = Array.isArray(parsed.plan)
+      ? parsed.plan.filter(
+          (item): item is ChatTurnPlanItem =>
+            !!item && typeof item.content === 'string' && item.content.trim() !== '' && CHAT_TURN_PLAN_STATUS.has(item.status),
+        )
+      : [];
+    return { step: Math.floor(step), plan };
   } catch {
     return null;
   }
