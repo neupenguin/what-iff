@@ -1,6 +1,7 @@
 package mcpclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -11,8 +12,10 @@ import (
 const toolErrorFallback = "MCP tool reported an error"
 
 // CallToolResult retains MCP tool status, structured data and generated media.
-// Output includes text and structured content for consumers of string tool results.
 type CallToolResult struct {
+	// Output is model-visible text followed by full structured JSON when present.
+	// It is intentionally complete, not a compact summary or a machine-only value;
+	// use StructuredContent for machine-readable data and bound downstream logging.
 	Output               string
 	IsError              bool
 	StructuredContent    json.RawMessage
@@ -21,14 +24,16 @@ type CallToolResult struct {
 
 // Err reports a tool-level failure separately from transport and protocol errors.
 // Detailed invocation methods return these failures in CallToolResult, not their error value.
+// The error rendering trims whitespace without modifying Output.
 func (r CallToolResult) Err() error {
 	if !r.IsError {
 		return nil
 	}
-	if r.Output == "" {
+	output := strings.TrimSpace(r.Output)
+	if output == "" {
 		return errors.New(toolErrorFallback)
 	}
-	return errors.New(r.Output)
+	return errors.New(output)
 }
 
 func (c *Client) parseToolCallResult(result json.RawMessage) (CallToolResult, bool) {
@@ -40,10 +45,14 @@ func (c *Client) parseToolCallResult(result json.RawMessage) (CallToolResult, bo
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		return CallToolResult{}, false
 	}
+	structured := bytes.TrimSpace(parsed.StructuredContent)
+	if bytes.Equal(structured, []byte("null")) {
+		structured = nil
+	}
 
 	callResult := CallToolResult{
 		IsError:              parsed.IsError,
-		StructuredContent:    parsed.StructuredContent,
+		StructuredContent:    structured,
 		GeneratedAttachments: make([]*models.FileAttachment, 0),
 	}
 	var textParts []string
@@ -60,8 +69,8 @@ func (c *Client) parseToolCallResult(result json.RawMessage) (CallToolResult, bo
 			}
 		}
 	}
-	if len(parsed.StructuredContent) > 0 {
-		textParts = append(textParts, "Structured content:\n"+string(parsed.StructuredContent))
+	if len(structured) > 0 {
+		textParts = append(textParts, "Structured content:\n"+string(structured))
 	}
 	callResult.Output = strings.Join(textParts, "\n")
 	if callResult.IsError && callResult.Output == "" {
