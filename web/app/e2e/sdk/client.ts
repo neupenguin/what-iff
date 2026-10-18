@@ -690,6 +690,15 @@ export async function createMemoriesBatch(
   return data;
 }
 
+/** Fetches one memory by ID, archived (inactive) ones included. */
+export async function getMemory(client: ApiClient, id: string): Promise<Memory> {
+  const { data, error, response } = await client.GET('/memory/{id}', { params: { path: { id } } });
+  if (error || !data) {
+    fail('get memory', response.status, error);
+  }
+  return data;
+}
+
 /** Deletes a memory by ID. */
 export async function deleteMemory(client: ApiClient, id: string): Promise<void> {
   const { error, response } = await client.DELETE('/memory/{id}', { params: { path: { id } } });
