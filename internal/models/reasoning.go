@@ -295,3 +295,22 @@ func CopyJobTurnSettings(from, to context.Context) context.Context {
 	}
 	return to
 }
+
+// TurnSettingValuesFromStrings reads stored or exported strings; empty or unknown values are
+// "not set".
+func TurnSettingValuesFromStrings(effort, loop string) TurnSettingValues {
+	e, l := ReasoningEffort(effort), AgentLoop(loop)
+	return TurnSettingValues{ReasoningEffort: &e, AgentLoop: &l}.Normalized()
+}
+
+// Strings returns the values as strings, "" for not set (for formats that store plain text).
+func (v TurnSettingValues) Strings() (effort, loop string) {
+	n := v.Normalized()
+	if n.ReasoningEffort != nil {
+		effort = string(*n.ReasoningEffort)
+	}
+	if n.AgentLoop != nil {
+		loop = string(*n.AgentLoop)
+	}
+	return effort, loop
+}
