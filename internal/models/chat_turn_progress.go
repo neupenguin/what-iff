@@ -19,6 +19,38 @@ type ChatTurnProgress struct {
 	// WaitingOn is set while the turn is queued behind an earlier turn in its chat (the turn gate),
 	// naming the phase of that earlier turn it is waiting on. Empty once the turn runs.
 	WaitingOn ChatTurnWaiting `json:"waiting_on,omitempty"`
+	// Step is the current Advanced-loop step (1-based; ADR 0x026). Zero on Standard turns.
+	Step int `json:"step,omitempty"`
+	// Plan is the Advanced run's current checklist (update_plan). Empty on Standard turns.
+	Plan []PlanItem `json:"plan,omitempty"`
+}
+
+// PlanItemStatus is the state of one item in an Advanced run's plan.
+type PlanItemStatus string
+
+const (
+	PlanItemPending    PlanItemStatus = "pending"
+	PlanItemInProgress PlanItemStatus = "in_progress"
+	PlanItemCompleted  PlanItemStatus = "completed"
+	PlanItemCancelled  PlanItemStatus = "cancelled"
+)
+
+// Valid reports whether s is a known status.
+func (s PlanItemStatus) Valid() bool {
+	switch s {
+	case PlanItemPending, PlanItemInProgress, PlanItemCompleted, PlanItemCancelled:
+		return true
+	}
+	return false
+}
+
+// Open reports whether the item still has work to do.
+func (s PlanItemStatus) Open() bool { return s == PlanItemPending || s == PlanItemInProgress }
+
+// PlanItem is one checklist entry of an Advanced run's plan.
+type PlanItem struct {
+	Content string         `json:"content"`
+	Status  PlanItemStatus `json:"status"`
 }
 
 // ChatTurnWaiting is what a queued turn is waiting on.
@@ -40,7 +72,9 @@ type ChatTurnToolCall struct {
 	// Output is the tool result (or error text) preview, set once the call finishes.
 	Output string `json:"output,omitempty"`
 	// Round is the zero-based agent-loop round that requested the call.
-	Round      int        `json:"round"`
+	Round int `json:"round"`
+	// Step is the Advanced-loop step (1-based) that requested the call; 0 on Standard turns.
+	Step       int        `json:"step,omitempty"`
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
