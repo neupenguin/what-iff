@@ -71,3 +71,19 @@ func chatCompletionToolCallParam(tc openai.ChatCompletionMessageToolCallUnion) o
 		},
 	}
 }
+
+// chatCompletionsFinal remembers a Chat Completions adapter's last final reply so ContinueWith
+// can record it before the next user turn (the loop never appends a final reply itself).
+type chatCompletionsFinal struct {
+	last *openai.ChatCompletion
+}
+
+// continueWith appends the remembered reply (replaying reasoning when the provider needs it
+// echoed) and then text as a user turn.
+func (f *chatCompletionsFinal) continueWith(messages *[]openai.ChatCompletionMessageParamUnion, text, reasoning string) {
+	if f.last != nil && len(f.last.Choices) > 0 {
+		*messages = append(*messages, chatCompletionAssistantReplay(f.last.Choices[0].Message, reasoning))
+		f.last = nil
+	}
+	*messages = append(*messages, openai.UserMessage(text))
+}

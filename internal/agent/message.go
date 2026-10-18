@@ -857,6 +857,15 @@ type chatContext struct {
 	modelVisionSupport bool
 	activeMood         *models.Mood
 	activeMoodRituals  []*models.Ritual
+	// turnSettings are the turn's resolved reasoning effort and agent loop with their sources
+	// (job → mode → thread; ADR 0x026). See resolveTurnSettings.
+	turnSettings models.TurnSettings
+	// reasoningEffort is what the provider request carries for this model: turnSettings'
+	// effort mapped through the model's reasoning support. "" sends nothing (today's request).
+	reasoningEffort models.ReasoningEffort
+	// callInputTokens are the input tokens of every model call an Advanced run has made so far,
+	// appended as they complete so a cancelled run still reports them (metering.Usage).
+	callInputTokens []int64
 	// expressionsEnabled mirrors personality.ExpressionsEnabled; when false,
 	// expression picking is skipped for this turn.
 	expressionsEnabled bool
@@ -961,6 +970,8 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 	// mode context segment, not the user message.
 	doneMood := a.timeTurnStage(ctx, turnStageMood)
 	chatCtx.activeMood = a.resolveActiveMood(ctx, chatJob.UserID, chatCtx, chatMessage.Message, chatMessage.ID)
+	a.resolveTurnSettings(ctx, chatCtx, chatCtx.activeMood)
+	ctx = withTurnAgentLoop(ctx, chatCtx)
 	moodRituals := a.loadMoodRituals(ctx, chatJob.UserID, chatCtx.activeMood)
 	if chatCtx.chat != nil && chatCtx.chat.IsSandboxed() {
 		// A mood's rituals carry skill text and linked MCP servers from the owner's account; a
@@ -1323,6 +1334,8 @@ func (a *Agent) openAIResponseParamsForChat(ctx context.Context, chatCtx *chatCo
 
 func (a *Agent) generateAssistantForMessageOpenAI(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
 	params := a.openAIResponseParamsForChat(ctx, chatCtx, userID, chatMessage, modelContext)
+	// A selected reasoning effort (ADR 0x026); none leaves the request as it was.
+	provider.ApplyOpenAIReasoning(&params, chatCtx.reasoningEffort)
 	adapter := provider.NewOpenAIAdapter(a.OpenAIProvider, params)
 
 	opts := generationOptions{
@@ -1377,9 +1390,13 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 	// GLM/z.ai models always think and ignore a thinking budget; left alone, reasoning
 	// can eat the whole output cap and the turn truncates before any answer. Bound it
 	// with output_config.effort and a raised cap (see provider.ZAIReasoningEffort).
+	// A selected reasoning effort maps onto it (ADR 0x026); with none, GLM keeps its fixed effort.
 	zai := models.IsZAIModel(chatCtx.modelProvider, chatCtx.model)
+	replayThinking := false
 	if zai {
-		provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffort)
+		provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffortFor(chatCtx.reasoningEffort))
+	} else {
+		replayThinking = provider.ApplyClaudeReasoning(&claudeParams, chatCtx.reasoningEffort)
 	}
 
 	policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
@@ -1388,6 +1405,7 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 	claudeFunctionTools := claudeFunctionTools(specs)
 	webSearchEnabled := nativeAnthropic && policy.nativeWebSearch
 	adapter := provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools, webSearchEnabled, nil, policy.disabledTools)
+	adapter.SetReplayThinking(replayThinking)
 	if zai {
 		adapter.SetTruncationFallback(func(params *anthropic.MessageNewParams) {
 			a.logger.Warn("z.ai response truncated before any reply text; retrying at lower reasoning effort",
@@ -1559,7 +1577,12 @@ func (a *Agent) openAIChatCompletionsAdapter(chatCtx *chatContext, params openai
 		if a.XiaomiProvider == nil {
 			return nil, fmt.Errorf("Xiaomi model %q requested but XIAOMI_API_KEY is not configured", chatCtx.model)
 		}
-		return provider.NewXiaomiAdapter(a.XiaomiProvider, params, functionTools, disabledTools), nil
+		adapter := provider.NewXiaomiAdapter(a.XiaomiProvider, params, functionTools, disabledTools)
+		// MiMo's only reasoning control: an effort of off turns thinking off (ADR 0x026).
+		if chatCtx.reasoningEffort == models.ReasoningEffortOff {
+			adapter.DisableThinking()
+		}
+		return adapter, nil
 	default:
 		return nil, fmt.Errorf("unsupported OpenAI Chat Completions provider %q for model %q", chatCtx.modelProvider, chatCtx.model)
 	}
@@ -2639,7 +2662,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 		if agentMessage != nil {
 			messageID = agentMessage.ID.String()
 		}
-		a.meter.Record(ctx, qd, metering.Usage{
+		a.meter.Record(ctx, qd, withTurnSettingsUsage(chatCtx, metering.Usage{
 			UserID:     userID,
 			ActionType: recordAction,
 			Model:      chatCtx.model,
@@ -2647,7 +2670,7 @@ func (a *Agent) postMessageProcessing(ctx context.Context, userID uuid.UUID, cha
 			Tokens:     chatMessage.Tokens,
 			MessageID:  messageID,
 			Source:     metering.TurnSourceFromContext(ctx),
-		})
+		}))
 
 		if usage, ok := a.webSearchUsage(userID, chatMessage.ChatID, chatCtx, actionType); ok {
 			a.meter.Record(ctx, qd, usage)
@@ -3176,14 +3199,14 @@ func (a *Agent) recordCancelledChatUsage(
 		metadata["output_tokens"] = outputTokens
 	}
 	recordAction := models.ActionTypeChatMessage
-	a.meter.Record(ctx, qd, metering.Usage{
+	a.meter.Record(ctx, qd, withTurnSettingsUsage(chatCtx, metering.Usage{
 		UserID:     chatJob.UserID,
 		ActionType: recordAction,
 		Model:      chatCtx.model,
 		ChatID:     userMessage.ChatID.String(),
 		Tokens:     inputTokens,
 		Metadata:   metadata,
-	})
+	}))
 	if partialMsg == nil || !outputKnown {
 		return
 	}

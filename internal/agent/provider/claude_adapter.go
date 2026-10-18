@@ -116,6 +116,37 @@ type ClaudeAdapter struct {
 	// if a response is cut off at max_tokens before any reply text (see
 	// SetTruncationFallback). Cleared after use so a turn retries at most once.
 	truncationFallback func(params *anthropic.MessageNewParams)
+	// replayThinking keeps thinking blocks in the assistant turns replayed across tool rounds
+	// (SetReplayThinking).
+	replayThinking bool
+	// lastFinal / lastFinalBeta are the most recent final replies, which ContinueWith records.
+	lastFinal     *anthropic.Message
+	lastFinalBeta *anthropic.BetaMessage
+	usageLog
+}
+
+// SetReplayThinking makes the adapter pass thinking blocks back across tool rounds, as the
+// API requires once a reasoning effort turns thinking on (ApplyClaudeReasoning).
+func (a *ClaudeAdapter) SetReplayThinking(replay bool) {
+	a.replayThinking = replay
+}
+
+// ContinueWith implements Continuer: it appends the last final reply and then text as a user
+// turn, so the next Call continues from there.
+func (a *ClaudeAdapter) ContinueWith(text string) {
+	if a.useBetaMCP {
+		if a.lastFinalBeta != nil {
+			a.betaParams.Messages = append(a.betaParams.Messages, a.lastFinalBeta.ToParam())
+			a.lastFinalBeta = nil
+		}
+		a.betaParams.Messages = append(a.betaParams.Messages, anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(text)))
+		return
+	}
+	if a.lastFinal != nil {
+		appendClaudeAssistantTurn(&a.params, a.lastFinal, nil, a.replayThinking)
+		a.lastFinal = nil
+	}
+	a.params.Messages = append(a.params.Messages, anthropic.NewUserMessage(anthropic.NewTextBlock(text)))
 }
 
 // ClaudeMCPConfig contains Anthropic-beta MCP server definitions and corresponding toolsets.
@@ -181,8 +212,10 @@ func (a *ClaudeAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUse,
 		}
 		a.webSearchCompleted += countWebSearchToolResultsInBetaMessage(msg)
 		a.rawBetaMessages = append(a.rawBetaMessages, msg)
+		a.addUsage(anthropicBetaUsage(msg.Usage))
 		toolUses := extractClaudeBetaToolUses(msg)
 		if len(toolUses) == 0 {
+			a.lastFinalBeta = msg
 			return a.provider.BetaToGenerateResponse(msg), nil, nil
 		}
 		appendClaudeBetaAssistantLoopTurn(&a.betaParams, msg, toolUses)
@@ -208,12 +241,13 @@ func (a *ClaudeAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUse,
 			a.provider.zapLog().Warn("response stopped for tool use but carried no tool call",
 				zap.String("model", string(msg.Model)), zap.Strings("block_types", types))
 		}
+		a.lastFinal = msg
 		return a.toGenerateResponse(msg), nil, nil
 	}
 
 	// Persist assistant loop context for the next Call: replay native web search blocks
 	// (with encrypted_content) via per-block ToParam(), not full msg.ToParam().
-	appendClaudeAssistantLoopTurn(&a.params, msg, toolUses)
+	appendClaudeAssistantTurn(&a.params, msg, toolUses, a.replayThinking)
 
 	return nil, toolUses, nil
 }
@@ -266,6 +300,8 @@ func (a *ClaudeAdapter) ForceFinalResponse(ctx context.Context) (*GenerateRespon
 		}
 		a.webSearchCompleted += countWebSearchToolResultsInBetaMessage(msg)
 		a.rawBetaMessages = append(a.rawBetaMessages, msg)
+		a.addUsage(anthropicBetaUsage(msg.Usage))
+		a.lastFinalBeta = msg
 		return a.provider.BetaToGenerateResponse(msg), nil
 	}
 
@@ -278,6 +314,7 @@ func (a *ClaudeAdapter) ForceFinalResponse(ctx context.Context) (*GenerateRespon
 	if err != nil {
 		return nil, WrapSafetyViolationError(models.SafetyViolationProviderAnthropic, fmt.Errorf("Anthropic final-response call failed: %w", err))
 	}
+	a.lastFinal = msg
 	return a.toGenerateResponse(msg), nil
 }
 
@@ -309,6 +346,7 @@ func (a *ClaudeAdapter) callMessages(ctx context.Context) (*anthropic.Message, e
 	}
 	a.webSearchCompleted += countWebSearchToolResultsInMessage(msg)
 	a.rawMessages = append(a.rawMessages, msg)
+	a.addUsage(anthropicUsage(msg.Usage))
 	a.reasoning.add(ExtractClaudeThinking(msg))
 	return msg, nil
 }
@@ -457,7 +495,14 @@ func appendClaudeBetaAssistantLoopTurn(params *anthropic.BetaMessageNewParams, m
 // Full Message.ToParam() is avoided — it can mangle web search content on resubmit.
 // Non-replayable web search payloads fall back to formatted user text.
 func appendClaudeAssistantLoopTurn(params *anthropic.MessageNewParams, msg *anthropic.Message, uses []ToolUse) {
-	if params == nil || msg == nil || len(uses) == 0 {
+	appendClaudeAssistantTurn(params, msg, uses, false)
+}
+
+// appendClaudeAssistantTurn is appendClaudeAssistantLoopTurn that can also replay thinking
+// blocks (required when thinking is on: ADR 0x026) and record a final reply with no tool use
+// (ContinueWith).
+func appendClaudeAssistantTurn(params *anthropic.MessageNewParams, msg *anthropic.Message, uses []ToolUse, replayThinking bool) {
+	if params == nil || msg == nil {
 		return
 	}
 	useIDs := make(map[string]struct{}, len(uses))
@@ -489,6 +534,11 @@ func appendClaudeAssistantLoopTurn(params *anthropic.MessageNewParams, msg *anth
 			}
 		case anthropic.ToolUseBlock:
 			if _, ok := useIDs[v.ID]; ok {
+				blocks = append(blocks, block.ToParam())
+			}
+		case anthropic.ThinkingBlock, anthropic.RedactedThinkingBlock:
+			// Passed back unchanged (signature included), in their original position.
+			if replayThinking {
 				blocks = append(blocks, block.ToParam())
 			}
 		}

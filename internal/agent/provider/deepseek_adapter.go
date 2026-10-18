@@ -28,6 +28,8 @@ type DeepSeekAdapter struct {
 	params           openai.ChatCompletionNewParams
 	tools            scopedToolList[openai.ChatCompletionToolUnionParam]
 	textDeltaHandler func(delta string)
+	final            chatCompletionsFinal
+	usageLog
 }
 
 func NewDeepSeekProvider(apiKey, baseURL string, tel *telemetry.Telemetry, httpClient *http.Client) *DeepSeekProvider {
@@ -73,6 +75,7 @@ func (a *DeepSeekAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUs
 	}
 	toolUses := extractChatCompletionToolUses(resp)
 	if len(toolUses) == 0 {
+		a.final.last = resp
 		return a.toGenerateResponse(resp), nil, nil
 	}
 	a.params.Messages = append(a.params.Messages, chatCompletionAssistantReplay(resp.Choices[0].Message, ""))
@@ -92,15 +95,30 @@ func (a *DeepSeekAdapter) ForceFinalResponse(ctx context.Context) (*GenerateResp
 	if err != nil {
 		return nil, WrapSafetyViolationError(models.SafetyViolationProviderDeepSeek, fmt.Errorf("DeepSeek final-response call failed: %w", err))
 	}
+	a.final.last = resp
 	return a.toGenerateResponse(resp), nil
 }
 
 // call streams when a text-delta handler is set, else issues a non-streaming request.
 func (a *DeepSeekAdapter) call(ctx context.Context) (*openai.ChatCompletion, error) {
+	var (
+		resp *openai.ChatCompletion
+		err  error
+	)
 	if a.textDeltaHandler != nil {
-		return a.provider.CallStreaming(ctx, a.params, a.textDeltaHandler)
+		resp, err = a.provider.CallStreaming(ctx, a.params, a.textDeltaHandler)
+	} else {
+		resp, err = a.provider.Call(ctx, a.params)
 	}
-	return a.provider.Call(ctx, a.params)
+	if err == nil {
+		a.addUsage(chatCompletionUsage(resp))
+	}
+	return resp, err
+}
+
+// ContinueWith implements Continuer.
+func (a *DeepSeekAdapter) ContinueWith(text string) {
+	a.final.continueWith(&a.params.Messages, text, "")
 }
 
 func (a *DeepSeekAdapter) WebSearchCompletedCount() int { return 0 }

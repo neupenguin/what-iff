@@ -104,6 +104,19 @@ type Usage struct {
 	// models.ActionTypeImageGeneration; empty means OpenAI, the only vendor before
 	// users could choose one.
 	ImageProvider string
+	// ReasoningEffort is the reasoning effort ("off"|"low"|"medium"|"high") the turn was run
+	// at when the user explicitly selected one and the model honours it (ADR 0x026). Empty
+	// when no effort was selected, including models that always reason by default, so an
+	// implementation that prices effort leaves those turns as they were.
+	ReasoningEffort string
+	// AgentLoop is the loop the turn ran ("standard"|"advanced"; ADR 0x026). Empty means
+	// standard.
+	AgentLoop string
+	// CallInputTokens are the input tokens of every model call an Advanced turn made, in order
+	// (interim steps, tool rounds and the final reply), so an implementation can account for
+	// each call the same way as a final response. Empty for Standard turns, whose Tokens is the
+	// final call's input as before.
+	CallInputTokens []int64
 }
 
 // New constructs the production Meter. It is nil in builds that do not link a

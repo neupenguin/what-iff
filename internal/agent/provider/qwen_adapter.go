@@ -30,6 +30,8 @@ type QwenAdapter struct {
 	params           openai.ChatCompletionNewParams
 	tools            scopedToolList[openai.ChatCompletionToolUnionParam]
 	textDeltaHandler func(delta string)
+	final            chatCompletionsFinal
+	usageLog
 }
 
 func NewQwenProvider(apiKey, baseURL string, tel *telemetry.Telemetry, httpClient *http.Client) *QwenProvider {
@@ -75,6 +77,7 @@ func (a *QwenAdapter) Call(ctx context.Context) (*GenerateResponse, []ToolUse, e
 	}
 	toolUses := extractChatCompletionToolUses(resp)
 	if len(toolUses) == 0 {
+		a.final.last = resp
 		return a.toGenerateResponse(resp), nil, nil
 	}
 	a.params.Messages = append(a.params.Messages, chatCompletionAssistantReplay(resp.Choices[0].Message, ""))
@@ -94,15 +97,30 @@ func (a *QwenAdapter) ForceFinalResponse(ctx context.Context) (*GenerateResponse
 	if err != nil {
 		return nil, WrapSafetyViolationError(models.SafetyViolationProviderQwen, fmt.Errorf("Qwen final-response call failed: %w", err))
 	}
+	a.final.last = resp
 	return a.toGenerateResponse(resp), nil
 }
 
 // call streams when a text-delta handler is set, else issues a non-streaming request.
 func (a *QwenAdapter) call(ctx context.Context) (*openai.ChatCompletion, error) {
+	var (
+		resp *openai.ChatCompletion
+		err  error
+	)
 	if a.textDeltaHandler != nil {
-		return a.provider.CallStreaming(ctx, a.params, a.textDeltaHandler)
+		resp, err = a.provider.CallStreaming(ctx, a.params, a.textDeltaHandler)
+	} else {
+		resp, err = a.provider.Call(ctx, a.params)
 	}
-	return a.provider.Call(ctx, a.params)
+	if err == nil {
+		a.addUsage(chatCompletionUsage(resp))
+	}
+	return resp, err
+}
+
+// ContinueWith implements Continuer.
+func (a *QwenAdapter) ContinueWith(text string) {
+	a.final.continueWith(&a.params.Messages, text, "")
 }
 
 func (a *QwenAdapter) WebSearchCompletedCount() int { return 0 }

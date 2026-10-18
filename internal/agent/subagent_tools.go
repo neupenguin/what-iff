@@ -61,6 +61,9 @@ type runSubagentToolResult struct {
 type subagentCallResult struct {
 	Output      string
 	InputTokens int64
+	// ReasoningEffort is the effort the sub-agent's model ran at, inherited from the turn
+	// ("" when the turn selected none or the model has no effort control).
+	ReasoningEffort models.ReasoningEffort
 }
 
 func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args []byte) (string, error) {
@@ -164,6 +167,8 @@ func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args 
 
 	modelContext := buildSubagentModelContext(systemPrompt, scratchpad, message)
 	subagentCtx := telemetry.WithCallPath(ctx, telemetry.CallPathSubagent)
+	// The sub-agent inherits the turn's selected reasoning effort (ADR 0x026).
+	subagentCtx = withSubagentReasoningEffort(subagentCtx, chatCtx.turnSettings.ReasoningEffort)
 	callResult, err := a.callSubagentModel(subagentCtx, chatCtx.chat.UserID, modelName, modelContext, ritualUUIDs, chatCtx.chat.IsSandboxed())
 	if err != nil {
 		return marshalSubagentToolResult(runSubagentToolResult{
@@ -177,12 +182,13 @@ func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args 
 	// The meter computes subagent LLM credits and records nothing when the charge
 	// rounds to zero (subagent job runs are never free chat).
 	a.meter.Record(ctx, qd, metering.Usage{
-		UserID:      chatCtx.chat.UserID,
-		ActionType:  models.ActionTypeJobRun,
-		Model:       modelName,
-		ChatID:      chatCtx.chat.ID.String(),
-		Tokens:      callResult.InputTokens,
-		SubagentRun: true,
+		UserID:          chatCtx.chat.UserID,
+		ActionType:      models.ActionTypeJobRun,
+		Model:           modelName,
+		ChatID:          chatCtx.chat.ID.String(),
+		Tokens:          callResult.InputTokens,
+		SubagentRun:     true,
+		ReasoningEffort: string(callResult.ReasoningEffort),
 	})
 
 	return marshalSubagentToolResult(runSubagentToolResult{
@@ -292,6 +298,16 @@ func openAIFunctionToolNames(toolParams []responses.ToolUnionParam) map[string]s
 func (a *Agent) callSubagentModel(ctx context.Context, userID uuid.UUID, modelName string, modelContext *provider.ModelContext, ritualIDs []uuid.UUID, sandboxed bool) (*subagentCallResult, error) {
 	caps := a.subagentModelCapabilities(ctx, modelName)
 	modelProvider := caps.Provider
+	effort := models.EffectiveReasoningEffort(models.ReasoningSupportFor(modelProvider, modelName), subagentReasoningEffort(ctx))
+	result, err := a.callSubagentModelWithEffort(ctx, userID, caps, modelName, modelContext, ritualIDs, sandboxed, effort)
+	if result != nil {
+		result.ReasoningEffort = effort
+	}
+	return result, err
+}
+
+func (a *Agent) callSubagentModelWithEffort(ctx context.Context, userID uuid.UUID, caps subagentModelCapabilities, modelName string, modelContext *provider.ModelContext, ritualIDs []uuid.UUID, sandboxed bool, effort models.ReasoningEffort) (*subagentCallResult, error) {
+	modelProvider := caps.Provider
 	if models.UsesOpenAIChatCompletionsAPI(modelProvider, modelName) {
 		return a.callSubagentChatCompletions(ctx, userID, caps, modelName, modelContext, ritualIDs, sandboxed)
 	}
@@ -309,12 +325,21 @@ func (a *Agent) callSubagentModel(ctx context.Context, userID uuid.UUID, modelNa
 			return nil, fmt.Errorf("z.ai model %q requested but ZAI_API_KEY is not configured", modelName)
 		}
 		claudeParams := modelContext.BuildClaudeParams(modelName)
+		replayThinking := false
+		if models.IsZAIModel(modelProvider, modelName) {
+			if effort != "" {
+				provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffortFor(effort))
+			}
+		} else {
+			replayThinking = provider.ApplyClaudeReasoning(&claudeParams, effort)
+		}
 		mcpSpecs, mcpServers := a.getSubagentMCPFunctionToolSpecs(ctx, userID, ritualIDs)
 		if len(mcpSpecs) > 0 && !caps.ToolSupport {
 			return nil, errSubagentToolsUnsupported(models.ProviderForModel(modelProvider, modelName), modelName, len(mcpSpecs))
 		}
 		if len(mcpSpecs) > 0 {
 			adapter := provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools(mcpSpecs), false, nil, nil)
+			adapter.SetReplayThinking(replayThinking)
 			toolCtx := subagentToolContext(userID, modelName, sandboxed, mcpServers, offeredToolNames(mcpSpecs, nil))
 			resp, _, _, err := a.handleAgentLoop(ctx, toolCtx, adapter)
 			if err != nil {
@@ -351,6 +376,7 @@ func (a *Agent) callSubagentModel(ctx context.Context, userID uuid.UUID, modelNa
 		Tools:             mcpTools,
 		Instructions:      "",
 	})
+	provider.ApplyOpenAIReasoning(&params, effort)
 	adapter := provider.NewOpenAIAdapter(a.OpenAIProvider, params)
 	toolCtx := subagentToolContext(userID, modelName, sandboxed, nil, openAIFunctionToolNames(mcpTools))
 	if len(ritualIDs) > 0 {
@@ -388,7 +414,8 @@ func (a *Agent) callSubagentChatCompletions(ctx context.Context, userID uuid.UUI
 // routing testable without a live MCP server.
 func (a *Agent) runSubagentChatCompletions(ctx context.Context, userID uuid.UUID, caps subagentModelCapabilities, modelName string, modelContext *provider.ModelContext, mcpSpecs []agenttools.FunctionToolSpec, mcpServers []*models.MCPServer, sandboxed bool) (*subagentCallResult, error) {
 	providerName := models.ProviderForModel(caps.Provider, modelName)
-	renderCtx := &chatContext{model: modelName, modelProvider: caps.Provider, modelVisionSupport: caps.VisionSupport}
+	renderCtx := &chatContext{model: modelName, modelProvider: caps.Provider, modelVisionSupport: caps.VisionSupport,
+		reasoningEffort: models.EffectiveReasoningEffort(models.ReasoningSupportFor(caps.Provider, modelName), subagentReasoningEffort(ctx))}
 	params := buildOpenAIChatCompletionsParams(renderCtx, modelContext)
 
 	if len(mcpSpecs) > 0 && !caps.ToolSupport {

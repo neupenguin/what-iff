@@ -99,3 +99,39 @@ type ReasoningStream struct {
 type ReasoningStreamer interface {
 	SetReasoningStream(stream ReasoningStream)
 }
+
+// CallUsage is one provider call's token usage, as the provider reported it.
+type CallUsage struct {
+	InputTokens     int64
+	OutputTokens    int64
+	ReasoningTokens int64
+}
+
+// UsageReporter is implemented by adapters that record every call's usage (ADR 0x026: an
+// Advanced run is metered on every call it made, not only the final one). Adapters embed
+// usageLog to implement it.
+type UsageReporter interface {
+	CallUsage() []CallUsage
+}
+
+// usageLog accumulates per-call usage across an adapter's calls.
+type usageLog struct {
+	calls []CallUsage
+}
+
+func (u *usageLog) addUsage(g genAIUsage) {
+	u.calls = append(u.calls, CallUsage{InputTokens: g.Input, OutputTokens: g.Output, ReasoningTokens: g.Reasoning})
+}
+
+// CallUsage returns a copy of every call's usage so far, in call order.
+func (u *usageLog) CallUsage() []CallUsage {
+	return append([]CallUsage(nil), u.calls...)
+}
+
+// Continuer is implemented by adapters the Advanced loop can drive past a final answer
+// (ADR 0x026): ContinueWith records the model's last reply in the adapter's own history and
+// appends text as a user turn, so the next Call continues the conversation instead of
+// repeating it. It must only be called after a Call that returned a final response.
+type Continuer interface {
+	ContinueWith(text string)
+}

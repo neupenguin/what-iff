@@ -37,3 +37,26 @@ func TurnSourceFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyTurnSource{}).(string)
 	return v
 }
+
+type ctxKeyAgentLoop struct{}
+
+// WithAgentLoop returns a child context carrying the turn's agent loop ("standard" or
+// "advanced"; ADR 0x026), so Meter.Check can gate an Advanced turn differently before it runs.
+func WithAgentLoop(ctx context.Context, loop string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if loop == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKeyAgentLoop{}, loop)
+}
+
+// AgentLoopFromContext returns the turn's agent loop, or "" (standard) when none was set.
+func AgentLoopFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(ctxKeyAgentLoop{}).(string)
+	return v
+}

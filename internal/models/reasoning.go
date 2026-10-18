@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -93,7 +94,10 @@ func ReasoningSupportFor(provider, name string) ReasoningSupport {
 // that disables thinking (Opus 5.5, Fable, Mythos): effort is its only control.
 func IsAnthropicAlwaysThinkingModel(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(n, "claude-opus-5-5") || strings.HasPrefix(n, "claude-fable") || strings.HasPrefix(n, "claude-mythos")
+	// Sonnet 5.5 can only switch thinking off with a "between_tools" mode the request layer does
+	// not model; treating it as always-on keeps off at low effort, which it does accept.
+	return strings.HasPrefix(n, "claude-opus-5-5") || strings.HasPrefix(n, "claude-sonnet-5-5") ||
+		strings.HasPrefix(n, "claude-fable") || strings.HasPrefix(n, "claude-mythos")
 }
 
 // EffectiveReasoningEffort maps a selected effort onto what the model can do. It returns ""
@@ -259,4 +263,35 @@ func (v TurnSettingValues) Normalized() TurnSettingValues {
 func (v TurnSettingValues) Level() TurnSettingLevel {
 	n := v.Normalized()
 	return TurnSettingLevel{ReasoningEffort: n.ReasoningEffort, AgentLoop: n.AgentLoop}
+}
+
+type jobTurnSettingsKey struct{}
+
+// WithJobTurnSettings attaches an agent job's turn settings to a run's context. They override
+// the thread and mode for that run only (ADR 0x026); the scheduler sets them, the agent reads
+// them when it resolves the turn. Carried on the context rather than through the run's signature
+// because several interfaces sit between the two.
+func WithJobTurnSettings(ctx context.Context, v TurnSettingValues) context.Context {
+	return context.WithValue(ctx, jobTurnSettingsKey{}, v)
+}
+
+// JobTurnSettingsFromContext returns the job's turn settings, or an empty level when none.
+func JobTurnSettingsFromContext(ctx context.Context) TurnSettingLevel {
+	if ctx == nil {
+		return TurnSettingLevel{}
+	}
+	v, _ := ctx.Value(jobTurnSettingsKey{}).(TurnSettingValues)
+	return v.Level()
+}
+
+// CopyJobTurnSettings carries from's job turn settings, if any, onto to (for runs that detach
+// from their caller's context).
+func CopyJobTurnSettings(from, to context.Context) context.Context {
+	if from == nil {
+		return to
+	}
+	if v, ok := from.Value(jobTurnSettingsKey{}).(TurnSettingValues); ok {
+		return context.WithValue(to, jobTurnSettingsKey{}, v)
+	}
+	return to
 }
