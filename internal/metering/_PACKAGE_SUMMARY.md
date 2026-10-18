@@ -28,6 +28,9 @@ Defines the implementation-independent metering contract used by the agent.
 - `Usage.MessageID` is a plain fact the agent owns (the assistant message the turn produced), not metering data.
   It exists so an implementation can persist a link from a recorded turn to the message whose Context X-ray it paid for; `NoopMeter` ignores it and the core reads it back nowhere.
 - `source.go` carries where a turn was started from: the entry points set it (`WithTurnSource`: the app, the webhook, or a plugin's own name such as `discord` from `plugins.UserTurn.Source`), the agent copies it onto the turn's own context, and an implementation reads it in `Check` (`TurnSourceFromContext`) and gets it in `Usage.Source`, so turns strangers start through a relay can be metered apart from the owner's own chat traffic.
+- Reasoning effort and the Advanced loop (ADR 0x026) are plain facts on `Usage`: `ReasoningEffort` (set only when the user selected an effort and the model honours it), `AgentLoop`, and `CallInputTokens` (every model call of an Advanced turn, so each can be accounted for like a final response).
+  `WithAgentLoop` / `AgentLoopFromContext` (`source.go`) let `Check` see an Advanced turn before it runs.
+  The public build prices none of it.
 - `New` is intentionally nil when no implementation is linked.
   `Agent.NewAgent` then chooses `NoopMeter`, so removing the production meter does not require agent or server changes.
 
