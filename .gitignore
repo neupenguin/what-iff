@@ -126,6 +126,8 @@ web/**/.angular/
 web/**/test-results/
 web/**/playwright-report/
 web/**/playwright/.cache/
+# AX demo run output (results CSV, transcripts, seeded throwaway credentials)
+web/app/e2e/ax-demo/results/
 # Raw V8 coverage and the merged lcov/HTML from E2E_COVERAGE=1 runs. The root
 # /coverage rule above is anchored to the repo root and does not reach these.
 # Single-star on purpose: `web/**/coverage/` would also swallow the pipeline's
