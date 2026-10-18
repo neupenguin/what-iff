@@ -247,9 +247,14 @@ func (t *ListTool) listJobs(ctx context.Context, chat *models.Chat, a listArgs) 
 			name = *j.Title
 		}
 		item := listItem{
-			ID:     j.ID.String(),
-			Name:   name,
-			Status: string(j.Status),
+			ID:          j.ID.String(),
+			Name:        name,
+			Description: truncateRunes(j.Prompt, listJobPromptRunes),
+			Status:      string(j.Status),
+			Schedule:    j.ScheduleInput,
+		}
+		if j.ChatID != nil {
+			item.ThreadID = j.ChatID.String()
 		}
 		// Next run only for jobs that still have a future — schedule_input ("in 5 minutes")
 		// is stale nonsense next to status=complete/failed.
@@ -261,7 +266,7 @@ func (t *ListTool) listJobs(ctx context.Context, chat *models.Chat, a listArgs) 
 	meta := listPageMeta{Page: pageNum, Limit: limit, TotalCount: page.TotalCount}
 	activeNote := ""
 	if !a.IncludeCompleted {
-		activeNote = "Active jobs only; pass include_completed=true to also see finished/failed one-offs."
+		activeNote = "Active jobs only; pass include_completed=true to also see paused jobs and finished/failed one-offs."
 	}
 	note := joinNotes(activeNote, listTruncationNote("jobs", meta, len(items)))
 	return t.okPaged(listKindJobs, items, note, meta)

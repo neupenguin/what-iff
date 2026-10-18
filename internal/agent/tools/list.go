@@ -40,6 +40,7 @@ const (
 	listMaxLimit       = 200
 	listDiscoveryLimit = 100 // personalities / skills (small, stable sets)
 	listToolName       = "list"
+	listJobPromptRunes = 200 // a job's prompt is shown cut to this, enough to tell jobs apart
 )
 
 // ListDescription is the agent-facing description. One tool, one `kind` verb, so the model stops
@@ -169,6 +170,8 @@ type listItem struct {
 	MCPTools     []string `json:"tools,omitempty"`         // mcp_servers
 	LoadedTools  []string `json:"loaded_tools,omitempty"`  // mcp_servers
 	NextRuntime  string   `json:"next_runtime,omitempty"`  // jobs (omitted when complete/failed)
+	Schedule     string   `json:"schedule,omitempty"`      // jobs: the schedule as it was asked for
+	ThreadID     string   `json:"thread_id,omitempty"`     // jobs that run in a set conversation
 	UpdatedAt    string   `json:"updated_at,omitempty"`    // personalities, conversations
 	URL          string   `json:"url,omitempty"`           // mcp_servers
 	Archived     *bool    `json:"archived,omitempty"`      // conversations
