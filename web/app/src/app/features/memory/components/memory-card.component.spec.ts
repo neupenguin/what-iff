@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 
+import { AxLevel, AxLevelService } from '../../../core/services/ax-level.service';
 import { MemoryCardVm } from '../helpers/memory-vm.helpers';
 import { MemoryCardComponent } from './memory-card.component';
 
@@ -487,5 +488,73 @@ describe('MemoryCardComponent provenance badge', () => {
   it('shows nothing for your own memories', async () => {
     const host = await render({});
     expect(host.querySelector('.provenance-badge')).toBeNull();
+  });
+});
+
+describe('MemoryCardComponent agent-experience levels', () => {
+  let fixture: ComponentFixture<MemoryCardComponent>;
+  let ax: AxLevelService;
+
+  async function renderAt(level: AxLevel): Promise<HTMLElement> {
+    await TestBed.configureTestingModule({
+      imports: [MemoryCardComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    ax = TestBed.inject(AxLevelService);
+    ax.setLevel(level);
+    fixture = TestBed.createComponent(MemoryCardComponent);
+    fixture.componentRef.setInput('memory', makeVm());
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('level 0 exposes names, roles and state', async () => {
+    const host = await renderAt(0);
+    expect(host.querySelector('article')?.getAttribute('role')).toBe('listitem');
+    expect(host.querySelector('input[type="checkbox"]')?.getAttribute('aria-label')).toBe('Select memory');
+    const menuButton = host.querySelector('button.memory-card__menu-btn') as HTMLButtonElement;
+    expect(menuButton.getAttribute('aria-label')).toBe('More actions');
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('level 1 drops accessible names but keeps roles', async () => {
+    const host = await renderAt(1);
+    expect(host.querySelector('input[type="checkbox"]')?.hasAttribute('aria-label')).toBe(false);
+    expect(host.querySelector('button.memory-card__menu-btn')?.hasAttribute('aria-label')).toBe(false);
+    expect(host.querySelector('article')?.getAttribute('role')).toBe('listitem');
+  });
+
+  it('level 2 renders the menu and checkbox as plain divs that still work', async () => {
+    const host = await renderAt(2);
+    const component = fixture.componentInstance;
+    expect(host.querySelector('article')?.hasAttribute('role')).toBe(false);
+    expect(host.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(host.querySelector('button')).toBeNull();
+
+    const toggleSpy = vi.spyOn(component.toggleSelect, 'emit');
+    (host.querySelector('div.memory-card__checkbox') as HTMLElement).click();
+    expect(toggleSpy).toHaveBeenCalledWith('m-1');
+
+    const menuButton = host.querySelector('div.memory-card__menu-btn') as HTMLElement;
+    expect(menuButton.hasAttribute('tabindex')).toBe(false);
+    menuButton.click();
+    fixture.detectChanges();
+    expect(host.querySelector('[role="menu"], [role="menuitem"]')).toBeNull();
+
+    const starSpy = vi.spyOn(component.starChange, 'emit');
+    const star = Array.from(host.querySelectorAll('.memory-card__menu .ax-btn')).find(el => el.textContent?.trim() === 'Star') as HTMLElement;
+    star.click();
+    expect(starSpy).toHaveBeenCalledWith({ id: 'm-1', starred: true });
+  });
+
+  it('level 3 drops state and suffixes key class names per load', async () => {
+    const host = await renderAt(3);
+    fixture.componentRef.setInput('selected', true);
+    fixture.detectChanges();
+    const suffix = `-ax${ax.suffix}`;
+    expect(host.querySelector('.memory-card')).toBeNull();
+    expect(host.querySelector(`.memory-card${suffix}`)?.classList.contains(`memory-card--selected${suffix}`)).toBe(true);
+    expect(host.querySelector(`.memory-card__menu-btn${suffix}`)).toBeTruthy();
+    expect(host.querySelector('[aria-expanded]')).toBeNull();
   });
 });

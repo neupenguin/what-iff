@@ -1,6 +1,7 @@
+<!-- Agent-experience demo: at AxLevelService level 1+ these stop being <label>s (visible text, no association). -->
 <section class="rounded-2xl border border-border-base bg-surface-card p-3 md:p-4">
   <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-    <label class="text-xs text-text-secondary">
+    <app-ax-label class="block text-xs text-text-secondary">
       Search
       <input
         class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
@@ -8,9 +9,9 @@
         [ngModel]="filters().query"
         (ngModelChange)="filtersChanged.emit({ query: $event })"
         placeholder="Search memories" />
-    </label>
+    </app-ax-label>
 
-    <label class="text-xs text-text-secondary">
+    <app-ax-label class="block text-xs text-text-secondary">
       Scope
       <select
         class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
@@ -20,9 +21,9 @@
           <option [value]="scope.value">{{ scope.label }}</option>
         }
       </select>
-    </label>
+    </app-ax-label>
 
-    <label class="text-xs text-text-secondary">
+    <app-ax-label class="block text-xs text-text-secondary">
       Personality
       <select
         class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
@@ -33,9 +34,9 @@
           <option [value]="personality.id">{{ personality.label }}</option>
         }
       </select>
-    </label>
+    </app-ax-label>
 
-    <label class="text-xs text-text-secondary">
+    <app-ax-label class="block text-xs text-text-secondary">
       Chat thread
       <select
         class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
@@ -46,10 +47,10 @@
           <option [value]="chat.id">{{ chat.label }}</option>
         }
       </select>
-    </label>
+    </app-ax-label>
 
     @if (levelEnabled()) {
-      <label class="text-xs text-text-secondary">
+      <app-ax-label class="block text-xs text-text-secondary">
         Level
         <select
           class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
@@ -59,26 +60,26 @@
             <option [value]="level.value">{{ level.label }}</option>
           }
         </select>
-      </label>
+      </app-ax-label>
     }
 
     <div class="grid grid-cols-2 gap-2">
-      <label class="text-xs text-text-secondary">
+      <app-ax-label class="block text-xs text-text-secondary">
         Start date
         <input
           class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
           type="date"
           [ngModel]="filters().minDate"
           (ngModelChange)="filtersChanged.emit({ minDate: $event })" />
-      </label>
-      <label class="text-xs text-text-secondary">
+      </app-ax-label>
+      <app-ax-label class="block text-xs text-text-secondary">
         End date
         <input
           class="mt-1 w-full rounded-xl border border-border-base bg-surface-base px-3 py-2 text-sm text-text-primary"
           type="date"
           [ngModel]="filters().maxDate"
           (ngModelChange)="filtersChanged.emit({ maxDate: $event })" />
-      </label>
+      </app-ax-label>
     </div>
   </div>
 

@@ -2,6 +2,8 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { AxLabelComponent } from './ax-label.component';
+
 import {
   MemoryLevelFilter,
   MemoryScopeFilter,
@@ -16,7 +18,7 @@ export interface MemorySelectOption {
 @Component({
   selector: 'app-memory-filter-bar',
   standalone: true,
-  imports: [FormsModule],
+  imports: [AxLabelComponent, FormsModule],
   templateUrl: './memory-filter-bar.component.html',
   styleUrl: './memory-filter-bar.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -5,9 +5,11 @@ import { catchError, map, of } from 'rxjs';
 
 import { Chat, isSandboxed } from '../../../core/models/chat.model';
 import { Memory } from '../../../core/models/memory.model';
+import { AxLevelService } from '../../../core/services/ax-level.service';
 import { ChatService } from '../../../core/services/chat.service';
 import { MemoryViewService } from '../../../core/services/memory-view.service';
 import { ModalComponent } from '../../../shared/ui/modal/modal.component';
+import { AxLabelComponent } from './ax-label.component';
 
 /** Threads offered as a destination; the list is for picking, not browsing. */
 const THREAD_PICKER_LIMIT = 100;
@@ -28,7 +30,7 @@ const THREAD_PICKER_LIMIT = 100;
 @Component({
   selector: 'app-memory-scope-dialog',
   standalone: true,
-  imports: [FormsModule, ModalComponent],
+  imports: [AxLabelComponent, FormsModule, ModalComponent],
   templateUrl: './memory-scope-dialog.component.html',
   styleUrl: './memory-scope-dialog.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -37,6 +39,8 @@ export class MemoryScopeDialogComponent implements OnInit {
   private readonly view = inject(MemoryViewService);
   private readonly chatService = inject(ChatService);
   private readonly destroyRef = inject(DestroyRef);
+  /** Agent-experience demo level; see AxLevelService. */
+  readonly ax = inject(AxLevelService);
 
   readonly memories = input.required<Memory[]>();
 

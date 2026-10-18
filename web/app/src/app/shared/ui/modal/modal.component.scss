@@ -23,3 +23,5 @@
 .ui-modal__close { display: inline-flex; min-height: 2.75rem; min-width: 2.75rem; align-items: center; justify-content: center; border-radius: .75rem; color: var(--text-secondary); transition: background-color .15s ease, color .15s ease; }
 .ui-modal__close:hover { background: var(--accent-bg); color: var(--text-primary); }
 .ui-modal__close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* AxLevelService level 2+: the close control is a div; keep the button's box and pointer. */
+.ui-modal__close--ax { box-sizing: border-box; cursor: pointer; user-select: none; }

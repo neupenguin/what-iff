@@ -1,5 +1,6 @@
 import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { AxLevelService } from '../../../core/services/ax-level.service';
 import { lockBodyScroll, releaseBodyScroll, type BodyScrollLockHandle } from '../helpers/body-scroll-lock.helpers';
 import { createFocusTrap, releaseFocusTrap, type FocusTrapHandle } from '../helpers/focus-trap.helpers';
 import { isEscapeKey } from '../helpers/keyboard.helpers';
@@ -35,11 +36,27 @@ export class ModalComponent implements OnDestroy {
   readonly describedBy = input<string | null>(null);
   readonly dismissible = input(true);
   readonly size = input<ModalSize>('md');
+  /**
+   * Opt in to the agent-experience demo's degradation levels (AxLevelService). Only features/memory
+   * sets this, so every other modal in the app keeps its semantics at any `?ax` level.
+   */
+  readonly axDegrade = input(false);
   readonly dismiss = output<ModalDismissReason>();
 
   readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
 
   private readonly document = inject(DOCUMENT);
+  private readonly ax = inject(AxLevelService);
+
+  /** The ax level this modal honours: the app-wide level when opted in, otherwise 0. */
+  readonly axLevel = computed(() => (this.axDegrade() ? this.ax.level() : 0));
+  /** Accessible name for the close button (dropped from ax level 1). */
+  readonly closeLabel = computed(() => (this.axLevel() >= 1 ? null : 'Close'));
+  /** Dialog role and its aria-modal/labelling (dropped from ax level 2). */
+  readonly dialogRole = computed(() => (this.axLevel() >= 2 ? null : 'dialog'));
+  readonly ariaModal = computed(() => (this.axLevel() >= 2 ? null : 'true'));
+  readonly ariaLabelledBy = computed(() => (this.axLevel() >= 2 ? null : this.labelledBy()));
+  readonly ariaDescribedBy = computed(() => (this.axLevel() >= 2 ? null : this.describedBy()));
   private focusTrap: FocusTrapHandle | null = null;
   private bodyLock: BodyScrollLockHandle | null = null;
 
@@ -66,6 +83,10 @@ export class ModalComponent implements OnDestroy {
 
   backdropClass(): string {
     return 'ui-modal fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+  }
+
+  backdropRole(): string | null {
+    return this.axLevel() >= 2 ? null : 'presentation';
   }
 
   onBackdropClick(): void {

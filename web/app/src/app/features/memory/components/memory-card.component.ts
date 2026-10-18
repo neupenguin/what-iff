@@ -1,6 +1,8 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+
+import { AxLevelService } from '../../../core/services/ax-level.service';
 
 import {
   associationLabel,
@@ -18,6 +20,13 @@ import { GlobeIconComponent, StarIconComponent } from '../../../shared/ui/icons/
 import { PersonaAccentScopeComponent } from '../../personality/picker/persona-accent-scope.component';
 import { PersonaCoverComponent } from '../../personality/picker/persona-cover.component';
 import { TooltipDirective } from '../../../shared/ui/tooltip/tooltip.directive';
+
+export interface MemoryCardMenuItem {
+  key: 'edit' | 'move' | 'star' | 'archive' | 'delete';
+  label: string;
+  hint: string | null;
+  danger?: boolean;
+}
 
 @Component({
   selector: 'app-memory-card',
@@ -37,6 +46,9 @@ import { TooltipDirective } from '../../../shared/ui/tooltip/tooltip.directive';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MemoryCardComponent {
+  /** Agent-experience demo level; see AxLevelService. The template gates names, roles and state on it. */
+  readonly ax = inject(AxLevelService);
+
   readonly memory = input.required<MemoryCardVm>();
   readonly personalities = input<MemoryPersonalityOption[]>([]);
   readonly pinUpdating = input(false);
@@ -67,6 +79,36 @@ export class MemoryCardComponent {
   readonly canSave = computed(() => this.draft().trim().length > 0);
   readonly showPinControl = computed(() => isUserScopedMemoryLevel(this.memory().level));
   readonly association = computed(() => associationLabel(this.memory()));
+  /** Root classes; at ax level 3 the names carry a per-load suffix (styles match both spellings). */
+  readonly cardClasses = computed(() => {
+    const ax = this.ax;
+    const classes = [ax.cls('memory-card')];
+    if (this.selected()) classes.push(ax.cls('memory-card--selected'));
+    if (this.focused()) classes.push(ax.cls('memory-card--focused'));
+    if (this.readOnly()) classes.push(ax.cls('memory-card--readonly'));
+    return classes.join(' ');
+  });
+  /** Classes for the level-2 div checkbox, whose checked state lives only in a class. */
+  readonly checkboxDivClasses = computed(() => {
+    const classes = [this.ax.cls('memory-card__checkbox')];
+    if (this.selected()) classes.push(this.ax.cls('memory-card__checkbox--on'));
+    return classes.join(' ');
+  });
+  /**
+   * The ⋮ menu's entries, rendered either as role=menuitem buttons or, at ax level 2+, as plain
+   * clickable divs. One list keeps the two renderings from drifting apart.
+   */
+  readonly menuItems = computed<MemoryCardMenuItem[]>(() => [
+    { key: 'edit', label: 'Edit', hint: null },
+    { key: 'move', label: 'Move', hint: this.moveHint },
+    { key: 'star', label: this.memory().starred ? 'Unstar' : 'Star', hint: "A flag for your own filtering; doesn't affect replies" },
+    {
+      key: 'archive',
+      label: this.isArchivedView() ? 'Unarchive' : 'Archive',
+      hint: this.isArchivedView() ? 'Make this memory usable in replies again' : 'Keep it, but stop using it in replies',
+    },
+    { key: 'delete', label: 'Delete', hint: null, danger: true },
+  ]);
   readonly pinnedPersonality = computed(() => {
     const id = this.memory().pinnedPersonalityId;
     if (!id) return null;
@@ -124,6 +166,21 @@ export class MemoryCardComponent {
     const target = event?.target as HTMLElement | undefined;
     if (target?.closest('button, a, label, input, textarea, select')) return;
     this.focus.emit(this.memory().id);
+  }
+
+  onMenuItem(key: MemoryCardMenuItem['key'], event: Event): void {
+    switch (key) {
+      case 'edit':
+        return this.startEdit(event);
+      case 'move':
+        return this.onMove(event);
+      case 'star':
+        return this.onStar(event);
+      case 'archive':
+        return this.onArchive(event);
+      case 'delete':
+        return this.onDelete(event);
+    }
   }
 
   onStar(event?: Event): void {

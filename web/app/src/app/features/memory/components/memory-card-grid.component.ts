@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 
+import { AxLevelService } from '../../../core/services/ax-level.service';
 import { MemoryCardVm } from '../helpers/memory-vm.helpers';
 import { MemoryCardComponent } from './memory-card.component';
 import { MemoryPersonalityOption } from './memory-form.component';
@@ -13,6 +14,9 @@ import { MemoryPersonalityOption } from './memory-form.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MemoryCardGridComponent {
+  /** Agent-experience demo level; see AxLevelService. */
+  readonly ax = inject(AxLevelService);
+
   readonly memories = input<MemoryCardVm[]>([]);
   readonly personalities = input<MemoryPersonalityOption[]>([]);
   readonly selectedIds = input<string[]>([]);

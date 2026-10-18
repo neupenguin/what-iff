@@ -12,38 +12,27 @@
     </div>
   </header>
 
-  <div class="memories-shell__tabs" role="tablist" aria-label="Memory manager sections">
-    <button
-      type="button"
-      role="tab"
-      class="memories-shell__tab"
-      [class.memories-shell__tab--active]="activeTab() === 'memories'"
-      [attr.aria-selected]="activeTab() === 'memories'"
-      (click)="setActiveTab('memories')">
-      Memories
-    </button>
-    <button
-      type="button"
-      role="tab"
-      class="memories-shell__tab"
-      [class.memories-shell__tab--active]="activeTab() === 'merge-history'"
-      [attr.aria-selected]="activeTab() === 'merge-history'"
-      uiTooltip="Automatic merges and links between duplicate or related memories"
-      placement="bottom"
-      (click)="setActiveTab('merge-history')">
-      Merge history
-    </button>
-    <button
-      type="button"
-      role="tab"
-      class="memories-shell__tab"
-      [class.memories-shell__tab--active]="activeTab() === 'compaction-log'"
-      [attr.aria-selected]="activeTab() === 'compaction-log'"
-      uiTooltip="What each thread checkpoint changed: summaries, scratchpads and memories"
-      placement="bottom"
-      (click)="setActiveTab('compaction-log')">
-      Compaction log
-    </button>
+  <!-- Agent-experience demo: AxLevelService drops tab roles at level 2 and selection state at level 3. -->
+  <div class="memories-shell__tabs" [attr.role]="ax.role('tablist')" [attr.aria-label]="ax.name('Memory manager sections')">
+    @for (tab of tabs; track tab.key) {
+      @if (ax.roles()) {
+        <button
+          type="button"
+          role="tab"
+          [class]="tabClasses(tab.key)"
+          [attr.aria-selected]="ax.state(activeTab() === tab.key)"
+          [uiTooltip]="tab.hint"
+          placement="bottom"
+          (click)="setActiveTab(tab.key)"
+        >
+          {{ tab.label }}
+        </button>
+      } @else {
+        <div [class]="'ax-btn ' + tabClasses(tab.key)" [uiTooltip]="tab.hint" placement="bottom" (click)="setActiveTab(tab.key)">
+          {{ tab.label }}
+        </div>
+      }
+    }
   </div>
 
   @if (activeTab() === 'memories') {

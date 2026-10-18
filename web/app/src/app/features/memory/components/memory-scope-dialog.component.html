@@ -1,4 +1,4 @@
-<ui-modal [open]="true" labelledBy="memory-scope-title" size="md" (dismiss)="close()">
+<ui-modal [open]="true" [axDegrade]="true" labelledBy="memory-scope-title" size="md" (dismiss)="close()">
   <h3 id="memory-scope-title" modal-header class="text-base font-semibold text-text-primary">{{ title() }}</h3>
 
   @if (single(); as memory) {
@@ -6,12 +6,12 @@
   }
 
   @if (loading()) {
-    <p class="memory-scope__muted" role="status">Loading threads…</p>
+    <p class="memory-scope__muted" [attr.role]="ax.state('status')">Loading threads…</p>
   } @else {
     @if (returnThread(); as source) {
       <p class="memory-scope__muted">It came from “{{ source.name }}”, which is selected. You can pick another thread instead.</p>
     }
-    <label class="memory-scope__field">
+    <app-ax-label class="memory-scope__field">
       <span>Thread</span>
       <select name="memory-scope-thread" [ngModel]="threadId()" (ngModelChange)="threadId.set($event)" [disabled]="errors().length > 0">
         <option [ngValue]="null" disabled>Choose a thread…</option>
@@ -22,7 +22,7 @@
           </option>
         }
       </select>
-    </label>
+    </app-ax-label>
     @if (threadOptions().length === 0) {
       <p class="memory-scope__muted">No threads to move it to.</p>
     }
@@ -30,7 +30,7 @@
   }
 
   @if (errors().length > 0) {
-    <p class="memory-scope__error" role="alert">
+    <p class="memory-scope__error" [attr.role]="ax.state('alert')">
       {{ errors().length === memories().length ? "Nothing was moved" : "Some memories could not be moved" }}: {{ errors()[0] }}
       @if (errors().length > 1) {
         (and {{ errors().length - 1 }} more)
@@ -38,24 +38,40 @@
     </p>
   }
 
+  <!-- Agent-experience demo: at AxLevelService level 2+ the footer actions are plain divs. -->
   <div modal-footer class="flex justify-end gap-2">
-    <button
-      type="button"
-      class="rounded-lg border border-border-base px-3 py-2 text-sm text-text-secondary"
-      [disabled]="saving()"
-      (click)="close()"
-    >
-      {{ errors().length > 0 ? "Close" : "Cancel" }}
-    </button>
-    @if (errors().length === 0) {
+    @if (ax.roles()) {
       <button
         type="button"
-        class="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-        [disabled]="!canSubmit()"
-        (click)="submit()"
+        class="rounded-lg border border-border-base px-3 py-2 text-sm text-text-secondary"
+        [disabled]="saving()"
+        (click)="close()"
       >
-        {{ saving() ? "Moving…" : "Move" }}
+        {{ errors().length > 0 ? "Close" : "Cancel" }}
       </button>
+      @if (errors().length === 0) {
+        <button
+          type="button"
+          class="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          [disabled]="!canSubmit()"
+          (click)="submit()"
+        >
+          {{ saving() ? "Moving…" : "Move" }}
+        </button>
+      }
+    } @else {
+      <div class="ax-btn cursor-pointer rounded-lg border border-border-base px-3 py-2 text-sm text-text-secondary" (click)="!saving() && close()">
+        {{ errors().length > 0 ? "Close" : "Cancel" }}
+      </div>
+      @if (errors().length === 0) {
+        <div
+          class="ax-btn cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white"
+          [class.opacity-50]="!canSubmit()"
+          (click)="submit()"
+        >
+          {{ saving() ? "Moving…" : "Move" }}
+        </div>
+      }
     }
   </div>
 </ui-modal>

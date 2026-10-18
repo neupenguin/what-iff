@@ -1,3 +1,8 @@
+// Agent-experience demo: tab class names are matched through `ax()` (see ./_ax.scss).
+@use './ax' as *;
+
+@include ax-btn-base;
+
 :host {
   display: block;
   min-width: 0;
@@ -58,7 +63,7 @@
   max-width: 100%;
 }
 
-.memories-shell__tab {
+#{ax('memories-shell__tab')} {
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -71,13 +76,15 @@
   white-space: nowrap;
 }
 
-.memories-shell__tab--active {
+#{ax('memories-shell__tab--active')} {
   border-bottom-color: var(--color-accent);
   color: var(--color-accent);
 }
 
-.memories-shell__tab:hover:not(.memories-shell__tab--active) {
-  color: var(--color-text-primary);
+#{ax('memories-shell__tab')} {
+  &:hover:not(.memories-shell__tab--active):not([class*='memories-shell__tab--active-ax']) {
+    color: var(--color-text-primary);
+  }
 }
 
 @media (max-width: 1023px) {
@@ -99,7 +106,7 @@
     gap: 0.2rem 0.45rem;
   }
 
-  .memories-shell__tab {
+  #{ax('memories-shell__tab')} {
     font-size: 0.75rem;
     padding: 0.5rem 0;
   }

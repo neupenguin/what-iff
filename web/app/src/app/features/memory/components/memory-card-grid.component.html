@@ -1,9 +1,9 @@
 @if (loading()) {
-  <p class="rounded-2xl border border-border-base bg-surface-card p-8 text-center text-sm text-text-secondary" role="status">
+  <p class="rounded-2xl border border-border-base bg-surface-card p-8 text-center text-sm text-text-secondary" [attr.role]="ax.state('status')">
     Loading memories…
   </p>
 } @else if (error()) {
-  <p class="rounded-2xl border border-danger/40 bg-danger/10 p-6 text-sm text-danger" role="alert">
+  <p class="rounded-2xl border border-danger/40 bg-danger/10 p-6 text-sm text-danger" [attr.role]="ax.state('alert')">
     {{ error() }}
   </p>
 } @else if (memories().length === 0) {
@@ -11,7 +11,7 @@
     No memories found.
   </p>
 } @else {
-  <section class="memory-card-list" role="list" aria-label="Memories">
+  <section class="memory-card-list" [attr.role]="ax.role('list')" [attr.aria-label]="ax.name('Memories')">
     @for (memory of memories(); track memory.id) {
       <app-memory-card
         [memory]="memory"

@@ -1,0 +1,33 @@
+// Agent-experience demo (AxLevelService) styling helpers for features/memory.
+//
+// Degradation levels change semantics only, so these helpers exist to keep the
+// pixels identical when a template swaps a <button> for a <div> (level 2) or
+// renders a class name with a per-load suffix (level 3).
+
+// Selector list matching a key class in both spellings: `base` (levels 0-2)
+// and `base-ax<suffix>` (level 3, see AxLevelService.cls). Use it as the
+// top-level selector of a rule and nest any descendants or pseudo-classes
+// under it, so Sass expands the list correctly:
+//
+//   #{ax('memory-card__menu')} { button { ... } }
+//
+// The `-ax` infix keeps the substring unique: `memory-card__menu-ax` never
+// occurs inside `memory-card__menu-btn-ax…`.
+@function ax($base) {
+  @return '.#{$base}, [class*="#{$base}-ax"]';
+}
+
+// What a <button> gets from the user agent after Tailwind's preflight that a
+// <div> does not. Include at the top of a component stylesheet so the
+// component's own rules (display: flex, padding, …) still win by order.
+@mixin ax-btn-base {
+  .ax-btn {
+    // A button centres its content on both axes inside a fixed-size box.
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    text-align: center;
+    user-select: none;
+  }
+}

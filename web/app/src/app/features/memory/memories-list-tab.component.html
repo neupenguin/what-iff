@@ -1,3 +1,7 @@
+<!--
+  Agent-experience demo: `ax` (AxLevelService) gates names (level 1), roles and native controls
+  (level 2) and state plus stable class names (level 3). Every branch renders the same pixels.
+-->
 <div class="memories-list" [class.memories-list--with-panel]="showDesktopFocusRail()">
   <div class="memories-list__main">
     <div class="memories-list__summary">
@@ -10,24 +14,28 @@
     </div>
 
     <div class="memories-list__search-row">
-      <label class="memories-list__search">
+      <app-ax-label class="memories-list__search">
         <ui-search-icon [size]="14" />
         <input
           type="search"
           placeholder="Search memories…"
-          aria-label="Search memories"
+          [attr.aria-label]="ax.name('Search memories')"
           [ngModel]="searchDraft()"
           (ngModelChange)="searchDraft.set($event)"
           (keydown.enter)="onSearchSubmit()"
         />
-      </label>
-      <button type="button" class="memories-list__icon-btn" aria-label="Refresh memories" uiTooltip="Reload the list" (click)="refresh()">
-        ↻
-      </button>
+      </app-ax-label>
+      @if (ax.roles()) {
+        <button type="button" class="memories-list__icon-btn" [attr.aria-label]="ax.name('Refresh memories')" uiTooltip="Reload the list" (click)="refresh()">
+          ↻
+        </button>
+      } @else {
+        <div class="memories-list__icon-btn ax-btn" uiTooltip="Reload the list" (click)="refresh()">↻</div>
+      }
     </div>
 
-    <div class="memories-list__filters" aria-label="Memory filters">
-      <label class="memories-list__filter-field">
+    <div class="memories-list__filters" [attr.aria-label]="ax.name('Memory filters')">
+      <app-ax-label class="memories-list__filter-field">
         <span>Personality</span>
         <select [value]="filters().personalityId" (change)="onPersonalityFilterChange($any($event.target).value)">
           <option value="">Any personality</option>
@@ -36,8 +44,8 @@
             <option [value]="personality.id">{{ personality.label }}</option>
           }
         </select>
-      </label>
-      <label class="memories-list__filter-field">
+      </app-ax-label>
+      <app-ax-label class="memories-list__filter-field">
         <span>From</span>
         <div class="memories-list__date-wrap">
           <input
@@ -51,15 +59,15 @@
           <button
             type="button"
             class="memories-list__date-btn"
-            aria-label="Open start date calendar"
+            [attr.aria-label]="ax.name('Open start date calendar')"
             uiTooltip="Pick a start date"
             (click)="openDatePicker(minDateInput)"
           >
             <ui-calendar-icon [size]="14" />
           </button>
         </div>
-      </label>
-      <label class="memories-list__filter-field">
+      </app-ax-label>
+      <app-ax-label class="memories-list__filter-field">
         <span>To</span>
         <div class="memories-list__date-wrap">
           <input
@@ -73,15 +81,15 @@
           <button
             type="button"
             class="memories-list__date-btn"
-            aria-label="Open end date calendar"
+            [attr.aria-label]="ax.name('Open end date calendar')"
             uiTooltip="Pick an end date"
             (click)="openDatePicker(maxDateInput)"
           >
             <ui-calendar-icon [size]="14" />
           </button>
         </div>
-      </label>
-      <label class="memories-list__filter-field">
+      </app-ax-label>
+      <app-ax-label class="memories-list__filter-field">
         <span>Sort</span>
         <div class="memories-list__sort-wrap">
           <select [value]="filters().sort" (change)="setSort($any($event.target).value)">
@@ -91,12 +99,12 @@
           </select>
           <ui-chev-down-icon [size]="12" />
         </div>
-      </label>
-      <label class="memories-list__filter-field">
+      </app-ax-label>
+      <app-ax-label class="memories-list__filter-field">
         <span>Source</span>
         <div class="memories-list__source-wrap">
           <select
-            aria-label="Filter by source"
+            [attr.aria-label]="ax.name('Filter by source')"
             [uiTooltip]="provenanceFilterHint()"
             [value]="filters().provenance"
             (change)="setProvenanceFilter($any($event.target).value)"
@@ -108,7 +116,7 @@
           </select>
           <ui-chev-down-icon [size]="12" />
         </div>
-      </label>
+      </app-ax-label>
       <button
         type="button"
         class="memories-list__clear"
@@ -118,52 +126,29 @@
         Clear
       </button>
       @if (dateRangeError(); as dateError) {
-        <p class="memories-list__date-error" role="alert">{{ dateError }}</p>
+        <p class="memories-list__date-error" [attr.role]="ax.state('alert')">{{ dateError }}</p>
       }
     </div>
 
-    <div class="memories-list__status-tabs" role="tablist" aria-label="Memory status">
-      <button
-        type="button"
-        role="tab"
-        [class.memories-list__status--active]="statusFilter() === 'active' && filters().scope === 'user'"
-        [attr.aria-selected]="statusFilter() === 'active' && filters().scope === 'user'"
-        uiTooltip="Active global and personality memories, used across threads"
-        (click)="setScopeFilter('user')"
-      >
-        User
-      </button>
-      <button
-        type="button"
-        role="tab"
-        [class.memories-list__status--active]="isThreadView()"
-        [attr.aria-selected]="isThreadView()"
-        uiTooltip="Active memories used only in the thread they came from"
-        (click)="setScopeFilter('chat')"
-      >
-        Thread
-      </button>
-      <button
-        type="button"
-        role="tab"
-        class="memories-list__status--summaries"
-        [class.memories-list__status--active]="statusFilter() === 'summaries'"
-        [attr.aria-selected]="statusFilter() === 'summaries'"
-        uiTooltip="Thread summaries written at each checkpoint"
-        (click)="setStatusFilter('summaries')"
-      >
-        Summaries
-      </button>
-      <button
-        type="button"
-        role="tab"
-        [class.memories-list__status--active]="statusFilter() === 'inactive'"
-        [attr.aria-selected]="statusFilter() === 'inactive'"
-        uiTooltip="Archived memories are never used in replies"
-        (click)="setStatusFilter('inactive')"
-      >
-        Archived
-      </button>
+    <div class="memories-list__status-tabs" [attr.role]="ax.role('tablist')" [attr.aria-label]="ax.name('Memory status')">
+      @for (tab of statusTabs(); track tab.key) {
+        @if (ax.roles()) {
+          <button
+            type="button"
+            role="tab"
+            [class]="tabClasses(tab)"
+            [attr.aria-selected]="ax.state(tab.active)"
+            [uiTooltip]="tab.hint"
+            (click)="selectStatusTab(tab.key)"
+          >
+            {{ tab.label }}
+          </button>
+        } @else {
+          <div [class]="'ax-btn ' + tabClasses(tab)" [uiTooltip]="tab.hint" (click)="selectStatusTab(tab.key)">
+            {{ tab.label }}
+          </div>
+        }
+      }
     </div>
 
     @if (totalPages() > 1) {
@@ -175,42 +160,41 @@
     }
 
     @if (selectedCount() > 0 && !isSummariesView()) {
-      <div class="memories-list__bulk" role="toolbar" aria-label="Bulk memory actions">
-        <label class="memories-list__bulk-select">
-          <input
-            type="checkbox"
-            class="memories-list__checkbox"
-            [checked]="allSelected()"
-            (change)="setAllSelected($any($event.target).checked)"
-          />
-          Select all
-        </label>
+      <div class="memories-list__bulk" [attr.role]="ax.role('toolbar')" [attr.aria-label]="ax.name('Bulk memory actions')">
+        @if (ax.roles()) {
+          <app-ax-label class="memories-list__bulk-select">
+            <input
+              type="checkbox"
+              class="memories-list__checkbox"
+              [checked]="allSelected()"
+              (change)="setAllSelected($any($event.target).checked)"
+            />
+            Select all
+          </app-ax-label>
+        } @else {
+          <div class="memories-list__bulk-select">
+            <div [class]="selectAllClasses()" (click)="setAllSelected(!allSelected())"></div>
+            Select all
+          </div>
+        }
         <span class="memories-list__bulk-count">{{ selectedCount() }} selected</span>
-        <button
-          type="button"
-          uiTooltip="Move the selected memories to global, a personality or a thread"
-          (click)="onMoveSelected()"
-          [disabled]="mutating()"
-        >
-          Move
-        </button>
-        <button
-          type="button"
-          [uiTooltip]="isArchivedView() ? 'Make the selected memories usable again' : 'Stop using the selected memories in replies'"
-          (click)="onArchiveSelected()"
-          [disabled]="mutating()"
-        >
-          {{ isArchivedView() ? "Unarchive" : "Archive" }}
-        </button>
-        <button
-          type="button"
-          class="memories-list__bulk-danger"
-          uiTooltip="Permanently delete the selected memories"
-          (click)="onDeleteSelected()"
-          [disabled]="deleting()"
-        >
-          Delete
-        </button>
+        @for (action of bulkActions(); track action.key) {
+          @if (ax.roles()) {
+            <button type="button" [class]="action.danger ? 'memories-list__bulk-danger' : ''" [uiTooltip]="action.hint" [disabled]="action.disabled" (click)="onBulkAction(action.key)">
+              {{ action.label }}
+            </button>
+          } @else {
+            <div
+              class="ax-btn"
+              [class.memories-list__bulk-danger]="action.danger"
+              [class.ax-btn--disabled]="action.disabled"
+              [uiTooltip]="action.hint"
+              (click)="!action.disabled && onBulkAction(action.key)"
+            >
+              {{ action.label }}
+            </div>
+          }
+        }
       </div>
     }
 
@@ -259,7 +243,7 @@
 </div>
 
 @if (showMobileFocusModal() && focusedMemory(); as focused) {
-  <ui-modal [open]="true" size="xl" labelledBy="memory-focus-title" (dismiss)="clearFocus()">
+  <ui-modal [open]="true" [axDegrade]="true" size="xl" labelledBy="memory-focus-title" (dismiss)="clearFocus()">
     <div modal-header class="memories-list__focus-modal-header">
       <h2 id="memory-focus-title">Memory details</h2>
     </div>
@@ -283,10 +267,15 @@
 
 @if (moveMenuOpen()) {
   <div class="memories-list__move-overlay" (click)="closeMoveMenu()">
-    <div class="memories-list__move-menu" role="dialog" aria-label="Move memories" (click)="$event.stopPropagation()">
+    <div
+      class="memories-list__move-menu"
+      [attr.role]="ax.role('dialog')"
+      [attr.aria-label]="ax.name('Move memories')"
+      (click)="$event.stopPropagation()"
+    >
       <h2>Move to</h2>
       @if (moveErrors().length > 0) {
-        <p class="memories-list__move-error" role="alert">
+        <p class="memories-list__move-error" [attr.role]="ax.state('alert')">
           {{ moveErrors().length === moveTargetIds().length ? "Nothing was moved" : "Some memories could not be moved" }}:
           {{ moveErrors()[0] }}
           @if (moveErrors().length > 1) {
@@ -294,15 +283,32 @@
           }
         </p>
       } @else {
-        <button type="button" [disabled]="mutating()" (click)="moveToPersonality(null)">{{ globalScopeLabel }}</button>
-        @for (personality of personalities(); track personality.id) {
-          <button type="button" [disabled]="mutating()" (click)="moveToPersonality(personality.id)">{{ personality.label }}</button>
+        @for (target of moveTargets(); track target.key) {
+          @if (ax.roles()) {
+            <button type="button" [class]="target.thread ? 'memories-list__move-thread' : ''" [disabled]="mutating()" (click)="onMoveTarget(target.key)">
+              {{ target.label }}
+            </button>
+          } @else {
+            <div
+              class="ax-btn"
+              [class.memories-list__move-thread]="target.thread"
+              [class.ax-btn--disabled]="mutating()"
+              (click)="!mutating() && onMoveTarget(target.key)"
+            >
+              {{ target.label }}
+            </div>
+          }
         }
-        <button type="button" class="memories-list__move-thread" [disabled]="mutating()" (click)="moveToThread()">A thread…</button>
       }
-      <button type="button" class="memories-list__move-cancel" (click)="closeMoveMenu()">
-        {{ moveErrors().length > 0 ? "Close" : "Cancel" }}
-      </button>
+      @if (ax.roles()) {
+        <button type="button" class="memories-list__move-cancel" (click)="closeMoveMenu()">
+          {{ moveErrors().length > 0 ? "Close" : "Cancel" }}
+        </button>
+      } @else {
+        <div class="ax-btn memories-list__move-cancel" (click)="closeMoveMenu()">
+          {{ moveErrors().length > 0 ? "Close" : "Cancel" }}
+        </div>
+      }
     </div>
   </div>
 }

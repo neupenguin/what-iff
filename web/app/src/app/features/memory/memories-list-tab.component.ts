@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { fromEvent } from 'rxjs';
 
+import { AxLevelService } from '../../core/services/ax-level.service';
 import { MemoryService } from '../../core/services/memory.service';
 import { MemoryViewService } from '../../core/services/memory-view.service';
 import { PersonalityService } from '../../core/services/personality.service';
@@ -24,9 +25,34 @@ import { MemoryCardGridComponent } from './components/memory-card-grid.component
 import { MemoryFocusPanelComponent } from './components/memory-focus-panel.component';
 import { MemoryScopeDialogComponent } from './components/memory-scope-dialog.component';
 import { DeleteMemoryModalComponent } from './components/delete-memory-modal.component';
+import { AxLabelComponent } from './components/ax-label.component';
 import { ModalComponent } from '../../shared/ui/modal/modal.component';
 import { TooltipDirective } from '../../shared/ui/tooltip/tooltip.directive';
 import { CalendarIconComponent, ChevDownIconComponent, SearchIconComponent } from '../../shared/ui/icons/icons';
+
+const GLOBAL_MOVE_TARGET = '__global__';
+const THREAD_MOVE_TARGET = '__thread__';
+
+interface StatusTab {
+  key: 'user' | 'thread' | 'summaries' | 'archived';
+  label: string;
+  hint: string;
+  active: boolean;
+}
+
+interface BulkAction {
+  key: 'move' | 'archive' | 'delete';
+  label: string;
+  hint: string;
+  disabled: boolean;
+  danger?: boolean;
+}
+
+interface MoveTarget {
+  key: string;
+  label: string;
+  thread?: boolean;
+}
 
 /** Matches memories-list-tab SCSS: rail beside list at >960px, modal below. */
 const DESKTOP_FOCUS_QUERY = '(min-width: 961px)';
@@ -36,6 +62,7 @@ const DESKTOP_FOCUS_QUERY = '(min-width: 961px)';
   standalone: true,
   imports: [
     FormsModule,
+    AxLabelComponent,
     MemoryCardGridComponent,
     MemoryFocusPanelComponent,
     MemoryScopeDialogComponent,
@@ -58,6 +85,8 @@ export class MemoriesListTabComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
+  /** Agent-experience demo level; see AxLevelService. The template gates names, roles and state on it. */
+  readonly ax = inject(AxLevelService);
 
   readonly personalities = signal<MemoryPersonalityOption[]>([]);
   readonly deleteModalOpen = signal(false);
@@ -119,6 +148,45 @@ export class MemoriesListTabComponent implements OnInit {
     }
     return `${n} memor${n === 1 ? 'y' : 'ies'}`;
   });
+  /** The User / Thread / Summaries / Archived switcher, rendered as role=tab buttons or (ax 2+) divs. */
+  readonly statusTabs = computed<StatusTab[]>(() => {
+    const status = this.statusFilter();
+    return [
+      {
+        key: 'user',
+        label: 'User',
+        hint: 'Active global and personality memories, used across threads',
+        active: status === 'active' && this.filters().scope === 'user',
+      },
+      { key: 'thread', label: 'Thread', hint: 'Active memories used only in the thread they came from', active: this.isThreadView() },
+      { key: 'summaries', label: 'Summaries', hint: 'Thread summaries written at each checkpoint', active: status === 'summaries' },
+      { key: 'archived', label: 'Archived', hint: 'Archived memories are never used in replies', active: status === 'inactive' },
+    ];
+  });
+  /** Bulk bar actions; one list for the button and (ax 2+) div renderings. */
+  readonly bulkActions = computed<BulkAction[]>(() => [
+    {
+      key: 'move',
+      label: 'Move',
+      hint: 'Move the selected memories to global, a personality or a thread',
+      disabled: this.mutating(),
+    },
+    {
+      key: 'archive',
+      label: this.isArchivedView() ? 'Unarchive' : 'Archive',
+      hint: this.isArchivedView() ? 'Make the selected memories usable again' : 'Stop using the selected memories in replies',
+      disabled: this.mutating(),
+    },
+    { key: 'delete', label: 'Delete', hint: 'Permanently delete the selected memories', disabled: this.deleting(), danger: true },
+  ]);
+  /** Move menu destinations: global, each personality, then "A thread…". */
+  readonly moveTargets = computed<MoveTarget[]>(() => [
+    { key: GLOBAL_MOVE_TARGET, label: this.globalScopeLabel },
+    ...this.personalities().map(personality => ({ key: personality.id, label: personality.label })),
+    { key: THREAD_MOVE_TARGET, label: 'A thread…', thread: true },
+  ]);
+  /** Classes for the bulk bar's (ax 2+) div "Select all" checkbox; checked state lives only here. */
+  readonly selectAllClasses = computed(() => `memories-list__checkbox${this.allSelected() ? ' memories-list__checkbox--on' : ''}`);
   readonly showDesktopFocusRail = computed(() => !!this.focusedMemory() && this.isDesktopFocusLayout());
   readonly showMobileFocusModal = computed(() => !!this.focusedMemory() && !this.isDesktopFocusLayout());
 
@@ -191,6 +259,45 @@ export class MemoriesListTabComponent implements OnInit {
       return;
     }
     this.onFilterChanged({ status, scope: 'all', level: 'all' });
+  }
+
+  tabClasses(tab: StatusTab): string {
+    const classes: string[] = [];
+    if (tab.key === 'summaries') classes.push('memories-list__status--summaries');
+    if (tab.active) classes.push(this.ax.cls('memories-list__status--active'));
+    return classes.join(' ');
+  }
+
+  selectStatusTab(key: StatusTab['key']): void {
+    switch (key) {
+      case 'user':
+        return this.setScopeFilter('user');
+      case 'thread':
+        return this.setScopeFilter('chat');
+      case 'summaries':
+        return this.setStatusFilter('summaries');
+      case 'archived':
+        return this.setStatusFilter('inactive');
+    }
+  }
+
+  onBulkAction(key: BulkAction['key']): void {
+    switch (key) {
+      case 'move':
+        return this.onMoveSelected();
+      case 'archive':
+        return this.onArchiveSelected();
+      case 'delete':
+        return this.onDeleteSelected();
+    }
+  }
+
+  onMoveTarget(key: string): void {
+    if (key === THREAD_MOVE_TARGET) {
+      this.moveToThread();
+    } else {
+      this.moveToPersonality(key === GLOBAL_MOVE_TARGET ? null : key);
+    }
   }
 
   setScopeFilter(scope: 'user' | 'chat'): void {

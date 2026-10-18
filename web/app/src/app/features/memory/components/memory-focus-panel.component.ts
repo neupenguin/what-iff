@@ -1,8 +1,9 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
 import { MemoryMergeEvent } from '../../../core/models/memory.model';
+import { AxLevelService } from '../../../core/services/ax-level.service';
 import {
   associationLabel,
   levelDescription,
@@ -38,6 +39,9 @@ import { PersonaCoverComponent } from '../../personality/picker/persona-cover.co
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MemoryFocusPanelComponent {
+  /** Agent-experience demo level; see AxLevelService. Only names are gated here (level 1). */
+  readonly ax = inject(AxLevelService);
+
   readonly memory = input.required<MemoryCardVm>();
   readonly personalities = input<MemoryPersonalityOption[]>([]);
   readonly mergeEvents = input<MemoryMergeEvent[]>([]);

@@ -1,13 +1,27 @@
 @if (open()) {
-  <div [class]="backdropClass()" role="presentation" (click)="onBackdropClick()" (keydown)="onKeydown($event)">
-    <section #dialog [class]="panelClass()" role="dialog" aria-modal="true" [attr.aria-labelledby]="labelledBy()" [attr.aria-describedby]="describedBy()" (click)="onDialogClick($event)">
+  <div [class]="backdropClass()" [attr.role]="backdropRole()" (click)="onBackdropClick()" (keydown)="onKeydown($event)">
+    <section
+      #dialog
+      [class]="panelClass()"
+      [attr.role]="dialogRole()"
+      [attr.aria-modal]="ariaModal()"
+      [attr.aria-labelledby]="ariaLabelledBy()"
+      [attr.aria-describedby]="ariaDescribedBy()"
+      (click)="onDialogClick($event)"
+    >
       <header class="ui-modal__header">
         <ng-content select="[modal-header]" />
         <div class="ui-modal__header-actions">
           @if (dismissible()) {
-            <button class="ui-modal__close" type="button" aria-label="Close" (click)="requestDismiss()">
-              <ui-x-icon [size]="18" />
-            </button>
+            @if (axLevel() < 2) {
+              <button class="ui-modal__close" type="button" [attr.aria-label]="closeLabel()" (click)="requestDismiss()">
+                <ui-x-icon [size]="18" />
+              </button>
+            } @else {
+              <div class="ui-modal__close ui-modal__close--ax" (click)="requestDismiss()">
+                <ui-x-icon [size]="18" />
+              </div>
+            }
           }
         </div>
       </header>
