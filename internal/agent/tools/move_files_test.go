@@ -109,9 +109,6 @@ func TestMoveFilesRefusesBadArgumentsWithoutTouchingTheStore(t *testing.T) {
 		"folder too deep": fmt.Sprintf(`{"ids":[%q],"folder":"%s"}`, uuid.New(), strings.Repeat("a/", 9)),
 		"neither":         fmt.Sprintf(`{"ids":[%q]}`, uuid.New()),
 		"rename many":     fmt.Sprintf(`{"ids":[%q,%q],"name":"x"}`, uuid.New(), uuid.New()),
-		"empty name":      fmt.Sprintf(`{"ids":[%q],"name":"  "}`, uuid.New()),
-		"name with slash": fmt.Sprintf(`{"ids":[%q],"name":"a/b.png","folder":"x"}`, uuid.New()),
-		"name too long":   fmt.Sprintf(`{"ids":[%q],"name":%q}`, uuid.New(), strings.Repeat("n", models.MaxFileNameRunes+1)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &fakeMoveStore{}
@@ -169,6 +166,24 @@ func TestMoveFilesRenamesAndMovesInOneCall(t *testing.T) {
 	assert.Equal(t, "vix/portraits", *res.Folder)
 	assert.Equal(t, 1, res.Moved)
 	assert.Equal(t, []uuid.UUID{id}, store.ids)
+}
+
+// The store is the one place a name is judged, since only it knows the extension the name keeps;
+// its refusal reaches the model as is, and stops the call before anything moves.
+func TestMoveFilesPassesOnTheStoresRefusalOfAName(t *testing.T) {
+	for name, raw := range map[string]string{
+		"empty":    "  ",
+		"slash":    "a/b.png",
+		"too long": strings.Repeat("n", models.MaxFileNameRunes-2), // fits until ".png" is kept
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeMoveStore{}
+			res := runMove(t, store, fmt.Sprintf(`{"ids":[%q],"name":%q,"folder":"x"}`, uuid.New(), raw))
+			assert.False(t, res.Success)
+			assert.Contains(t, res.Error, models.ErrInvalidFileName.Error())
+			assert.Empty(t, store.ids, "nothing moved")
+		})
+	}
 }
 
 func TestMoveFilesRenameOfAnUnknownFileIsAResultNotAnError(t *testing.T) {

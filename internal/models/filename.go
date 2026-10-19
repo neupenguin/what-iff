@@ -37,10 +37,15 @@ func NormalizeFileName(raw, current string) (string, error) {
 			return "", fmt.Errorf("%w: a name cannot contain control characters", ErrInvalidFileName)
 		}
 	}
+	kept := ""
 	if FileExtension(name) == "" {
-		name += FileExtension(current)
+		kept = FileExtension(current)
+		name += kept
 	}
 	if utf8.RuneCountInString(name) > MaxFileNameRunes {
+		if kept != "" {
+			return "", fmt.Errorf("%w: a name is at most %d characters, counting the %s extension it keeps", ErrInvalidFileName, MaxFileNameRunes, kept)
+		}
 		return "", fmt.Errorf("%w: a name is at most %d characters", ErrInvalidFileName, MaxFileNameRunes)
 	}
 	return name, nil

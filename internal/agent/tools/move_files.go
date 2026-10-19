@@ -130,14 +130,8 @@ func (t *MoveFilesTool) Move(ctx context.Context, chat *models.Chat, args []byte
 			return fail(fmt.Sprintf("invalid folder: %v", err))
 		}
 	}
-	// Check the name's shape before moving anything, so a bad name does not leave a half-done call.
-	// The extension it may inherit is only known to the store.
-	if a.Name != nil {
-		if _, err := models.NormalizeFileName(*a.Name, ""); err != nil {
-			return fail(err.Error())
-		}
-	}
-
+	// The rename goes first, so a name the store refuses (it alone knows the extension the name
+	// inherits) stops the call before anything moves.
 	res := moveFilesResult{Success: true}
 	if a.Name != nil {
 		name, err := t.store.RenameGalleryFile(ctx, chat.UserID, ids[0], *a.Name)

@@ -40,4 +40,8 @@ func TestNormalizeFileNameRefusesBadNames(t *testing.T) {
 		_, err := NormalizeFileName(raw, "x.png")
 		assert.ErrorIs(t, err, ErrInvalidFileName, name)
 	}
+
+	_, err := NormalizeFileName(strings.Repeat("n", MaxFileNameRunes-2), "x.png")
+	require.ErrorIs(t, err, ErrInvalidFileName)
+	assert.Contains(t, err.Error(), ".png extension it keeps", "says why a name that looked short enough is too long")
 }
