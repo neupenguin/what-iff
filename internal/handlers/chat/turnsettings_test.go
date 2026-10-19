@@ -1,10 +1,16 @@
 package chat
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/theimaginaryfoundation/what-iff/internal/middleware"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
+	"go.uber.org/zap"
 )
 
 // PUT and PATCH change the thread's reasoning effort and agent loop (ADR 0x026) only when sent,
@@ -57,4 +63,38 @@ func equalPtr[T comparable](a, b *T) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// POST /chat passes valid turn settings to the datastore (which seeds the rest) and refuses unknown ones.
+func TestCreateChat_TurnSettings(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		body       string
+		wantStatus int
+		wantEffort *models.ReasoningEffort
+	}{
+		"valid":   {body: `{"name":"x","reasoning_effort":"medium"}`, wantStatus: http.StatusCreated, wantEffort: ptr(models.ReasoningEffortMedium)},
+		"empty":   {body: `{"name":"x","reasoning_effort":""}`, wantStatus: http.StatusCreated},
+		"unknown": {body: `{"name":"x","reasoning_effort":"max"}`, wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var captured models.Chat
+			store := &createChatStore{createChatFn: func(_ context.Context, _ uuid.UUID, chat models.Chat) (*models.Chat, error) {
+				captured = chat
+				return &models.Chat{ID: uuid.New(), Name: chat.Name}, nil
+			}}
+			h := NewHandler(store, zap.NewNop(), nil, HandlerConfig{})
+			req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(tc.body))
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, uuid.New()))
+			w := httptest.NewRecorder()
+			h.CreateChat(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if w.Code == http.StatusCreated && !equalPtr(captured.ReasoningEffort, tc.wantEffort) {
+				t.Fatalf("effort passed = %v, want %v", captured.ReasoningEffort, tc.wantEffort)
+			}
+		})
+	}
 }

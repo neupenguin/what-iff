@@ -57,3 +57,37 @@ func TestOpenAIAdapter_ContinueWithSendsOnlyTheUserTurn(t *testing.T) {
 	assert.Contains(t, string(raw), "keep going")
 	assert.Contains(t, string(raw), `"role":"user"`)
 }
+
+// On the beta MCP path, ContinueWith records the last beta reply then the user turn.
+func TestClaudeAdapter_ContinueWithBetaPath(t *testing.T) {
+	a := NewClaudeAdapter(nil, anthropic.MessageNewParams{Model: "claude-opus-5"}, nil, false, nil, nil)
+	a.useBetaMCP = true
+	var msg anthropic.BetaMessage
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"b1","type":"message","role":"assistant","model":"claude-opus-5","stop_reason":"end_turn","content":[{"type":"text","text":"beta answer"}],"usage":{"input_tokens":3,"output_tokens":2}}`), &msg))
+	a.lastFinalBeta = &msg
+
+	a.ContinueWith("keep going")
+	require.Len(t, a.betaParams.Messages, 2)
+	raw, err := json.Marshal(a.betaParams.Messages)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "beta answer")
+	assert.Contains(t, string(raw), "keep going")
+	assert.Nil(t, a.lastFinalBeta)
+
+	// Without a remembered reply only the user turn is added.
+	a.ContinueWith("again")
+	assert.Len(t, a.betaParams.Messages, 3)
+}
+
+// A Mistral reply with thinking is recorded as a thinking chunk plus text before a continuation;
+// one without thinking stays plain text.
+func TestMistralChunkReplay_FinalTurn(t *testing.T) {
+	raw, err := json.Marshal(mistralChunkReplay{}.finalTurn("the answer", "my thinking"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"type":"thinking"`)
+	assert.Contains(t, string(raw), `"text":"the answer"`)
+
+	raw, err = json.Marshal(mistralChunkReplay{}.finalTurn("plain", ""))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"content":"plain"`)
+}

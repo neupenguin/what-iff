@@ -25,7 +25,9 @@ var anthropicSummarizesByDefault = []string{"claude-opus-4-6", "claude-sonnet-4-
 var anthropicThinkingBudget = []string{"claude-haiku-4-5"}
 
 // IsAnthropicAlwaysThinkingModel reports whether a native Anthropic model cannot disable thinking.
-func IsAnthropicAlwaysThinkingModel(name string) bool { return hasPrefix(name, anthropicAlwaysThinking) }
+func IsAnthropicAlwaysThinkingModel(name string) bool {
+	return hasPrefix(name, anthropicAlwaysThinking)
+}
 
 // AnthropicSummarizesThinkingByDefault reports whether a model needs no thinking display setting.
 func AnthropicSummarizesThinkingByDefault(name string) bool {

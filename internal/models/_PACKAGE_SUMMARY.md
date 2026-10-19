@@ -56,6 +56,7 @@
 - **Turn settings (ADR 0x026, `reasoning.go`):** `ReasoningEffort` (`off`/`low`/`medium`/`high`) and `AgentLoop` (`standard`/`advanced`), where the zero value means "not set" (the model's default; Standard).
   `TurnSettingValues` is the nullable pair embedded in the preference, personality, mood, chat and agent-job DTOs; on update routes `""` clears (`Normalized`, `Validate`, `ParseReasoningEffortUpdate`).
   `ResolveTurnSettings` applies job → mode → thread and reports each value's source; `FirstSet*` seeds a new thread from personality then account.
+  The per-provider model-family tables (which models always think, take a budget, reject `none`, take Qwen's `reasoning_effort`, and so on) live in `reasoning_models.go`, read by both `ReasoningSupportFor` and the provider mappings.
   `ReasoningSupportFor(provider, name)` derives a model's effort support from code (none/optional/toggle/always) rather than a column, so admin-added models are covered; `EffectiveReasoningEffort` maps a selection onto it.
   `WithJobTurnSettings` / `CopyJobTurnSettings` carry an agent job's values on the run's context.
   `Chat.SetReasoningEffort` / `SetAgentLoop` mark explicit changes on `UpdateChat`, like `SetContextScope`.

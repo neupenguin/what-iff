@@ -226,6 +226,8 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
 - `agent_hooks.go` — `agentTestHooks` groups test-only seams (memory/history overrides, image vendor preference).
   `assertNoTestHooksInProduction` runs under `NewAgent`, `handleUserMessage`, and `HandleAgentJobPrompt` when not inside `go test`.
 - `agentloop_test.go` — tool loop and adapter append behavior.
+- `turn_settings_test.go` — turn-setting resolution (job → mode → thread, effort mapped to the model, the local-backend downgrade), the thread's active mode for ephemeral runs, and the metering helpers.
+- `subagent_effort_test.go` — sub-agents inheriting the turn's effort on Qwen, Anthropic and z.ai, and sending nothing without one.
 - `advanced_loop_test.go` — the Advanced loop on the scripted mock adapter: one-step answers, plan-driven continuation, the inner cap ending a step, the stall guard, step and quota limits, compaction into a fresh adapter, the transcript's per-call discard, usage reporting, and `runGeneration`'s Advanced wiring.
 - `job_telemetry_test.go` — job outcome mapping (success, quota, cancelled, timeout, failed, panic), media job tracking, bounded tool labels, quota rejections and turn stage labels.
 - `context_rebuild_test.go` — model switch / async job input shapes; persisted additional context from history.
