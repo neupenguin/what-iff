@@ -68,7 +68,8 @@ Provider-neutral function tool catalog plus concrete tool implementations, JSON 
   Refusals share `sandboxedNote`, so the model gets one consistent message.
 - **Memory provenance:** `CreateMemoryToolWithOrigin` writes the origin the agent computed for the turn (external in a Discord relay thread); its optional `speaker` argument names the Discord user a memory came from and is ignored elsewhere.
   `find_context` shows external memories through the shared formatter (`source=external(...)`) and marks a relay thread's summary chunks with `provenance`; distillation material carries the same note.
-- **`find_context` images are context-only:** an image fetched in fetch mode is returned with `FileAttachment.ContextOnly`. The model sees it, and the reply shows it to the person as a reference row (`Datastore.CreateContextReference`) instead of a fresh copy, so it adds nothing to the gallery and the Discord relay does not post it.
+- **`find_context` images are context-only:** an image fetched in fetch mode is returned with `FileAttachment.ContextOnly`.
+  The model sees it, and the reply shows it to the person as a reference row (`Datastore.CreateContextReference`) instead of a fresh copy, so it adds nothing to the gallery and the Discord relay does not post it.
 
 ## Testing
 
