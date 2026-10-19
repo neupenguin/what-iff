@@ -41,6 +41,7 @@ const (
 	listDiscoveryLimit = 100 // personalities / skills (small, stable sets)
 	listToolName       = "list"
 	listJobPromptRunes = 200 // a job's prompt is shown cut to this, enough to tell jobs apart
+	listJobPromptNote  = "Each description is the start of the job's prompt; call update_agent_job with only job_id to read a job in full."
 )
 
 // ListDescription is the agent-facing description. One tool, one `kind` verb, so the model stops

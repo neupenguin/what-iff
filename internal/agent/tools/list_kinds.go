@@ -249,7 +249,7 @@ func (t *ListTool) listJobs(ctx context.Context, chat *models.Chat, a listArgs) 
 		item := listItem{
 			ID:          j.ID.String(),
 			Name:        name,
-			Description: truncateRunes(j.Prompt, listJobPromptRunes),
+			Description: TruncateRunes(strings.TrimSpace(j.Prompt), listJobPromptRunes),
 			Status:      string(j.Status),
 			Schedule:    j.ScheduleInput,
 		}
@@ -268,7 +268,7 @@ func (t *ListTool) listJobs(ctx context.Context, chat *models.Chat, a listArgs) 
 	if !a.IncludeCompleted {
 		activeNote = "Active jobs only; pass include_completed=true to also see paused jobs and finished/failed one-offs."
 	}
-	note := joinNotes(activeNote, listTruncationNote("jobs", meta, len(items)))
+	note := joinNotes(activeNote, listJobPromptNote, listTruncationNote("jobs", meta, len(items)))
 	return t.okPaged(listKindJobs, items, note, meta)
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/mcpclient"
@@ -308,6 +309,31 @@ func TestListJobsOmitsNextRunWhenTerminal(t *testing.T) {
 	}
 	if res.Items[0].Status != string(models.AgentJobStatusComplete) {
 		t.Fatalf("unexpected status: %+v", res.Items[0])
+	}
+}
+
+// A job row carries enough to find the job to change (schedule, thread, the start of the prompt),
+// and the note says where to read a prompt in full.
+func TestListJobsShowsSchedulePromptPreviewAndThread(t *testing.T) {
+	title := "check-in"
+	thread := uuid.New()
+	prompt := "  " + strings.Repeat("é", listJobPromptRunes+50) + "  "
+	store := &fakeListStore{jobs: []*models.AgentJob{
+		{ID: uuid.New(), Title: &title, Status: models.AgentJobStatusActive, ScheduleInput: "every day at 8am", Prompt: prompt, ChatID: &thread},
+	}}
+	res := runList(t, newTestListTool(store), `{"kind":"jobs"}`)
+	if res.Count != 1 {
+		t.Fatalf("expected 1 job, got %+v", res)
+	}
+	item := res.Items[0]
+	if item.Schedule != "every day at 8am" || item.ThreadID != thread.String() {
+		t.Fatalf("schedule/thread missing: %+v", item)
+	}
+	if !strings.HasPrefix(item.Description, "é") || utf8.RuneCountInString(item.Description) > listJobPromptRunes+1 {
+		t.Fatalf("prompt preview should be trimmed and cut to %d runes, got %q", listJobPromptRunes, item.Description)
+	}
+	if !strings.Contains(res.Note, "update_agent_job with only job_id") {
+		t.Fatalf("note should say how to read a prompt in full: %q", res.Note)
 	}
 }
 

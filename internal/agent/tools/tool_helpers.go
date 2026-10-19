@@ -53,15 +53,6 @@ func formatEmbeddingError(content string, err error) string {
 	return fmt.Sprintf("failed to create embedding: %v", err)
 }
 
-// truncateRunes cuts s to at most n runes, marking a cut with "…", without splitting a character.
-func truncateRunes(s string, n int) string {
-	r := []rune(strings.TrimSpace(s))
-	if len(r) <= n {
-		return string(r)
-	}
-	return string(r[:n]) + "…"
-}
-
 // truncateForLog truncates sensitive content for logging purposes
 // This is a shared utility that multiple tools can use
 func truncateForLog(content string, maxLen int) string {

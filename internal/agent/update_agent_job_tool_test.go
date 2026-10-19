@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,6 +243,26 @@ func TestUpdateAgentJobChangesOnlyTheFieldsPassed(t *testing.T) {
 	assert.Empty(t, f.parsed, "the schedule was not re-read")
 }
 
+// list shows only the start of a prompt, so job_id alone reads the whole job, changing nothing.
+func TestUpdateAgentJobWithOnlyAnIDReadsTheWholeJob(t *testing.T) {
+	f := newJobUpdateFixture(t)
+	long := strings.Repeat("Ask about sleep, dreams and the journal. ", 20)
+	f.job.Prompt = long
+	thread := uuid.New()
+	f.job.ChatID = &thread
+
+	res := f.run(t, fmt.Sprintf(`{"job_id":%q}`, f.job.ID))
+
+	require.True(t, res.Success, res.Error)
+	assert.Equal(t, long, res.Prompt, "the full prompt, not a preview")
+	assert.Equal(t, thread.String(), res.ThreadID)
+	assert.Equal(t, "every day at 8am", res.Schedule)
+	assert.Empty(t, res.Updated)
+	assert.Contains(t, res.Note, "Nothing changed")
+	assert.Empty(t, f.store.writes)
+	assert.Empty(t, f.parsed)
+}
+
 func TestUpdateAgentJobReschedulesInTheJobsTimezone(t *testing.T) {
 	f := newJobUpdateFixture(t)
 
@@ -344,7 +365,6 @@ func TestUpdateAgentJobRefusesBadArgumentsWithoutWriting(t *testing.T) {
 		"no job id":      `{"prompt":"x"}`,
 		"bad job id":     `{"job_id":"morning","prompt":"x"}`,
 		"unknown job":    fmt.Sprintf(`{"job_id":%q,"prompt":"x"}`, uuid.New()),
-		"nothing to do":  fmt.Sprintf(`{"job_id":%q}`, id),
 		"empty prompt":   fmt.Sprintf(`{"job_id":%q,"prompt":"  "}`, id),
 		"empty schedule": fmt.Sprintf(`{"job_id":%q,"schedule_input":""}`, id),
 		"bad schedule":   fmt.Sprintf(`{"job_id":%q,"schedule_input":"nonsense","prompt":"x"}`, id),
