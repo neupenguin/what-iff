@@ -248,7 +248,7 @@ Use it when the user wants an existing reminder or recurring task changed: a new
 
 Notes:
 - job_id is the id list (kind="jobs") shows. Pass include_completed=true to also see paused, finished and failed jobs.
-- Call it with only job_id to read the job in full (its whole prompt, schedule, thread, model and skills) without changing anything; list shows only the start of each prompt. Do this before rewriting a prompt.
+- list shows only the start of each prompt. Before rewriting one, read the job in full with list (kind="jobs", filter=<the job's id>).
 - Only the fields you pass change; leave the rest out.
 - thread_id: "current" for this conversation, the id of another conversation (from list kind="conversations"; not a sandboxed one), or "new" for a dedicated thread made on the next run.
 - schedule_input is re-read in natural language, like when creating. A new schedule reactivates a finished one-off job.

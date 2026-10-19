@@ -204,8 +204,8 @@ Subpackages: `provider/` (model context & SDK mapping), `tools/` (per-tool imple
   `create_agent_job` and `update_agent_job` are neither offered nor accepted in a sandboxed chat (the job would run in a chat that is not sandboxed).
   Both take a `thread_id` (`resolveJobThread`): `"current"`, the id of one of the owner's conversations that is not sandboxed, or `"new"` for a dedicated thread made on the next run.
   `update_agent_job` is a patch (only the fields passed change: title, prompt, schedule, model, thread, skills, active/paused); every argument is checked before anything is written, and the result shows the job as it now stands.
-  Called with only `job_id` it changes nothing and returns the job in full, which is how the model reads a whole prompt before rewriting it.
-  `list` (kind="jobs") shows each job's schedule, thread and a 200-rune prompt preview so the model can find what to change, and its note points at that read.
+  `list` (kind="jobs") shows each job's schedule, thread and a 200-rune prompt preview so the model can find what to change.
+  A job id as its `filter` reads that one job in full (whole prompt, model, skills, any status), which is how the model sees a prompt before rewriting it.
   Auto mood selection does not run in a sandboxed chat (`autoMoodSelectionSkipped`); its `change_mood` picks only its own personality's modes, refuses `model_override`, and mood rituals are not loaded.
   In every chat, dispatch refuses a tool the model was not offered that turn (`setOfferedTools`, recorded on every generation path including the sub-agent loops).
 - **Memory provenance (Discord relay threads):** `memory_provenance.go`.

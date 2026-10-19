@@ -115,8 +115,10 @@ func (u *agentJobUpdater) update(ctx context.Context, chat *models.Chat, args []
 	if err != nil {
 		return fail("job_id must be a job id from list (kind=\"jobs\")")
 	}
-	readOnly := a.Title == nil && a.Prompt == nil && a.ScheduleInput == nil && a.ModelOverride == nil &&
-		a.ThreadID == nil && a.SkillIDs == nil && a.Status == nil
+	if a.Title == nil && a.Prompt == nil && a.ScheduleInput == nil && a.ModelOverride == nil &&
+		a.ThreadID == nil && a.SkillIDs == nil && a.Status == nil {
+		return fail("nothing to update: pass at least one field to change (to read a job in full, use list with kind=\"jobs\" and the job's id as filter)")
+	}
 
 	userID := chat.UserID
 	current, err := u.store.GetAgentJob(ctx, userID, jobID)
@@ -126,13 +128,6 @@ func (u *agentJobUpdater) update(ctx context.Context, chat *models.Chat, args []
 	if err != nil {
 		u.logger.Error("update_agent_job: load job", zap.String("user_id", userID.String()), zap.Error(err))
 		return fail("could not load the job; try again")
-	}
-	// Only job_id: show the job in full (list cuts prompts short), so the model knows what it is
-	// changing before it changes it.
-	if readOnly {
-		res := jobUpdateResult(current, nil)
-		res.Note = "Nothing changed; this is the job as it stands. Pass the fields to change."
-		return marshalUpdateAgentJobToolResult(res)
 	}
 
 	// Check every requested change before writing any of them.
