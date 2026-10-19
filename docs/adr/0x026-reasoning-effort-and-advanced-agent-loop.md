@@ -100,7 +100,7 @@ outer cap reached → the existing ForceFinalResponse
   A simple question therefore ends after one step, exactly like Standard; a multi-step task keeps going while it has open work.
   No extra "is it done?" model call is made.
 - **Stall guard:** two continuation nudges in a row that produce no tool call and no plan change end the run with the latest text.
-- **Limits:** `AGENT_ADVANCED_MAX_STEPS` (default 50) and `AGENT_ADVANCED_MAX_DURATION` (default 60 minutes).
+- **Limits:** `AGENT_ADVANCED_MAX_STEPS` (default 50, at most 500) and `AGENT_ADVANCED_MAX_DURATION` (default 60 minutes, at most 6 hours). An invalid value falls back to the default and a value above its bound is clamped, each with a warning.
 - **Prompting:** an Advanced turn gets a developer instruction (inserted before the final user message) explaining that it may work over many steps, should keep a plan for multi-step work, and that its final reply must stand on its own.
 
 **What is saved.**

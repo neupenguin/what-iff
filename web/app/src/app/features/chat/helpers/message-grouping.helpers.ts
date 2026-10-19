@@ -209,9 +209,15 @@ export function appendLiveToolCallGroup(
     kind: 'tool-call-group',
     message: pendingMessage,
     toolCalls: liveCalls.map(call => {
-      // Step, round and id (plus an occurrence count, in case a provider repeats or omits ids)
-      // keep the id unique and stable while a call updates. Not the list position: an Advanced
-      // turn keeps only its newest calls, so older ones drop off the front.
+      // View id scheme: live-<step>-<round>-<tool call id>-<occurrence>.
+      // - Not the list position: an Advanced turn keeps only its newest calls (60), so older ones
+      //   drop off the front and positions shift on every poll.
+      // - A call keeps its id from running to finished, so its row (and expansion state) is stable.
+      // - occurrence counts calls sharing step, round and id within the current window, for
+      //   providers that repeat or omit ids. If an earlier duplicate drops off the front, a later
+      //   one's occurrence (and so its id) shifts; that needs a repeated id in the same step and
+      //   round, and only re-mounts that row.
+      // - Saved messages use the persisted ToolCall ids instead, so nothing here outlives the turn.
       const key = `${call.step ?? 0}-${call.round}-${call.id}`;
       const occurrence = seen.get(key) ?? 0;
       seen.set(key, occurrence + 1);

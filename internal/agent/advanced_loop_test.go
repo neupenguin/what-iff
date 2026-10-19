@@ -279,6 +279,12 @@ func TestAdvancedLoopConfig_DefaultsOverridesAndInvalidValues(t *testing.T) {
 	assert.Equal(t, 3, logs.Len(), "each invalid limit is logged")
 
 	assert.Equal(t, defaultAdvancedMaxSteps, advancedLoopConfigFromEnv(nil).maxSteps)
+
+	core, logs = observer.New(zap.WarnLevel)
+	env = map[string]string{"AGENT_ADVANCED_MAX_STEPS": "1000000", "AGENT_ADVANCED_MAX_DURATION": "720h", "AGENT_ADVANCED_COMPACT_TOKENS": "10000000000"}
+	cfg = advancedLoopConfigFrom(getenv, zap.New(core))
+	assert.Equal(t, advancedLoopConfig{maxSteps: maxAdvancedMaxSteps, maxDuration: maxAdvancedMaxDuration, compactTokens: maxAdvancedCompactTokens}, cfg)
+	assert.Equal(t, 3, logs.FilterMessageSnippet("clamping").Len(), "each clamped limit is logged")
 }
 
 // A run that hits its time limit with tool results pending forces one final answer.

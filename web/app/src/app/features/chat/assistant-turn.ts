@@ -343,6 +343,9 @@ export class AssistantTurn {
     return assistantIdx > userIdx;
   }
 
+  /** The job id and progress payload last applied to the live signals (null after a reset). */
+  private appliedProgressKey: string | null = null;
+
   private handleJobProgressSnapshot(job: Job): void {
     if (!job) return;
     // Only the active job drives the generating/phase state. A prior job may still
@@ -350,10 +353,17 @@ export class AssistantTurn {
     // composer unlocked, and its late snapshots must not overwrite the new job's phase.
     if (this._activeChatJobId() === job.id) {
       this._activeJobPhase.set(job.status);
-      const toolCalls = parseChatTurnToolCalls(job.progress);
-      if (toolCalls) this._liveToolCalls.set(toolCalls);
-      this._waitingOn.set(parseChatTurnWaiting(job.progress));
-      this._advancedProgress.set(parseChatTurnAdvancedProgress(job.progress));
+      // The progress payload is rewritten only when the timeline changes, while polls come every
+      // second; a long Advanced run's payload (up to 60 calls and a plan) is not re-parsed when it
+      // is the same string as last time.
+      const progressKey = `${job.id}\u0000${job.progress ?? ''}`;
+      if (progressKey !== this.appliedProgressKey) {
+        this.appliedProgressKey = progressKey;
+        const toolCalls = parseChatTurnToolCalls(job.progress);
+        if (toolCalls) this._liveToolCalls.set(toolCalls);
+        this._waitingOn.set(parseChatTurnWaiting(job.progress));
+        this._advancedProgress.set(parseChatTurnAdvancedProgress(job.progress));
+      }
     }
     const cancelPendingForJob = this._cancelRequestedJobId() === job.id;
     if (cancelPendingForJob && job.status === 'cancelled') {
@@ -437,6 +447,7 @@ export class AssistantTurn {
 
   /** Drops the live timeline (tool calls, queue state, Advanced step and plan). */
   private clearLiveProgress(): void {
+    this.appliedProgressKey = null;
     this._liveToolCalls.set([]);
     this._waitingOn.set(null);
     this._advancedProgress.set(null);

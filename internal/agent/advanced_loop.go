@@ -22,6 +22,11 @@ const (
 	defaultAdvancedMaxSteps      = 50
 	defaultAdvancedMaxDuration   = 60 * time.Minute
 	defaultAdvancedCompactTokens = 120_000
+	// Upper bounds on the operator-set limits: a typo (an extra zero) must not let one turn run for
+	// days or grow its context without ever compacting. Values above are clamped, with a warning.
+	maxAdvancedMaxSteps      = 500
+	maxAdvancedMaxDuration   = 6 * time.Hour
+	maxAdvancedCompactTokens = 1_000_000
 	// advancedMaxStalls ends a run after this many continuation nudges in a row that produced
 	// no tool call and no plan change: the model has stopped working, nudging again won't help.
 	advancedMaxStalls = 2
@@ -49,7 +54,8 @@ func advancedLoopConfigFromEnv(logger *zap.Logger) advancedLoopConfig {
 }
 
 // advancedLoopConfigFrom reads the limits through getenv. A set but invalid or non-positive value
-// is logged and the default is used: these limits bound a run's cost, so a typo should be visible.
+// is logged and the default is used, and a value above its upper bound is logged and clamped:
+// these limits bound a run's cost, so a typo should be visible and contained.
 func advancedLoopConfigFrom(getenv func(string) string, logger *zap.Logger) advancedLoopConfig {
 	cfg := advancedLoopConfig{
 		maxSteps:      defaultAdvancedMaxSteps,
@@ -61,9 +67,18 @@ func advancedLoopConfigFrom(getenv func(string) string, logger *zap.Logger) adva
 			logger.Warn("ignoring invalid Advanced loop limit; using the default", zap.String("env", name), zap.String("value", raw))
 		}
 	}
+	clamped := func(name, raw, limit string) {
+		if logger != nil {
+			logger.Warn("Advanced loop limit above its upper bound; clamping", zap.String("env", name), zap.String("value", raw), zap.String("max", limit))
+		}
+	}
 	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_MAX_STEPS")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			cfg.maxSteps = v
+			if v > maxAdvancedMaxSteps {
+				clamped("AGENT_ADVANCED_MAX_STEPS", raw, strconv.Itoa(maxAdvancedMaxSteps))
+				cfg.maxSteps = maxAdvancedMaxSteps
+			}
 		} else {
 			invalid("AGENT_ADVANCED_MAX_STEPS", raw)
 		}
@@ -71,6 +86,10 @@ func advancedLoopConfigFrom(getenv func(string) string, logger *zap.Logger) adva
 	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_MAX_DURATION")); raw != "" {
 		if v, err := time.ParseDuration(raw); err == nil && v > 0 {
 			cfg.maxDuration = v
+			if v > maxAdvancedMaxDuration {
+				clamped("AGENT_ADVANCED_MAX_DURATION", raw, maxAdvancedMaxDuration.String())
+				cfg.maxDuration = maxAdvancedMaxDuration
+			}
 		} else {
 			invalid("AGENT_ADVANCED_MAX_DURATION", raw)
 		}
@@ -78,6 +97,10 @@ func advancedLoopConfigFrom(getenv func(string) string, logger *zap.Logger) adva
 	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_COMPACT_TOKENS")); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
 			cfg.compactTokens = v
+			if v > maxAdvancedCompactTokens {
+				clamped("AGENT_ADVANCED_COMPACT_TOKENS", raw, strconv.Itoa(maxAdvancedCompactTokens))
+				cfg.compactTokens = maxAdvancedCompactTokens
+			}
 		} else {
 			invalid("AGENT_ADVANCED_COMPACT_TOKENS", raw)
 		}
@@ -116,6 +139,15 @@ type advancedRun struct {
 	attachments  []*models.FileAttachment
 	// compactedAtCall is the last transcript call a compaction folded into the work log.
 	compactedAtCall int
+	// start is when the run began (the duration limit).
+	start time.Time
+	// last is the model's latest answer, the reply when the run stops between steps.
+	last *provider.GenerateResponse
+	// pendingToolResults reports that the last step ended at the round cap with tool results not
+	// yet answered: stopping then needs one forced final answer.
+	pendingToolResults bool
+	// stalls counts continuation nudges in a row that produced no work.
+	stalls int
 }
 
 // handleAdvancedLoop runs the Advanced loop on adapter, which must implement provider.Continuer.
@@ -137,13 +169,8 @@ func (a *Agent) handleAdvancedLoop(ctx context.Context, chatCtx *chatContext, ad
 }
 
 func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, error) {
-	cfg := r.hooks.config
-	start := time.Now()
-	stalls := 0
-	var last *provider.GenerateResponse
-	pendingToolResults := false
-
-	for step := 1; step <= cfg.maxSteps; step++ {
+	r.start = time.Now()
+	for step := 1; ; step++ {
 		r.chatCtx.toolProgress.SetStep(step)
 		if step > 1 && r.hooks.transcript != nil {
 			r.hooks.transcript.stepHeader(step)
@@ -162,65 +189,97 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 		}
 		r.toolCalls = append(r.toolCalls, calls...)
 		r.attachments = append(r.attachments, atts...)
-		pendingToolResults = capped
-		if !capped {
-			last = res
-			open := openPlanItems(r.chatCtx.plan)
-			if len(open) == 0 {
-				r.logEnd("done", step)
-				return res, nil
-			}
-			if len(calls) == 0 && r.chatCtx.planVersion == planBefore {
-				stalls++
-			} else {
-				stalls = 0
-			}
-			if stalls >= advancedMaxStalls {
-				r.logEnd("stalled", step)
-				return res, nil
-			}
+		r.pendingToolResults = capped
+
+		if capped {
+			// The inner round cap ended the step mid-work: that is progress, not a stall.
+			r.stalls = 0
 		} else {
-			stalls = 0
+			r.last = res
+			if end := r.judgeAnswer(len(calls) > 0, planBefore); end != advancedEndNone {
+				r.logEnd(end, step)
+				return res, nil
+			}
 		}
 
-		// Between steps: stop on cancellation, the time limit or the quota; then compact.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if time.Since(start) > cfg.maxDuration {
-			r.logEnd("duration_limit", step)
-			return r.finish(ctx, last, pendingToolResults)
+		if end := r.limitReached(ctx, step); end != advancedEndNone {
+			r.logEnd(end, step)
+			return r.finish(ctx)
 		}
-		if r.hooks.quotaAllowed != nil && !r.hooks.quotaAllowed(ctx) {
-			r.logEnd("quota", step)
-			return r.finish(ctx, last, pendingToolResults)
-		}
-		if step == cfg.maxSteps {
-			break
-		}
-		if r.shouldCompact() {
-			if err := r.compact(ctx, step); err != nil {
-				r.a.logger.Warn("advanced loop compaction failed; continuing uncompacted", zap.Error(err))
-			} else {
-				// A fresh adapter starts from the original request plus the work log, so there is
-				// nothing pending and no continuation to append.
-				pendingToolResults = false
-				continue
-			}
-		}
-		if !capped {
-			r.adapter.(provider.Continuer).ContinueWith(continuationMessage(r.chatCtx.plan))
-		}
+		r.prepareNextStep(ctx, step)
 	}
-	r.logEnd("step_limit", cfg.maxSteps)
-	return r.finish(ctx, last, pendingToolResults)
+}
+
+// advancedEnd is why an Advanced run stopped. advancedEndNone means it continues.
+type advancedEnd string
+
+const (
+	advancedEndNone      advancedEnd = ""
+	advancedEndDone      advancedEnd = "done"           // the model answered with no open plan item
+	advancedEndStalled   advancedEnd = "stalled"        // nudges stopped producing work
+	advancedEndDuration  advancedEnd = "duration_limit" // AGENT_ADVANCED_MAX_DURATION
+	advancedEndQuota     advancedEnd = "quota"          // Meter.Check denied the next step
+	advancedEndStepLimit advancedEnd = "step_limit"     // AGENT_ADVANCED_MAX_STEPS
+)
+
+// judgeAnswer decides, once the model has answered without asking for tools, whether the run is
+// done (no open plan item) or stalled (advancedMaxStalls nudges in a row with no tool call and no
+// plan change). madeToolCalls reports whether the step called any tool.
+func (r *advancedRun) judgeAnswer(madeToolCalls bool, planBefore int) advancedEnd {
+	if len(openPlanItems(r.chatCtx.plan)) == 0 {
+		return advancedEndDone
+	}
+	if !madeToolCalls && r.chatCtx.planVersion == planBefore {
+		r.stalls++
+	} else {
+		r.stalls = 0
+	}
+	if r.stalls >= advancedMaxStalls {
+		return advancedEndStalled
+	}
+	return advancedEndNone
+}
+
+// limitReached checks the limits between steps: the time limit, the quota and the step limit.
+func (r *advancedRun) limitReached(ctx context.Context, step int) advancedEnd {
+	switch {
+	case time.Since(r.start) > r.hooks.config.maxDuration:
+		return advancedEndDuration
+	case r.hooks.quotaAllowed != nil && !r.hooks.quotaAllowed(ctx):
+		return advancedEndQuota
+	case step >= r.hooks.config.maxSteps:
+		return advancedEndStepLimit
+	}
+	return advancedEndNone
+}
+
+// prepareNextStep sets the adapter up for the next step: a compacted fresh adapter when the
+// context has grown past the threshold, otherwise the same one, continued after an answer (after
+// a capped step the pending tool results continue the conversation on their own).
+func (r *advancedRun) prepareNextStep(ctx context.Context, step int) {
+	if r.shouldCompact() {
+		err := r.compact(ctx, step)
+		if err == nil {
+			// A fresh adapter starts from the original request plus the work log, so there is
+			// nothing pending and no continuation to append.
+			r.pendingToolResults = false
+			return
+		}
+		r.a.logger.Warn("advanced loop compaction failed; continuing uncompacted", zap.Error(err))
+	}
+	if !r.pendingToolResults {
+		r.adapter.(provider.Continuer).ContinueWith(continuationMessage(r.chatCtx.plan))
+	}
 }
 
 // finish ends a run that stopped before the model finished: the latest reply stands when the
 // model had just given one; otherwise (tool results pending) one last answer is forced.
-func (r *advancedRun) finish(ctx context.Context, last *provider.GenerateResponse, pendingToolResults bool) (*provider.GenerateResponse, error) {
-	if !pendingToolResults && last != nil {
-		return last, nil
+func (r *advancedRun) finish(ctx context.Context) (*provider.GenerateResponse, error) {
+	if !r.pendingToolResults && r.last != nil {
+		return r.last, nil
 	}
 	r.beginCall()
 	final, err := r.adapter.ForceFinalResponse(ctx)
@@ -297,7 +356,10 @@ func (r *advancedRun) compact(ctx context.Context, step int) error {
 // workLog is the developer context a compacted run continues from: the plan, the notes the model
 // wrote, and its tool calls with truncated inputs and outputs. The header, plan and notes count
 // toward advancedWorkLogMaxChars first; tool calls fill what is left, newest first, so the oldest
-// calls are the ones dropped. The kept calls are then written oldest first.
+// calls are the ones dropped. The kept calls are then written oldest first. The budget is counted in
+// bytes (len), a slight overcount for non-ASCII text: it only needs to keep the log well inside the
+// model's context, while individual inputs and outputs are cut by runes (TruncateRunes) so no
+// character is split.
 func (r *advancedRun) workLog(step int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are partway through the user's latest message below, in extended mode (step %d). Earlier work was compacted to save space; here is what you have done so far. Continue from here without repeating finished work.\n", step)
@@ -336,9 +398,9 @@ func (r *advancedRun) workLog(step int) string {
 	return strings.TrimSpace(b.String())
 }
 
-func (r *advancedRun) logEnd(reason string, step int) {
+func (r *advancedRun) logEnd(reason advancedEnd, step int) {
 	r.a.logger.Info("advanced loop finished",
-		zap.String("reason", reason),
+		zap.String("reason", string(reason)),
 		zap.Int("steps", step),
 		zap.Int("tool_calls", len(r.toolCalls)),
 		zap.Int("model_calls", len(r.chatCtx.callInputTokens)),
