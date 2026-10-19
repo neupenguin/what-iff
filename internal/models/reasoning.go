@@ -70,18 +70,9 @@ func ReasoningSupportFor(provider, name string) ReasoningSupport {
 	n := normalizeModelName(name)
 	switch providerForModel(provider, name) {
 	case ModelProviderOpenAI:
-		if hasPrefix(n, openAIReasoningPrefixes) {
-			return ReasoningSupportOptional
-		}
-		return ReasoningSupportNone
+		return openAIReasoningSupport(n)
 	case ModelProviderAnthropic:
-		switch {
-		case strings.HasPrefix(n, "claude-3"):
-			return ReasoningSupportNone
-		case IsAnthropicAlwaysThinkingModel(n):
-			return ReasoningSupportAlways
-		}
-		return ReasoningSupportOptional
+		return anthropicReasoningSupport(n)
 	case ModelProviderZAI:
 		return ReasoningSupportAlways
 	case ModelProviderXiaomi:

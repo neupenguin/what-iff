@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/theimaginaryfoundation/what-iff/internal/modeltypes"
+)
 
 // ChatTurnToolStatus is the lifecycle state of one tool call in an in-flight chat turn.
 type ChatTurnToolStatus string
@@ -25,33 +29,18 @@ type ChatTurnProgress struct {
 	Plan []PlanItem `json:"plan,omitempty"`
 }
 
-// PlanItemStatus is the state of one item in an Advanced run's plan.
-type PlanItemStatus string
-
-const (
-	PlanItemPending    PlanItemStatus = "pending"
-	PlanItemInProgress PlanItemStatus = "in_progress"
-	PlanItemCompleted  PlanItemStatus = "completed"
-	PlanItemCancelled  PlanItemStatus = "cancelled"
+// PlanItemStatus, PlanItem and the statuses live in modeltypes (shared with the Ent schema).
+type (
+	PlanItemStatus = modeltypes.PlanItemStatus
+	PlanItem       = modeltypes.PlanItem
 )
 
-// Valid reports whether s is a known status.
-func (s PlanItemStatus) Valid() bool {
-	switch s {
-	case PlanItemPending, PlanItemInProgress, PlanItemCompleted, PlanItemCancelled:
-		return true
-	}
-	return false
-}
-
-// Open reports whether the item still has work to do.
-func (s PlanItemStatus) Open() bool { return s == PlanItemPending || s == PlanItemInProgress }
-
-// PlanItem is one checklist entry of an Advanced run's plan.
-type PlanItem struct {
-	Content string         `json:"content"`
-	Status  PlanItemStatus `json:"status"`
-}
+const (
+	PlanItemPending    = modeltypes.PlanItemPending
+	PlanItemInProgress = modeltypes.PlanItemInProgress
+	PlanItemCompleted  = modeltypes.PlanItemCompleted
+	PlanItemCancelled  = modeltypes.PlanItemCancelled
+)
 
 // ChatTurnWaiting is what a queued turn is waiting on.
 type ChatTurnWaiting string

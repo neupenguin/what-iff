@@ -8,6 +8,10 @@ import "strings"
 // (internal/agent/provider/reasoning_effort.go) both read these tables, so a new model family is
 // a table edit here. Each table cites the provider doc it follows; models.reasoning_test.go pins
 // the matrix.
+//
+// The tables fail closed: a model they do not list gets no reasoning control (nothing is sent,
+// so the request is what it was before ADR 0x026). Sending a control a model rejects fails the
+// turn, while leaving a new model out only hides the setting until it is added.
 
 // --- Anthropic (platform.claude.com/docs/en/build-with-claude/extended-thinking, /effort) ---
 
@@ -20,9 +24,31 @@ var anthropicAlwaysThinking = []string{"claude-opus-5-5", "claude-sonnet-5-5", "
 // setting (the 4.6 generation), so none is sent.
 var anthropicSummarizesByDefault = []string{"claude-opus-4-6", "claude-sonnet-4-6"}
 
+// anthropicAdaptive are the models that take adaptive thinking with an effort and can also
+// disable thinking.
+var anthropicAdaptive = []string{
+	"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8",
+	"claude-opus-5", "claude-sonnet-5",
+}
+
 // anthropicThinkingBudget are models that predate adaptive thinking and effort: they take a
-// thinking budget instead.
-var anthropicThinkingBudget = []string{"claude-haiku-4-5"}
+// thinking budget instead. Dated and "-0" snapshot names of the 4.0 models are listed so the
+// plain "claude-sonnet-4" prefix cannot catch the 4.6 generation.
+var anthropicThinkingBudget = []string{
+	"claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5", "claude-opus-4-1",
+	"claude-opus-4-0", "claude-opus-4-2025", "claude-sonnet-4-0", "claude-sonnet-4-2025",
+	"claude-3-7-sonnet",
+}
+
+func anthropicReasoningSupport(n string) ReasoningSupport {
+	switch {
+	case IsAnthropicAlwaysThinkingModel(n):
+		return ReasoningSupportAlways
+	case hasPrefix(n, anthropicAdaptive), hasPrefix(n, anthropicThinkingBudget):
+		return ReasoningSupportOptional
+	}
+	return ReasoningSupportNone
+}
 
 // IsAnthropicAlwaysThinkingModel reports whether a native Anthropic model cannot disable thinking.
 func IsAnthropicAlwaysThinkingModel(name string) bool {
@@ -39,8 +65,28 @@ func AnthropicUsesThinkingBudget(name string) bool { return hasPrefix(name, anth
 
 // --- OpenAI (developers.openai.com/api/docs/guides/reasoning) ---
 
-// openAIReasoningPrefixes are the reasoning model families.
-var openAIReasoningPrefixes = []string{"gpt-5", "o1", "o3", "o4"}
+var (
+	// openAIEffortModels take reasoning.effort including an off value ("none" or "minimal").
+	openAIEffortModels = []string{"gpt-5"}
+	// openAIAlwaysReasoning are the o-series: they take low/medium/high but cannot turn
+	// reasoning off.
+	openAIAlwaysReasoning = []string{"o1", "o3", "o4"}
+	// openAINoEffort are names in those families without an effort control: chat-tuned aliases,
+	// the pro models (fixed at high), and the first o1 previews.
+	openAINoEffort = []string{"-chat", "-pro", "o1-mini", "o1-preview"}
+)
+
+func openAIReasoningSupport(n string) ReasoningSupport {
+	switch {
+	case hasAny(n, openAINoEffort...):
+		return ReasoningSupportNone
+	case hasPrefix(n, openAIEffortModels):
+		return ReasoningSupportOptional
+	case hasPrefix(n, openAIAlwaysReasoning):
+		return ReasoningSupportAlways
+	}
+	return ReasoningSupportNone
+}
 
 // openAIMinimalOnly are the original GPT-5 models, which take "minimal" but not "none" (gpt-5.1
 // and later take "none"). Dated snapshots of these names are covered by OpenAIRejectsNoneEffort.
@@ -59,23 +105,24 @@ func OpenAIRejectsNoneEffort(name string) bool {
 
 // --- Gemini (ai.google.dev/gemini-api/docs/openai, /thinking) ---
 
-// geminiNoReasoning marks media and non-chat model names; geminiLegacy are families without
-// thinking control; geminiThinkingOptional can disable thinking (budget 0 / effort "none").
-// Every other Gemini model (2.5 Pro, 3.x, 4.x) always thinks.
+// geminiNoReasoning marks media and non-chat model names; geminiThinkingOptional can disable
+// thinking (budget 0 / effort "none"); geminiAlwaysThinking cannot.
 var (
 	geminiNoReasoning      = []string{"image", "tts", "live", "embedding", "nano-banana", "veo", "imagen"}
-	geminiLegacy           = []string{"gemini-1", "gemini-2.0"}
 	geminiThinkingOptional = []string{"gemini-2.5-flash"}
+	geminiAlwaysThinking   = []string{"gemini-2.5-pro", "gemini-3"}
 )
 
 func geminiReasoningSupport(n string) ReasoningSupport {
 	switch {
-	case hasAny(n, geminiNoReasoning...), hasPrefix(n, geminiLegacy):
+	case hasAny(n, geminiNoReasoning...):
 		return ReasoningSupportNone
 	case hasPrefix(n, geminiThinkingOptional):
 		return ReasoningSupportOptional
+	case hasPrefix(n, geminiAlwaysThinking):
+		return ReasoningSupportAlways
 	}
-	return ReasoningSupportAlways
+	return ReasoningSupportNone
 }
 
 // --- Qwen (alibabacloud.com/help/en/model-studio/deep-thinking) ---
@@ -109,23 +156,27 @@ func QwenUsesReasoningEffort(name string) bool { return hasPrefix(name, qwenEffo
 
 // --- DeepSeek (api-docs.deepseek.com/guides/thinking_mode) ---
 
-// deepSeekNoReasoning marks non-chat names; every other DeepSeek model is a hybrid
-// (deepseek-flash, deepseek-v4-pro): reasoning_effort none/low/high/max, thinking on by default.
-var deepSeekNoReasoning = []string{"-vl", "ocr", "coder"}
+// deepSeekHybrid are the hybrid models (reasoning_effort none/low/high/max, thinking on by
+// default). The legacy deepseek-chat / deepseek-reasoner aliases and the non-chat models are not
+// listed.
+var (
+	deepSeekHybrid      = []string{"deepseek-flash", "deepseek-v4"}
+	deepSeekNoReasoning = []string{"-vl", "ocr", "coder"}
+)
 
 func deepSeekReasoningSupport(n string) ReasoningSupport {
-	if hasAny(n, deepSeekNoReasoning...) {
-		return ReasoningSupportNone
+	if hasPrefix(n, deepSeekHybrid) && !hasAny(n, deepSeekNoReasoning...) {
+		return ReasoningSupportOptional
 	}
-	return ReasoningSupportOptional
+	return ReasoningSupportNone
 }
 
 // --- Mistral (docs.mistral.ai/studio/conversations/reasoning) ---
 
 // mistralReasoning are the hybrid models documented to take reasoning_effort ("none"/"high" only,
-// hence a toggle). Aliases whose target is unconfirmed (mistral-large-latest,
-// mistral-medium-latest) are left out until verified.
-var mistralReasoning = []string{"mistral-small-latest", "mistral-small-4", "mistral-medium-3-5", "mistral-medium-3.5", "mistral-large-4"}
+// hence a toggle). Aliases (mistral-small-latest, mistral-large-latest, ...) are left out: their
+// target changes without notice.
+var mistralReasoning = []string{"mistral-small-4", "mistral-medium-3-5", "mistral-medium-3.5", "mistral-large-4"}
 
 func mistralReasoningSupport(n string) ReasoningSupport {
 	if hasPrefix(n, mistralReasoning) {

@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/theimaginaryfoundation/what-iff/internal/metering"
 )
 
 // ToolUse is a normalized tool invocation from either provider.
@@ -104,12 +106,8 @@ type ReasoningStreamer interface {
 	SetReasoningStream(stream ReasoningStream)
 }
 
-// CallUsage is one provider call's token usage, as the provider reported it.
-type CallUsage struct {
-	InputTokens     int64
-	OutputTokens    int64
-	ReasoningTokens int64
-}
+// CallUsage is one provider call's token usage, as the provider reported it (metering.CallUsage).
+type CallUsage = metering.CallUsage
 
 // UsageReporter is implemented by adapters that record every call's usage (ADR 0x026: an
 // Advanced run is metered on every call it made, not only the final one). Adapters embed
@@ -124,7 +122,7 @@ type usageLog struct {
 }
 
 func (u *usageLog) addUsage(g genAIUsage) {
-	u.calls = append(u.calls, CallUsage{InputTokens: g.Input, OutputTokens: g.Output, ReasoningTokens: g.Reasoning})
+	u.calls = append(u.calls, CallUsage{InputTokens: g.Input, CachedInputTokens: g.CachedInput, OutputTokens: g.Output, ReasoningTokens: g.Reasoning})
 }
 
 // CallUsage returns a copy of every call's usage so far, in call order.

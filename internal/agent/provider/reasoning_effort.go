@@ -51,7 +51,8 @@ func raiseOpenAIOutputCap(params *responses.ResponseNewParams) {
 // whether thinking blocks must be replayed across tool rounds (the API requires the assistant
 // turn that called a tool to keep its thinking when thinking is on).
 //   - low/medium/high: adaptive thinking with summarized display and output_config.effort;
-//     Haiku 4.5, which predates adaptive thinking and effort, gets a thinking budget instead.
+//     models that predate adaptive thinking and effort (models.AnthropicUsesThinkingBudget: the
+//     4.5 generation and older) get a thinking budget instead.
 //   - off: thinking disabled. Models that cannot disable thinking never get off: their
 //     reasoning support is "always", which runs off as low.
 func ApplyClaudeReasoning(params *anthropic.MessageNewParams, effort models.ReasoningEffort) (replayThinking bool) {
@@ -78,6 +79,19 @@ func ApplyClaudeReasoning(params *anthropic.MessageNewParams, effort models.Reas
 	params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &adaptive}
 	params.OutputConfig.Effort = anthropic.OutputConfigEffort(effort)
 	return true
+}
+
+// ClaudeHighEffortMaxOutputTokens is the output cap for a streamed Claude call at high effort,
+// where thinking alone can use most of ReasoningMaxOutputTokens. Non-streamed calls (subagents)
+// keep ReasoningMaxOutputTokens: Anthropic's SDK refuses a non-streamed request whose max_tokens
+// implies more than about ten minutes of output.
+const ClaudeHighEffortMaxOutputTokens = 4 * DefaultMaxContentLength
+
+// RaiseClaudeStreamingOutputCap raises a streamed call's output cap at high effort.
+func RaiseClaudeStreamingOutputCap(params *anthropic.MessageNewParams, effort models.ReasoningEffort) {
+	if params != nil && effort == models.ReasoningEffortHigh && params.MaxTokens < ClaudeHighEffortMaxOutputTokens {
+		params.MaxTokens = ClaudeHighEffortMaxOutputTokens
+	}
 }
 
 // claudeThinkingBudget is the budget_tokens for models that still take one. It stays under

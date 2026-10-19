@@ -64,7 +64,23 @@ func TestReasoningSupportFor(t *testing.T) {
 		{"deepseek", "deepseek-flash", ReasoningSupportOptional},
 		{"deepseek", "deepseek-v4-pro", ReasoningSupportOptional},
 		{"mistral", "mistral-large-4", ReasoningSupportToggle},
-		{"mistral", "mistral-small-latest", ReasoningSupportToggle},
+		{"mistral", "mistral-small-latest", ReasoningSupportNone}, // aliases are not trusted
+		// Fail closed: models the tables do not list get no reasoning control.
+		{"openai", "o3", ReasoningSupportAlways},
+		{"openai", "o4-mini", ReasoningSupportAlways},
+		{"openai", "o1-mini", ReasoningSupportNone},
+		{"openai", "gpt-5-chat-latest", ReasoningSupportNone},
+		{"openai", "gpt-5-pro", ReasoningSupportNone},
+		{"openai", "gpt-4.1-mini", ReasoningSupportNone},
+		{"anthropic", "claude-sonnet-4-5", ReasoningSupportOptional},
+		{"anthropic", "claude-opus-4-1", ReasoningSupportOptional},
+		{"anthropic", "claude-sonnet-4-6", ReasoningSupportOptional},
+		{"anthropic", "claude-future-9", ReasoningSupportNone},
+		{"google", "gemini-1.5-pro", ReasoningSupportNone},
+		{"google", "gemini-2.0-flash", ReasoningSupportNone},
+		{"google", "gemini-9-ultra", ReasoningSupportNone},
+		{"deepseek", "deepseek-chat", ReasoningSupportNone},
+		{"deepseek", "deepseek-coder-v4", ReasoningSupportNone},
 		{"mistral", "mistral-large-latest", ReasoningSupportNone},
 		{"", "claude-sonnet-5", ReasoningSupportOptional}, // provider from the seed catalog
 	}

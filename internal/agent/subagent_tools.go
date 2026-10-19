@@ -64,6 +64,22 @@ type subagentCallResult struct {
 	// ReasoningEffort is the effort the sub-agent's model ran at, inherited from the turn
 	// ("" when the turn selected none or the model has no effort control).
 	ReasoningEffort models.ReasoningEffort
+	// Calls is the usage of each model call the sub-agent made, for metering.
+	Calls []provider.CallUsage
+}
+
+// subagentCalls is a sub-agent's per-call usage: the adapter's when it reports it, else the
+// final response's tokens as one call.
+func subagentCalls(adapter provider.AgentAdapter, final *provider.GenerateResponse) []provider.CallUsage {
+	if rep, ok := adapter.(provider.UsageReporter); ok {
+		if calls := rep.CallUsage(); len(calls) > 0 {
+			return calls
+		}
+	}
+	if final == nil {
+		return nil
+	}
+	return []provider.CallUsage{{InputTokens: final.InputTokens, OutputTokens: final.OutputTokens}}
 }
 
 func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args []byte) (string, error) {
@@ -167,8 +183,12 @@ func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args 
 
 	modelContext := buildSubagentModelContext(systemPrompt, scratchpad, message)
 	subagentCtx := telemetry.WithCallPath(ctx, telemetry.CallPathSubagent)
-	// The sub-agent inherits the turn's selected reasoning effort (ADR 0x026).
-	subagentCtx = withSubagentReasoningEffort(subagentCtx, chatCtx.turnSettings.ReasoningEffort)
+	// The sub-agent inherits the turn's selected reasoning effort (ADR 0x026), only when the turn's
+	// own model runs with one: a selection the parent model ignores does not start reasoning (and
+	// its cost) in the sub-agent.
+	if chatCtx.reasoningEffort != "" {
+		subagentCtx = withSubagentReasoningEffort(subagentCtx, chatCtx.turnSettings.ReasoningEffort)
+	}
 	callResult, err := a.callSubagentModel(subagentCtx, chatCtx.chat.UserID, modelName, modelContext, ritualUUIDs, chatCtx.chat.IsSandboxed())
 	if err != nil {
 		return marshalSubagentToolResult(runSubagentToolResult{
@@ -189,6 +209,7 @@ func (a *Agent) runSubagentTool(ctx context.Context, chatCtx *chatContext, args 
 		Tokens:          callResult.InputTokens,
 		SubagentRun:     true,
 		ReasoningEffort: string(callResult.ReasoningEffort),
+		Calls:           callResult.Calls,
 	})
 
 	return marshalSubagentToolResult(runSubagentToolResult{
@@ -355,6 +376,7 @@ func (a *Agent) callSubagentModelWithEffort(ctx context.Context, userID uuid.UUI
 				return &subagentCallResult{
 					Output:      strings.TrimSpace(resp.Text),
 					InputTokens: resp.InputTokens,
+					Calls:       subagentCalls(adapter, resp),
 				}, nil
 			}
 		}
@@ -367,6 +389,7 @@ func (a *Agent) callSubagentModelWithEffort(ctx context.Context, userID uuid.UUI
 		return &subagentCallResult{
 			Output:      strings.TrimSpace(resp.Text),
 			InputTokens: resp.InputTokens,
+			Calls:       subagentCalls(nil, resp),
 		}, nil
 	}
 
@@ -400,6 +423,7 @@ func (a *Agent) callSubagentModelWithEffort(ctx context.Context, userID uuid.UUI
 	return &subagentCallResult{
 		Output:      strings.TrimSpace(final.Text),
 		InputTokens: final.InputTokens,
+		Calls:       subagentCalls(adapter, final),
 	}, nil
 }
 
@@ -462,6 +486,7 @@ func (a *Agent) runSubagentChatCompletions(ctx context.Context, userID uuid.UUID
 	return &subagentCallResult{
 		Output:      strings.TrimSpace(final.Text),
 		InputTokens: final.InputTokens,
+		Calls:       subagentCalls(adapter, final),
 	}, nil
 }
 

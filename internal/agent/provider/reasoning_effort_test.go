@@ -68,6 +68,16 @@ func TestApplyClaudeReasoning(t *testing.T) {
 	_, hasOutputConfig := j["output_config"]
 	assert.False(t, hasOutputConfig, "Haiku 4.5 rejects effort")
 
+	sonnet45 := anthropic.MessageNewParams{Model: "claude-sonnet-4-5", MaxTokens: DefaultMaxContentLength}
+	ApplyClaudeReasoning(&sonnet45, models.ReasoningEffortHigh)
+	assert.Equal(t, "enabled", claudeParamsJSON(t, sonnet45)["thinking"].(map[string]any)["type"], "Sonnet 4.5 predates adaptive thinking")
+
+	RaiseClaudeStreamingOutputCap(&high, models.ReasoningEffortHigh)
+	assert.Equal(t, int64(ClaudeHighEffortMaxOutputTokens), high.MaxTokens)
+	RaiseClaudeStreamingOutputCap(&haiku, models.ReasoningEffortMedium)
+	assert.Equal(t, int64(ReasoningMaxOutputTokens), haiku.MaxTokens, "only high gets the larger cap")
+	RaiseClaudeStreamingOutputCap(nil, models.ReasoningEffortHigh)
+
 	off := anthropic.MessageNewParams{Model: "claude-opus-5", MaxTokens: DefaultMaxContentLength}
 	assert.False(t, ApplyClaudeReasoning(&off, models.ReasoningEffortOff))
 	assert.Equal(t, map[string]any{"type": "disabled"}, claudeParamsJSON(t, off)["thinking"])

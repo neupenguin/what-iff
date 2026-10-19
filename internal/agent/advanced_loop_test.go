@@ -55,13 +55,15 @@ func TestAdvancedLoop_SimpleAnswerFinishesInOneStep(t *testing.T) {
 	tr := newAdvancedTranscript(nil, nil)
 	a := &Agent{logger: zap.NewNop()}
 
-	result, toolCalls, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, testAdvancedHooks(tr))
+	result, toolCalls, _, run, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, testAdvancedHooks(tr))
 	require.NoError(t, err)
 	assert.Equal(t, "Just answering.", result.Text)
+	assert.Equal(t, models.AgentRunEndDone, run.EndReason)
+	assert.Empty(t, run.Steps, "the final reply is the message, not a note")
 	assert.Empty(t, result.Reasoning, "the final reply is the message, not reasoning")
 	assert.Empty(t, toolCalls)
 	assert.Empty(t, adapter.Continuations())
-	assert.Len(t, chatCtx.callInputTokens, 1)
+	assert.Len(t, chatCtx.calls, 1)
 }
 
 func TestAdvancedLoop_ContinuesWhilePlanHasOpenItems(t *testing.T) {
@@ -79,7 +81,12 @@ func TestAdvancedLoop_ContinuesWhilePlanHasOpenItems(t *testing.T) {
 	tr := newAdvancedTranscript(nil, nil)
 	a := &Agent{logger: zap.NewNop()}
 
-	result, toolCalls, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, testAdvancedHooks(tr))
+	var recorded []int
+	var drafts []*models.AgentRunDraft
+	hooks := testAdvancedHooks(tr)
+	hooks.recordStep = func(_ context.Context, step int) { recorded = append(recorded, step) }
+	hooks.saveDraft = func(d *models.AgentRunDraft) { drafts = append(drafts, d) }
+	result, toolCalls, _, run, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "Here is the final report.", result.Text)
 	require.Len(t, adapter.Continuations(), 1)
@@ -87,11 +94,19 @@ func TestAdvancedLoop_ContinuesWhilePlanHasOpenItems(t *testing.T) {
 	require.Len(t, toolCalls, 2)
 	assert.Equal(t, 1, toolCalls[0].Step)
 	assert.Equal(t, 2, toolCalls[1].Step)
-	assert.Contains(t, result.Reasoning, "Let me plan.")
-	assert.Contains(t, result.Reasoning, "Research done, writing next.")
-	assert.Contains(t, result.Reasoning, "— Step 2 —\n\nWrapping up.")
-	assert.NotContains(t, result.Reasoning, "final report", "the final reply is not repeated in the reasoning")
-	assert.Len(t, chatCtx.callInputTokens, 4, "every model call is reported for metering")
+	assert.Empty(t, result.Reasoning, "an Advanced run's notes are its agent_run, not reasoning")
+	assert.Equal(t, models.AgentRunEndDone, run.EndReason)
+	assert.Equal(t, []models.AgentRunStep{
+		{Step: 1, Notes: []models.AgentRunNote{{Kind: models.AgentRunNoteText, Text: "Let me plan."}, {Kind: models.AgentRunNoteText, Text: "Research done, writing next."}}},
+		{Step: 2, Notes: []models.AgentRunNote{{Kind: models.AgentRunNoteText, Text: "Wrapping up."}}},
+	}, run.Steps, "the final reply is not repeated as a note")
+	require.Len(t, run.Plan, 2)
+	assert.Equal(t, []int{1, 2}, recorded, "each step is metered as it finishes")
+	require.Len(t, drafts, 1, "a draft is saved at each step boundary the run continues past")
+	assert.Equal(t, "research", drafts[0].Run.Plan[0].Content)
+	require.Len(t, drafts[0].ToolCalls, 1)
+	assert.Equal(t, 1, drafts[0].ToolCalls[0].Step)
+	assert.Len(t, chatCtx.calls, 4, "every model call is reported for metering")
 }
 
 func TestAdvancedLoop_InnerCapEndsStepWithoutForcingFinal(t *testing.T) {
@@ -104,7 +119,7 @@ func TestAdvancedLoop_InnerCapEndsStepWithoutForcingFinal(t *testing.T) {
 	chatCtx := advancedTestChatCtx()
 	a := &Agent{logger: zap.NewNop()}
 
-	result, toolCalls, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, testAdvancedHooks(newAdvancedTranscript(nil, nil)))
+	result, toolCalls, _, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, testAdvancedHooks(newAdvancedTranscript(nil, nil)))
 	require.NoError(t, err)
 	assert.Equal(t, "done after many tools", result.Text)
 	assert.Len(t, toolCalls, maxToolCallRounds+1)
@@ -123,7 +138,7 @@ func TestAdvancedLoop_StallGuardEndsRun(t *testing.T) {
 	}})
 	a := &Agent{logger: zap.NewNop()}
 
-	result, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, testAdvancedHooks(newAdvancedTranscript(nil, nil)))
+	result, _, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, testAdvancedHooks(newAdvancedTranscript(nil, nil)))
 	require.NoError(t, err)
 	assert.Equal(t, "third", result.Text)
 	assert.Len(t, adapter.Continuations(), 2)
@@ -132,19 +147,28 @@ func TestAdvancedLoop_StallGuardEndsRun(t *testing.T) {
 func TestAdvancedLoop_StepLimitReturnsLatestReply(t *testing.T) {
 	var script []provider.MockScriptStep
 	script = append(script, provider.MockScriptStep{ToolUses: []provider.ToolUse{planUse(t, "p", models.PlanItem{Content: "a", Status: models.PlanItemPending})}})
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 3; i++ {
 		script = append(script,
 			provider.MockScriptStep{Text: fmt.Sprintf("reply %d", i)},
 			provider.MockScriptStep{ToolUses: []provider.ToolUse{unknownUse(fmt.Sprintf("u%d", i))}})
 	}
+	script[len(script)-1] = provider.MockScriptStep{Text: "Done so far: a little. Still open: a."}
 	adapter := provider.NewMockAdapter(provider.MockAdapterConfig{Mode: provider.MockModeScripted, Script: script})
 	hooks := testAdvancedHooks(newAdvancedTranscript(nil, nil))
 	hooks.config.maxSteps = 3
 	a := &Agent{logger: zap.NewNop()}
 
-	result, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
+	result, _, _, run, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
 	require.NoError(t, err)
-	assert.Equal(t, "reply 2", result.Text)
+	assert.Equal(t, "Done so far: a little. Still open: a.", result.Text, "a limit stop asks for a summary reply")
+	assert.Equal(t, models.AgentRunEndStepLimit, run.EndReason)
+	conts := adapter.Continuations()
+	require.NotEmpty(t, conts)
+	assert.Contains(t, conts[len(conts)-1], "the step limit")
+	assert.Contains(t, conts[len(conts)-1], "[pending] a")
+	assert.Equal(t, models.PlanItemPending, run.Plan[0].Status, "the open plan is kept for the next turn")
+	last := run.Steps[len(run.Steps)-1].Notes
+	assert.Equal(t, "reply 2", last[len(last)-1].Text, "the replaced reply stays as a note")
 }
 
 func TestAdvancedLoop_QuotaDenialEndsRun(t *testing.T) {
@@ -157,9 +181,10 @@ func TestAdvancedLoop_QuotaDenialEndsRun(t *testing.T) {
 	hooks.quotaAllowed = func(context.Context) bool { return false }
 	a := &Agent{logger: zap.NewNop()}
 
-	result, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
+	result, _, _, run, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "partial answer", result.Text)
+	assert.Equal(t, models.AgentRunEndQuota, run.EndReason)
 	assert.Empty(t, adapter.Continuations())
 }
 
@@ -185,7 +210,7 @@ func TestAdvancedLoop_CompactsIntoFreshAdapter(t *testing.T) {
 	chatCtx := advancedTestChatCtx()
 	a := &Agent{logger: zap.NewNop()}
 
-	result, _, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, first, hooks)
+	result, _, _, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, first, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "all done", result.Text)
 	require.NotNil(t, rebuiltWith)
@@ -200,7 +225,7 @@ func TestAdvancedLoop_CompactsIntoFreshAdapter(t *testing.T) {
 	assert.Contains(t, workLog, "update_plan(")
 	assert.Equal(t, provider.SegmentKindUserMessage, rebuiltWith.Segments[len(rebuiltWith.Segments)-1].Kind)
 	assert.Empty(t, first.Continuations(), "a compacted run starts fresh instead of continuing the old adapter")
-	assert.Len(t, chatCtx.callInputTokens, 4, "calls from the replaced adapter still count")
+	assert.Len(t, chatCtx.calls, 4, "calls from the replaced adapter still count")
 }
 
 func TestAdvancedTranscript_DiscardDropsOnlyCurrentCallReasoning(t *testing.T) {
@@ -218,25 +243,32 @@ func TestAdvancedTranscript_DiscardDropsOnlyCurrentCallReasoning(t *testing.T) {
 
 	assert.Equal(t, 1, resets)
 	assert.Equal(t, "thinking one\n\nnote one\n\nthinking two\n\nfinal reply", live.String())
-	assert.Equal(t, "thinking one\n\nnote one\n\nthinking two", tr.reasoning(2))
+	assert.Equal(t, []models.AgentRunStep{{Step: 1, Notes: []models.AgentRunNote{
+		{Kind: models.AgentRunNoteReasoning, Text: "thinking one"},
+		{Kind: models.AgentRunNoteText, Text: "note one"},
+		{Kind: models.AgentRunNoteReasoning, Text: "thinking two"},
+	}}}, tr.run(2))
 }
 
 func TestWithTurnSettingsUsage(t *testing.T) {
 	chatCtx := &chatContext{
 		turnSettings:    models.TurnSettings{ReasoningEffort: models.ReasoningEffortHigh, ReasoningEffortSource: models.SettingSourceThread, AgentLoop: models.AgentLoopAdvanced, AgentLoopSource: models.SettingSourceMode},
 		reasoningEffort: models.ReasoningEffortHigh,
-		callInputTokens: []int64{10, 20},
+		calls:           []provider.CallUsage{{InputTokens: 10}, {InputTokens: 20, CachedInputTokens: 5, OutputTokens: 7}},
+		recordedCalls:   1,
+		turnID:          "turn-1",
 	}
 	u := withTurnSettingsUsage(chatCtx, metering.Usage{})
 	assert.Equal(t, "high", u.ReasoningEffort)
 	assert.Equal(t, "advanced", u.AgentLoop)
-	assert.Equal(t, []int64{10, 20}, u.CallInputTokens)
+	assert.Equal(t, []provider.CallUsage{{InputTokens: 20, CachedInputTokens: 5, OutputTokens: 7}}, u.Calls, "only calls no step record has taken")
+	assert.Equal(t, "turn-1", u.TurnID)
 
 	// No selection: GLM's always-on default reports no effort, so it is priced as before.
 	plain := withTurnSettingsUsage(&chatContext{reasoningEffort: ""}, metering.Usage{})
 	assert.Empty(t, plain.ReasoningEffort)
 	assert.Equal(t, "standard", plain.AgentLoop)
-	assert.Empty(t, plain.CallInputTokens)
+	assert.Empty(t, plain.Calls)
 }
 
 // Pins the Advanced path's wiring through runGeneration: it runs the Advanced loop (the mock
@@ -256,7 +288,7 @@ func TestRunGeneration_AdvancedTurnUsesSharedGuard(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty response")
 	assert.Nil(t, agentMessage)
 	assert.Nil(t, result)
-	assert.Len(t, chatCtx.callInputTokens, 1, "the Advanced loop ran and recorded its call")
+	assert.Len(t, chatCtx.calls, 1, "the Advanced loop ran and recorded its call")
 }
 
 func TestAdvancedLoopConfig_DefaultsOverridesAndInvalidValues(t *testing.T) {
@@ -295,15 +327,15 @@ func TestAdvancedLoop_DurationLimitForcesFinalWhenToolsPending(t *testing.T) {
 	}
 	adapter := provider.NewMockAdapter(provider.MockAdapterConfig{Mode: provider.MockModeScripted, Script: script})
 	hooks := testAdvancedHooks(newAdvancedTranscript(nil, nil))
-	hooks.config.maxDuration = time.Nanosecond
+	hooks.config.maxDuration = -time.Second // already past, whatever the clock resolution (Windows)
 	chatCtx := advancedTestChatCtx()
 	a := &Agent{logger: zap.NewNop()}
 
-	result, toolCalls, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, hooks)
+	result, toolCalls, _, _, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "Mock adapter forced final response.", result.Text)
 	assert.Len(t, toolCalls, maxToolCallRounds)
-	assert.Len(t, chatCtx.callInputTokens, maxToolCallRounds+1, "the forced call counts too")
+	assert.Len(t, chatCtx.calls, maxToolCallRounds+1, "the forced call counts too")
 }
 
 func TestAdvancedLoop_CancelledBetweenSteps(t *testing.T) {
@@ -317,8 +349,14 @@ func TestAdvancedLoop_CancelledBetweenSteps(t *testing.T) {
 	a := &Agent{logger: zap.NewNop()}
 	// The quota hook runs after the cancellation check, so cancel there and expect the next
 	// step's call to fail on the cancelled context.
-	_, _, _, err := a.handleAdvancedLoop(ctx, advancedTestChatCtx(), adapter, hooks)
+	var final *models.AgentRunDraft
+	hooks.saveDraft = func(d *models.AgentRunDraft) { final = d }
+	_, _, _, run, err := a.handleAdvancedLoop(ctx, advancedTestChatCtx(), adapter, hooks)
 	require.Error(t, err)
+	assert.Equal(t, models.AgentRunEndCancelled, run.EndReason)
+	require.NotNil(t, final, "the run so far is saved for the partial message")
+	assert.Equal(t, models.AgentRunEndCancelled, final.Run.EndReason)
+	assert.Equal(t, "partial", final.Run.Steps[0].Notes[0].Text, "with no final reply every note is kept")
 }
 
 func TestAdvancedLoop_CompactionFailureContinuesUncompacted(t *testing.T) {
@@ -335,7 +373,7 @@ func TestAdvancedLoop_CompactionFailureContinuesUncompacted(t *testing.T) {
 	hooks.rebuild = func(*provider.ModelContext) (provider.AgentAdapter, error) { return nil, errors.New("no provider") }
 	a := &Agent{logger: zap.New(core)}
 
-	result, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
+	result, _, _, _, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "done", result.Text)
 	assert.Len(t, adapter.Continuations(), 1, "without compaction the run continues on the same adapter")
@@ -382,4 +420,88 @@ func TestUpdatePlanTool(t *testing.T) {
 	assert.Equal(t, 1, chatCtx.planVersion, "a rejected plan changes nothing")
 	assert.Nil(t, turnOnlyToolSpecs(&chatContext{}))
 	assert.Nil(t, turnOnlyToolSpecs(nil))
+}
+
+type usageOnlyAdapter struct {
+	scriptedAdapter
+	usage []provider.CallUsage
+}
+
+func (u *usageOnlyAdapter) CallUsage() []provider.CallUsage { return u.usage }
+
+// Compaction follows the run's growth, and the model's window, not the thread's absolute size.
+func TestAdvancedRun_ShouldCompact(t *testing.T) {
+	check := func(window int64, usage ...int64) bool {
+		calls := make([]provider.CallUsage, len(usage))
+		for i, in := range usage {
+			calls[i] = provider.CallUsage{InputTokens: in}
+		}
+		run := &advancedRun{adapter: &usageOnlyAdapter{usage: calls}, hooks: advancedLoopHooks{
+			rebuild:       func(*provider.ModelContext) (provider.AgentAdapter, error) { return nil, nil },
+			modelContext:  &provider.ModelContext{},
+			contextWindow: window,
+			config:        advancedLoopConfig{compactTokens: 100_000},
+		}}
+		return run.shouldCompact()
+	}
+	assert.False(t, check(0, 150_000), "one call has no growth to remove")
+	assert.False(t, check(1_000_000, 150_000, 200_000), "a long thread on a large window is not compacted for its size")
+	assert.True(t, check(1_000_000, 150_000, 260_000), "growth past compactTokens")
+	assert.True(t, check(200_000, 100_000, 130_000), "past 60% of a small window with real growth")
+	assert.False(t, check(200_000, 125_000, 130_000), "past 60% of the window, but too little growth to help")
+	assert.False(t, check(0, 100_000, 190_000), "unknown window: growth rule only")
+}
+
+// A run that stopped before its work was done hands its open items to the next Advanced turn.
+func TestUnfinishedRunPlan(t *testing.T) {
+	plan := []models.PlanItem{{Content: "a", Status: models.PlanItemCompleted}, {Content: "b", Status: models.PlanItemPending}}
+	open, reason := unfinishedRunPlan(&models.ChatMessage{AgentRun: &models.AgentRun{Plan: plan, EndReason: models.AgentRunEndStepLimit}})
+	assert.Equal(t, []models.PlanItem{plan[1]}, open)
+	assert.Equal(t, models.AgentRunEndStepLimit, reason)
+	msg := openPlanContext(open, reason)
+	assert.Contains(t, msg, "step_limit")
+	assert.Contains(t, msg, "- [pending] b")
+
+	open, _ = unfinishedRunPlan(&models.ChatMessage{AgentRun: &models.AgentRun{Plan: plan, EndReason: models.AgentRunEndDone}})
+	assert.Empty(t, open, "a finished run carries nothing over")
+	open, _ = unfinishedRunPlan(&models.ChatMessage{})
+	assert.Empty(t, open, "a Standard reply has no run")
+	open, _ = unfinishedRunPlan(nil)
+	assert.Empty(t, open)
+	open, _ = (&Agent{}).previousRunOpenPlan(context.Background(), uuid.New(), uuid.New())
+	assert.Empty(t, open, "no datastore, nothing to carry")
+}
+
+// Re-sending the same plan is not progress, so it does not reset the stall guard.
+func TestUpdatePlanTool_IdenticalPlanIsNotProgress(t *testing.T) {
+	chatCtx := advancedTestChatCtx()
+	in := []byte(`{"items":[{"content":"a","status":"pending"}]}`)
+	_, err := updatePlanTool(chatCtx, in)
+	require.NoError(t, err)
+	_, err = updatePlanTool(chatCtx, in)
+	require.NoError(t, err)
+	assert.Equal(t, 1, chatCtx.planVersion)
+}
+
+func TestTurnContextTokens(t *testing.T) {
+	result := &provider.GenerateResponse{InputTokens: 90_000}
+	assert.Equal(t, int64(90_000), turnContextTokens(nil, result))
+	standard := &chatContext{calls: []provider.CallUsage{{InputTokens: 10_000}}}
+	assert.Equal(t, int64(90_000), turnContextTokens(standard, result))
+	advanced := advancedTestChatCtx()
+	advanced.calls = []provider.CallUsage{{InputTokens: 10_000}, {InputTokens: 90_000}}
+	assert.Equal(t, int64(10_000), turnContextTokens(advanced, result), "an Advanced run's growth is not the thread's")
+}
+
+func TestSubagentCalls(t *testing.T) {
+	final := &provider.GenerateResponse{InputTokens: 7, OutputTokens: 3}
+	assert.Equal(t, []provider.CallUsage{{InputTokens: 7, OutputTokens: 3}}, subagentCalls(nil, final))
+	assert.Nil(t, subagentCalls(nil, nil))
+	reporter := &usageOnlyAdapter{usage: []provider.CallUsage{{InputTokens: 1}, {InputTokens: 2}}}
+	assert.Len(t, subagentCalls(reporter, final), 2)
+}
+
+func TestSumWebSearches(t *testing.T) {
+	assert.Equal(t, 0, sumWebSearches([]*provider.MockAdapter{provider.NewMockAdapter(provider.MockAdapterConfig{}), provider.NewMockAdapter(provider.MockAdapterConfig{})}))
+	assert.Equal(t, 0, sumWebSearches[*provider.MockAdapter](nil))
 }

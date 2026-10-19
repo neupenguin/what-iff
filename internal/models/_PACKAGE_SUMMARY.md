@@ -61,6 +61,9 @@
   `WithJobTurnSettings` / `CopyJobTurnSettings` carry an agent job's values on the run's context.
   `Chat.SetReasoningEffort` / `SetAgentLoop` mark explicit changes on `UpdateChat`, like `SetContextScope`.
   `ChatTurnProgress` carries an Advanced run's `Step` and `Plan` (`PlanItem`).
+  `agent_run.go` aliases the saved run types from `modeltypes` (`AgentRun`, `AgentRunEnd`, `AgentRunDraft`), which `ChatMessage.AgentRun` and the job's draft use.
+  The model tables fail closed: a model they do not list gets no reasoning control.
+  `ContextWindowFor` (`context_window.go`) gives a model's context window by name prefix (0 when unknown), for Advanced compaction.
 - **Discord relay:** `discord.go` holds the relay's models (`DiscordBot`, `DiscordBinding`, `DiscordMessageLink`, and the server-only `DiscordBotCredentials`, which carries the decrypted token and never leaves the server).
 
 ## Testing

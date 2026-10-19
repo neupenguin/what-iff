@@ -172,6 +172,8 @@ func (a *XiaomiAdapter) call(ctx context.Context) (*openai.ChatCompletion, error
 	resp, reasoning, err := a.callOnce(ctx)
 	if err == nil && !a.thinkingDisabled && chatCompletionTruncatedWithoutText(resp) {
 		a.provider.recordRetry(ctx, string(a.params.Model), retryReasonLength)
+		// The discarded call was still made and billed by the provider: meter it too.
+		a.addUsage(chatCompletionUsage(resp))
 		a.thinkingDisabled = true
 		mergeChatExtraFields(&a.params, map[string]any{"thinking": map[string]any{"type": "disabled"}})
 		a.liveReasoning.reset()

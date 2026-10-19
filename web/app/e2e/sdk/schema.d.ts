@@ -10997,7 +10997,7 @@ export interface components {
             result_id?: string;
             /** @description Incremental assistant text chunks emitted while inference is in progress. */
             draft_deltas?: string[];
-            /** @description Incremental model reasoning chunks emitted while inference is in progress (z.ai GLM, Xiaomi MiMo, and OpenAI/Anthropic when a reasoning effort is selected). On an Advanced turn it carries everything the model writes before its final reply, with step headers, and the final reply streams here too until it is saved as the message. Display-only. Unlike draft_deltas this can be reset (emptied and re-sent) when a truncated call is retried, so clients should render the whole array on each poll rather than appending by cursor. */
+            /** @description Incremental model reasoning chunks emitted while inference is in progress (z.ai GLM, Xiaomi MiMo, and OpenAI/Anthropic when a reasoning effort is selected). On an Advanced turn it carries everything the model writes before its final reply, with step headers, and the final reply streams here too until it is saved as the message (whose agent_run then holds the notes by step). Display-only. Unlike draft_deltas this can be reset (emptied and re-sent) when a truncated call is retried, so clients should render the whole array on each poll rather than appending by cursor. */
             draft_reasoning?: string[];
             /**
              * @description Optional JSON-encoded progress payload for long-running jobs. Opaque to clients except per
@@ -11429,8 +11429,10 @@ export interface components {
             generation_expression_label?: string | null;
             /** @description Short classifier rationale for why this expression portrait was chosen */
             generation_expression_reasoning?: string | null;
-            /** @description Reasoning/thinking text the model reported for this assistant turn (e.g. z.ai GLM thinking blocks, Xiaomi MiMo reasoning_content, OpenAI reasoning summaries and Anthropic thinking when a reasoning effort is selected), joined across the turn's tool rounds. On an Advanced turn it is the run's working notes: everything the model wrote before its final reply, with step headers. Display-only; never replayed to the model. Omitted when the provider reported none. */
+            /** @description Reasoning/thinking text the model reported for this assistant turn (e.g. z.ai GLM thinking blocks, Xiaomi MiMo reasoning_content, OpenAI reasoning summaries and Anthropic thinking when a reasoning effort is selected), joined across the turn's tool rounds. Display-only; never replayed to the model. Omitted when the provider reported none, and on Advanced turns, whose working notes are in agent_run. */
             model_reasoning?: string | null;
+            /** @description The Advanced run (ADR 0x026) that produced this assistant message: its working notes per step, its plan and why it ended. The message text is the run's final reply. Absent on Standard turns. */
+            agent_run?: components["schemas"]["AgentRun"] | null;
             /** @description User-visible async generation failure for this user turn; cleared after a successful reply */
             last_error_message?: string | null;
             /**
@@ -11455,6 +11457,27 @@ export interface components {
             cacheable: boolean;
             /** @description Image payloads carried by this kind (token estimates do not account for images). */
             images?: number;
+        };
+        /** @description A saved Advanced run (ADR 0x026). Enum-like string fields are open-ended: clients should render unknown values generically rather than reject them. */
+        AgentRun: {
+            /** @description Per step, in order, what the model wrote before its final reply: native reasoning and the text it wrote between tool calls. Notes are capped in size; tool calls are in the message's tool_calls, each with its step. */
+            steps?: {
+                /** @description The step, 1-based. */
+                step?: number;
+                notes?: {
+                    /** @description `reasoning` (the model's native reasoning) or `text` (text it wrote). */
+                    kind?: string;
+                    text?: string;
+                }[];
+            }[];
+            /** @description The run's plan as it stood when the run ended. */
+            plan?: {
+                content?: string;
+                /** @description `pending`, `in_progress`, `completed` or `cancelled`. */
+                status?: string;
+            }[];
+            /** @description Why the run ended: `done`, `stalled`, `duration_limit`, `step_limit`, `quota`, `cancelled` or `failed`. A run that ended for any reason other than `done` with open plan items has those items offered to the thread's next Advanced turn. */
+            end_reason?: string;
         };
         /** @description Snapshot of the model context assembled for one assistant turn — "what was in the model's head" for that reply. The total uses vendor-reported input usage when available; named context buckets are estimates plus a reconciliation remainder. */
         ContextBreakdown: {

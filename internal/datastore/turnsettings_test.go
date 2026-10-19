@@ -39,6 +39,12 @@ func TestCreateChat_SeedsTurnSettingsFromPersonalityThenAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, models.ReasoningEffortMedium, *explicit.ReasoningEffort, "a value given at creation wins")
 
+	// A sandbox (the Discord relay) is not seeded: other people start its turns.
+	sandbox, err := ds.CreateChat(ctx, userID, models.Chat{Name: "relay", PersonalityID: personalityID, ContextScope: models.ContextScopeSandbox})
+	require.NoError(t, err)
+	require.Nil(t, sandbox.ReasoningEffort)
+	require.Nil(t, sandbox.AgentLoop)
+
 	// Later changes to the personality do not reach the existing thread.
 	require.NoError(t, ds.dbClient.Personality.UpdateOneID(personalityID).ClearReasoningEffort().Exec(ctx))
 	reread, err := ds.GetChat(ctx, userID, chat.ID)

@@ -2,13 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
 	agenttools "github.com/theimaginaryfoundation/what-iff/internal/agent/tools"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
@@ -32,6 +32,10 @@ const (
 	advancedMaxStalls = 2
 	// advancedWorkLogMaxChars bounds the compacted work log.
 	advancedWorkLogMaxChars = 24_000
+	// Window-relative compaction (shouldCompact): compact once a call uses this share of the
+	// model's context window, provided the run has added at least advancedCompactMinGrowth tokens.
+	advancedCompactWindowShare = 0.6
+	advancedCompactMinGrowth   = 16_000
 )
 
 // advancedLoopInstructions are added (as developer context) to every Advanced turn.
@@ -120,14 +124,20 @@ type advancedLoopHooks struct {
 	modelContext *provider.ModelContext
 	// quotaAllowed re-checks the account's quota between steps. Nil means always allowed.
 	quotaAllowed func(ctx context.Context) bool
-	config       advancedLoopConfig
+	// recordStep meters a finished step's calls (recordAdvancedStep); saveDraft persists the run so
+	// far on its job. Either may be nil.
+	recordStep func(ctx context.Context, step int)
+	saveDraft  func(draft *models.AgentRunDraft)
+	// contextWindow is the model's context window in tokens (0 when unknown), for compaction.
+	contextWindow int64
+	config        advancedLoopConfig
 }
 
-// advancedRun is one Advanced run's state. It, and the chatContext it updates (callInputTokens,
-// plan, planVersion), are owned by the turn's agent-loop goroutine: nothing else reads or writes
-// them while the run is in progress (the live timeline goes through jobToolProgress, which has its
-// own lock, and metering reads callInputTokens only after the run returns). No locking is needed
-// as long as that holds; code that adds another goroutine must add it.
+// advancedRun is one Advanced run's state. It, and the chatContext it updates (calls,
+// recordedCalls, plan, planVersion), are owned by the turn's agent-loop goroutine: nothing else
+// reads or writes them while the run is in progress (the live timeline goes through
+// jobToolProgress, which has its own lock; step records are made on this goroutine). No locking
+// is needed as long as that holds; code that adds another goroutine must add it.
 type advancedRun struct {
 	a       *Agent
 	chatCtx *chatContext
@@ -148,29 +158,68 @@ type advancedRun struct {
 	pendingToolResults bool
 	// stalls counts continuation nudges in a row that produced no work.
 	stalls int
+	// step is the current step; endReason is why the run stopped.
+	step      int
+	endReason models.AgentRunEnd
 }
 
 // handleAdvancedLoop runs the Advanced loop on adapter, which must implement provider.Continuer.
-// It returns like handleAgentLoop; the final response's Reasoning is the run's transcript.
-func (a *Agent) handleAdvancedLoop(ctx context.Context, chatCtx *chatContext, adapter provider.AgentAdapter, hooks advancedLoopHooks) (*provider.GenerateResponse, []*models.ToolCall, []*models.FileAttachment, error) {
+// It returns like handleAgentLoop, plus the run's structured record. On an error the record is
+// still returned (and saved as the job's draft), ending in failed or cancelled.
+func (a *Agent) handleAdvancedLoop(ctx context.Context, chatCtx *chatContext, adapter provider.AgentAdapter, hooks advancedLoopHooks) (*provider.GenerateResponse, []*models.ToolCall, []*models.FileAttachment, *models.AgentRun, error) {
 	run := &advancedRun{a: a, chatCtx: chatCtx, hooks: hooks, adapter: adapter}
 	if hooks.configure != nil {
 		hooks.configure(adapter)
 	}
 	result, err := run.loop(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		run.endReason = models.AgentRunEndFailed
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			run.endReason = models.AgentRunEndCancelled
+		}
+		run.saveDraft()
+		return nil, nil, nil, run.record(-1), err
 	}
 	run.attachments = a.appendPostToolLoopGeneratedAttachments(ctx, chatCtx, run.attachments)
+	finalCall := -1
 	if hooks.transcript != nil {
-		result.Reasoning = hooks.transcript.reasoning(hooks.transcript.currentCall())
+		finalCall = hooks.transcript.currentCall()
 	}
-	return result, run.toolCalls, run.attachments, nil
+	return result, run.toolCalls, run.attachments, run.record(finalCall), nil
+}
+
+// record is the run's structured record. finalCall is the call whose reply is the message, left
+// out of the notes; -1 keeps every call (a run with no final answer).
+func (r *advancedRun) record(finalCall int) *models.AgentRun {
+	rec := &models.AgentRun{
+		Plan:      append([]models.PlanItem(nil), r.chatCtx.plan...),
+		EndReason: r.endReason,
+	}
+	if r.hooks.transcript != nil {
+		rec.Steps = r.hooks.transcript.run(finalCall)
+	}
+	return rec
+}
+
+// saveDraft persists the run so far on its job, so a run that stops without the agent finishing
+// it (a failure, Stop, a server shutdown) still becomes a partial message.
+func (r *advancedRun) saveDraft() {
+	if r.hooks.saveDraft == nil {
+		return
+	}
+	draft := &models.AgentRunDraft{Run: *r.record(-1)}
+	for _, tc := range r.toolCalls {
+		draft.ToolCalls = append(draft.ToolCalls, models.AgentRunToolCall{
+			ToolName: tc.ToolName, ToolInput: tc.ToolInput, ToolOutput: tc.ToolOutput, ToolError: tc.ToolError, Step: tc.Step,
+		})
+	}
+	r.hooks.saveDraft(draft)
 }
 
 func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, error) {
 	r.start = time.Now()
 	for step := 1; ; step++ {
+		r.step = step
 		r.chatCtx.toolProgress.SetStep(step)
 		if step > 1 && r.hooks.transcript != nil {
 			r.hooks.transcript.stepHeader(step)
@@ -184,11 +233,16 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 			afterCall:           r.syncUsage,
 		})
 		r.syncUsage()
+		r.toolCalls = append(r.toolCalls, calls...)
+		r.attachments = append(r.attachments, atts...)
+		// Meter the step's calls now, also when it failed (they were made), so the quota re-check
+		// sees them and a run that dies later has still paid for the work it did.
+		if r.hooks.recordStep != nil {
+			r.hooks.recordStep(ctx, step)
+		}
 		if err != nil {
 			return nil, err
 		}
-		r.toolCalls = append(r.toolCalls, calls...)
-		r.attachments = append(r.attachments, atts...)
 		r.pendingToolResults = capped
 
 		if capped {
@@ -196,41 +250,30 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 			r.stalls = 0
 		} else {
 			r.last = res
-			if end := r.judgeAnswer(len(calls) > 0, planBefore); end != advancedEndNone {
-				r.logEnd(end, step)
+			if end := r.judgeAnswer(len(calls) > 0, planBefore); end != "" {
+				r.end(end)
 				return res, nil
 			}
 		}
+		r.saveDraft()
 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if end := r.limitReached(ctx, step); end != advancedEndNone {
-			r.logEnd(end, step)
+		if end := r.limitReached(ctx, step); end != "" {
+			r.end(end)
 			return r.finish(ctx)
 		}
 		r.prepareNextStep(ctx, step)
 	}
 }
 
-// advancedEnd is why an Advanced run stopped. advancedEndNone means it continues.
-type advancedEnd string
-
-const (
-	advancedEndNone      advancedEnd = ""
-	advancedEndDone      advancedEnd = "done"           // the model answered with no open plan item
-	advancedEndStalled   advancedEnd = "stalled"        // nudges stopped producing work
-	advancedEndDuration  advancedEnd = "duration_limit" // AGENT_ADVANCED_MAX_DURATION
-	advancedEndQuota     advancedEnd = "quota"          // Meter.Check denied the next step
-	advancedEndStepLimit advancedEnd = "step_limit"     // AGENT_ADVANCED_MAX_STEPS
-)
-
 // judgeAnswer decides, once the model has answered without asking for tools, whether the run is
 // done (no open plan item) or stalled (advancedMaxStalls nudges in a row with no tool call and no
 // plan change). madeToolCalls reports whether the step called any tool.
-func (r *advancedRun) judgeAnswer(madeToolCalls bool, planBefore int) advancedEnd {
+func (r *advancedRun) judgeAnswer(madeToolCalls bool, planBefore int) models.AgentRunEnd {
 	if len(openPlanItems(r.chatCtx.plan)) == 0 {
-		return advancedEndDone
+		return models.AgentRunEndDone
 	}
 	if !madeToolCalls && r.chatCtx.planVersion == planBefore {
 		r.stalls++
@@ -238,22 +281,22 @@ func (r *advancedRun) judgeAnswer(madeToolCalls bool, planBefore int) advancedEn
 		r.stalls = 0
 	}
 	if r.stalls >= advancedMaxStalls {
-		return advancedEndStalled
+		return models.AgentRunEndStalled
 	}
-	return advancedEndNone
+	return ""
 }
 
 // limitReached checks the limits between steps: the time limit, the quota and the step limit.
-func (r *advancedRun) limitReached(ctx context.Context, step int) advancedEnd {
+func (r *advancedRun) limitReached(ctx context.Context, step int) models.AgentRunEnd {
 	switch {
 	case time.Since(r.start) > r.hooks.config.maxDuration:
-		return advancedEndDuration
+		return models.AgentRunEndDuration
 	case r.hooks.quotaAllowed != nil && !r.hooks.quotaAllowed(ctx):
-		return advancedEndQuota
+		return models.AgentRunEndQuota
 	case step >= r.hooks.config.maxSteps:
-		return advancedEndStepLimit
+		return models.AgentRunEndStepLimit
 	}
-	return advancedEndNone
+	return ""
 }
 
 // prepareNextStep sets the adapter up for the next step: a compacted fresh adapter when the
@@ -275,19 +318,68 @@ func (r *advancedRun) prepareNextStep(ctx context.Context, step int) {
 	}
 }
 
-// finish ends a run that stopped before the model finished: the latest reply stands when the
-// model had just given one; otherwise (tool results pending) one last answer is forced.
+// finish ends a run that a limit stopped before the model finished (endReason is already set).
+//   - Tool results pending: one last answer is forced with tools off, as the Standard loop does.
+//   - Quota: the latest reply stands; another call would spend past the quota.
+//   - Time or step limit: the model is asked, with tools off, for a reply that says what it did
+//     and what is still open, rather than leaving a mid-work note ("next I'll check X") as the
+//     answer. The open plan items are also carried into the thread's next turn (openPlanSegment).
 func (r *advancedRun) finish(ctx context.Context) (*provider.GenerateResponse, error) {
-	if !r.pendingToolResults && r.last != nil {
+	if r.pendingToolResults || r.last == nil {
+		r.beginCall()
+		final, err := r.adapter.ForceFinalResponse(ctx)
+		r.syncUsage()
+		if err != nil {
+			return nil, fmt.Errorf("failed to force final response: %w", err)
+		}
+		return final, nil
+	}
+	if r.endReason == models.AgentRunEndQuota {
 		return r.last, nil
 	}
+	r.adapter.(provider.Continuer).ContinueWith(limitSummaryMessage(r.endReason, r.chatCtx.plan))
+	if scoper, ok := r.adapter.(provider.ToolScoper); ok {
+		scoper.ScopeTools(func(string) bool { return true })
+	}
 	r.beginCall()
-	final, err := r.adapter.ForceFinalResponse(ctx)
+	res, uses, err := r.adapter.Call(ctx)
 	r.syncUsage()
 	if err != nil {
-		return nil, fmt.Errorf("failed to force final response: %w", err)
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		r.a.logger.Warn("advanced loop summary call failed; keeping the latest reply", zap.Error(err))
+		return r.last, nil
 	}
-	return final, nil
+	if res == nil || len(uses) > 0 || strings.TrimSpace(res.Text) == "" {
+		return r.last, nil
+	}
+	return res, nil
+}
+
+// end records why the run stopped and logs it.
+func (r *advancedRun) end(reason models.AgentRunEnd) {
+	r.endReason = reason
+	r.a.logger.Info("advanced loop finished",
+		zap.String("reason", string(reason)),
+		zap.Int("steps", r.step),
+		zap.Int("tool_calls", len(r.toolCalls)),
+		zap.Int("model_calls", len(r.chatCtx.calls)),
+		zap.Int("open_plan_items", len(openPlanItems(r.chatCtx.plan))),
+	)
+}
+
+// limitSummaryMessage asks a run stopped by a limit for a reply that hands the work back.
+func limitSummaryMessage(reason models.AgentRunEnd, plan []models.PlanItem) string {
+	limit := "the step limit"
+	if reason == models.AgentRunEndDuration {
+		limit = "the time limit"
+	}
+	msg := "You have reached " + limit + " for this run and cannot call any more tools. Write your reply to the user now: say what you completed and what you found, and list what is still left to do so they can ask you to continue."
+	if open := openPlanItems(plan); len(open) > 0 {
+		msg += "\n\nOpen items in your plan:\n" + formatPlan(open)
+	}
+	return msg
 }
 
 func (r *advancedRun) beginCall() {
@@ -296,14 +388,9 @@ func (r *advancedRun) beginCall() {
 	}
 }
 
-// syncUsage refreshes the turn's per-call input tokens (metering) from every adapter so far.
+// syncUsage refreshes the turn's per-call usage (metering) from every adapter so far.
 func (r *advancedRun) syncUsage() {
-	usage := r.callUsage()
-	tokens := make([]int64, len(usage))
-	for i, u := range usage {
-		tokens[i] = u.InputTokens
-	}
-	r.chatCtx.callInputTokens = tokens
+	r.chatCtx.calls = r.callUsage()
 }
 
 func (r *advancedRun) callUsage() []provider.CallUsage {
@@ -314,9 +401,14 @@ func (r *advancedRun) callUsage() []provider.CallUsage {
 	return out
 }
 
-// shouldCompact reports whether the last call's input passed the compaction threshold.
+// shouldCompact reports whether the run's context has grown enough to compact. It compares the
+// current adapter's last call with its first (the turn's own context, which compaction cannot
+// shrink): compaction triggers when that growth passes compactTokens, or when the last call uses
+// more than advancedCompactWindowShare of the model's context window with real growth to remove.
+// Measuring growth rather than absolute size keeps a long thread on a large-context model from
+// compacting at every step.
 func (r *advancedRun) shouldCompact() bool {
-	if r.hooks.rebuild == nil || r.hooks.modelContext == nil || r.hooks.config.compactTokens <= 0 {
+	if r.hooks.rebuild == nil || r.hooks.modelContext == nil {
 		return false
 	}
 	rep, ok := r.adapter.(provider.UsageReporter)
@@ -324,7 +416,16 @@ func (r *advancedRun) shouldCompact() bool {
 		return false
 	}
 	usage := rep.CallUsage()
-	return len(usage) > 0 && usage[len(usage)-1].InputTokens > r.hooks.config.compactTokens
+	if len(usage) < 2 {
+		return false
+	}
+	last := usage[len(usage)-1].InputTokens
+	growth := last - usage[0].InputTokens
+	if r.hooks.config.compactTokens > 0 && growth > r.hooks.config.compactTokens {
+		return true
+	}
+	window := r.hooks.contextWindow
+	return window > 0 && float64(last) > advancedCompactWindowShare*float64(window) && growth > advancedCompactMinGrowth
 }
 
 // compact replaces the adapter with a fresh one built from the original request plus a work log
@@ -398,68 +499,8 @@ func (r *advancedRun) workLog(step int) string {
 	return strings.TrimSpace(b.String())
 }
 
-func (r *advancedRun) logEnd(reason advancedEnd, step int) {
-	r.a.logger.Info("advanced loop finished",
-		zap.String("reason", string(reason)),
-		zap.Int("steps", step),
-		zap.Int("tool_calls", len(r.toolCalls)),
-		zap.Int("model_calls", len(r.chatCtx.callInputTokens)),
-		zap.Int("open_plan_items", len(openPlanItems(r.chatCtx.plan))),
-	)
-}
-
 // continuationMessage asks the model to keep going on its open plan items.
 func continuationMessage(plan []models.PlanItem) string {
 	return "You still have open items in your plan:\n" + formatPlan(openPlanItems(plan)) +
 		"\n\nContinue working on them. If an item is no longer needed, mark it cancelled with update_plan. When everything is done, give your final answer."
-}
-
-// runAdvancedGeneration is runGeneration for an Advanced turn. Everything the model writes is
-// streamed as reasoning (the transcript); the final call's reply is saved as the message.
-func (a *Agent) runAdvancedGeneration(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, adapter provider.AgentAdapter, opts generationOptions) (*models.ChatMessage, *provider.GenerateResponse, error) {
-	reasoningBuffer := newJobDraftReasoningBuffer(a.lifecycleCtx, a.ds, a.logger, chatJob, jobDraftDeltaFlushMinChars, jobDraftDeltaFlushMaxWait)
-	defer reasoningBuffer.Flush()
-	transcript := newAdvancedTranscript(reasoningBuffer.HandleDelta, reasoningBuffer.ResetReasoning)
-
-	current := adapter
-	configure := func(ad provider.AgentAdapter) {
-		current = ad
-		ad.SetTextDeltaHandler(transcript.textDelta)
-		if streamer, ok := ad.(provider.ReasoningStreamer); ok {
-			streamer.SetReasoningStream(provider.ReasoningStream{
-				OnDelta:       transcript.nativeDelta,
-				OnDiscardCall: transcript.discardCallNative,
-			})
-		}
-	}
-	// Persist buffered notes before each tool row, so they reach the client ahead of it.
-	chatCtx.toolProgress = a.newChatToolProgress(chatJob, reasoningBuffer.Flush)
-	chatCtx.toolProgress.Seed(chatCtx.memoryProgress.Entries())
-	if progress := chatCtx.toolProgress; progress != nil {
-		defer progress.Close()
-	}
-
-	actionType := models.ActionTypeChatMessage
-	if chatJob != nil && chatJob.JobType == JobTypeAgentJobRun {
-		actionType = models.ActionTypeJobRun
-	}
-	hooks := advancedLoopHooks{
-		transcript:   transcript,
-		configure:    configure,
-		rebuild:      opts.rebuild,
-		modelContext: opts.modelContext,
-		quotaAllowed: func(ctx context.Context) bool {
-			return a.meter.Check(ctx, userID, chatCtx.modelSubscriptionTier, actionType).Allowed
-		},
-		config: advancedLoopConfigFromEnv(a.logger),
-	}
-	result, toolCalls, generatedAttachments, err := a.handleAdvancedLoop(ctx, chatCtx, adapter, hooks)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s advanced loop failed: %w", opts.provider, err)
-	}
-	if result == nil {
-		return nil, nil, fmt.Errorf("%s advanced loop returned nil response with no error", opts.provider)
-	}
-	result.Text = strings.TrimSpace(result.Text)
-	return a.finishGeneration(ctx, userID, chatMessage, chatCtx, current, opts, result, toolCalls, generatedAttachments)
 }

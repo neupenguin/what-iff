@@ -863,9 +863,21 @@ type chatContext struct {
 	// reasoningEffort is what the provider request carries for this model: turnSettings'
 	// effort mapped through the model's reasoning support. "" sends nothing (today's request).
 	reasoningEffort models.ReasoningEffort
-	// callInputTokens are the input tokens of every model call an Advanced run has made so far,
-	// appended as they complete so a cancelled run still reports them (metering.Usage).
-	callInputTokens []int64
+	// calls are the token usage of every model call the turn has made so far (metering.Usage.Calls);
+	// recordedCalls is how many of them have already been metered (an Advanced run meters each
+	// step as it ends, so the turn's final record covers only the rest).
+	calls         []provider.CallUsage
+	recordedCalls int
+	// agentRun is an Advanced turn's structured record, saved on the reply (nil on Standard turns).
+	agentRun *models.AgentRun
+	// meterDecision is the turn's Meter.Check result, passed back with every Record of the turn;
+	// skipUsageRecording turns recording off (the welcome message); turnID is the turn's job, which
+	// ties its step records and final record together.
+	meterDecision      metering.Decision
+	skipUsageRecording bool
+	turnID             string
+	// actionType is the turn's metered action (chat message or job run).
+	actionType string
 	// plan is an Advanced run's checklist (update_plan); planVersion counts its changes, so the
 	// loop can tell whether a step made progress.
 	plan        []models.PlanItem
@@ -998,6 +1010,9 @@ func (a *Agent) handleUserMessage(ctx context.Context, chatJob *models.Job, chat
 		a.setJobStatusFailed(ctx, chatJob, quotaErr)
 		return nil, quotaErr
 	}
+	chatCtx.meterDecision = qd
+	chatCtx.turnID = chatJob.ID.String()
+	chatCtx.actionType = turnActionType
 	doneBuildContext := a.timeTurnStage(ctx, turnStageBuildContext)
 	var imageBytes map[uuid.UUID][]byte
 	// Every provider takes images inline (base64 bytes read from the object store); no provider
@@ -1114,6 +1129,9 @@ func (a *Agent) generateAssistantForMessage(ctx context.Context, userID uuid.UUI
 		// Advanced turns are told how the loop works (ADR 0x026). Added to the turn's own context so
 		// the Context X-ray shows it.
 		modelContext.InsertBeforeLastUserMessage(provider.SegmentKindDeveloperContext, provider.RoleDeveloper, advancedLoopInstructions, false)
+		if open, reason := a.previousRunOpenPlan(ctx, userID, chatMessage.ChatID); len(open) > 0 {
+			modelContext.InsertBeforeLastUserMessage(provider.SegmentKindDeveloperContext, provider.RoleDeveloper, openPlanContext(open, reason), false)
+		}
 	}
 	a.recordModelContextSegmentEstimates(ctx, modelContext)
 
@@ -1158,7 +1176,11 @@ func (a *Agent) dispatchAssistantGeneration(ctx context.Context, userID uuid.UUI
 type generationOptions struct {
 	provider       string
 	mergeToolCalls func(toolCalls []*models.ToolCall) []*models.ToolCall
-	afterSave      func(ctx context.Context, agentMessage *models.ChatMessage)
+	// vendorWebSearches, when set, counts the turn's provider-native web searches across every
+	// adapter it built (an Advanced run's compaction replaces the adapter); nil reads the final
+	// adapter's count.
+	vendorWebSearches func() int
+	afterSave         func(ctx context.Context, agentMessage *models.ChatMessage)
 	// rebuild builds a fresh adapter for the turn from a ModelContext, and modelContext is the
 	// turn's original one: the Advanced loop compacts a long run by starting again from it
 	// (ADR 0x026). Nil rebuild disables compaction.
@@ -1217,6 +1239,11 @@ func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *mo
 	}
 
 	result, toolCalls, generatedAttachments, err := a.handleAgentLoop(ctx, chatCtx, adapter)
+	// Every call the loop made, for metering (cached and output tokens included), also when the
+	// turn then fails: the calls were made.
+	if rep, ok := adapter.(provider.UsageReporter); ok {
+		chatCtx.calls = rep.CallUsage()
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s agent loop failed: %w", opts.provider, err)
 	}
@@ -1233,6 +1260,9 @@ func (a *Agent) runGeneration(ctx context.Context, userID uuid.UUID, chatJob *mo
 // accounting, tool-call merge and metrics, the empty-turn guard, and the save.
 func (a *Agent) finishGeneration(ctx context.Context, userID uuid.UUID, chatMessage *models.ChatMessage, chatCtx *chatContext, adapter provider.AgentAdapter, opts generationOptions, result *provider.GenerateResponse, toolCalls []*models.ToolCall, generatedAttachments []*models.FileAttachment) (*models.ChatMessage, *provider.GenerateResponse, error) {
 	chatCtx.webSearchCount = a.turnWebSearchCount(adapter, toolCalls)
+	if opts.vendorWebSearches != nil && !a.FirstPartyWebSearch() {
+		chatCtx.webSearchCount = opts.vendorWebSearches()
+	}
 
 	if opts.mergeToolCalls != nil {
 		toolCalls = opts.mergeToolCalls(toolCalls)
@@ -1249,7 +1279,7 @@ func (a *Agent) finishGeneration(ctx context.Context, userID uuid.UUID, chatMess
 
 	personalityName := a.resolvePersonalityName(ctx, userID, chatCtx.chat.PersonalityID)
 	moodID := activeMoodID(chatCtx.activeMood)
-	agentMessage, err := a.saveAgentResponse(ctx, userID, chatMessage.ChatID, result, toolCalls, generatedAttachments, chatCtx.model, personalityName, moodID)
+	agentMessage, err := a.saveAgentResponse(ctx, userID, chatMessage.ChatID, result, toolCalls, generatedAttachments, chatCtx.model, personalityName, moodID, chatCtx.agentRun)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to save %s agent response: %w", opts.provider, err)
 	}
@@ -1367,12 +1397,16 @@ func (a *Agent) openAIResponseParamsForChat(ctx context.Context, chatCtx *chatCo
 func (a *Agent) generateAssistantForMessageOpenAI(ctx context.Context, userID uuid.UUID, chatJob *models.Job, chatMessage *models.ChatMessage, chatCtx *chatContext, modelContext *provider.ModelContext) (*models.ChatMessage, *provider.GenerateResponse, error) {
 	// adapter is the turn's current adapter: the Advanced loop may replace it (rebuild), and the
 	// hooks below read whichever is current.
+	// built keeps every adapter, so provider-native web searches made before a compaction are
+	// still saved and counted.
 	var adapter *provider.OpenAIAdapter
+	var built []*provider.OpenAIAdapter
 	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
 		params := a.openAIResponseParamsForChat(ctx, chatCtx, userID, chatMessage, mc)
 		// A selected reasoning effort (ADR 0x026); none leaves the request as it was.
 		provider.ApplyOpenAIReasoning(&params, chatCtx.reasoningEffort)
 		adapter = provider.NewOpenAIAdapter(a.OpenAIProvider, params)
+		built = append(built, adapter)
 		return adapter, nil
 	}
 	first, _ := build(modelContext)
@@ -1393,8 +1427,12 @@ func (a *Agent) generateAssistantForMessageOpenAI(ctx context.Context, userID uu
 	}
 	if !a.FirstPartyWebSearch() {
 		opts.mergeToolCalls = func(toolCalls []*models.ToolCall) []*models.ToolCall {
-			return mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromOpenAIResponses(adapter.AllRawResponses()...))
+			for _, ad := range built {
+				toolCalls = mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromOpenAIResponses(ad.AllRawResponses()...))
+			}
+			return toolCalls
 		}
+		opts.vendorWebSearches = func() int { return sumWebSearches(built) }
 	}
 	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, first, opts)
 }
@@ -1427,6 +1465,7 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 	// hooks below read whichever is current.
 	zai := models.IsZAIModel(chatCtx.modelProvider, chatCtx.model)
 	var adapter *provider.ClaudeAdapter
+	var built []*provider.ClaudeAdapter // every adapter, as on the OpenAI path
 	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
 		// Build the full message list from DB history + context injections.
 		// User images use base64 blocks when `UserMessageImage.RawBytes` is populated
@@ -1442,6 +1481,8 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 			provider.ApplyZAIReasoningEffort(&claudeParams, provider.ZAIReasoningEffortFor(chatCtx.reasoningEffort))
 		} else {
 			replayThinking = provider.ApplyClaudeReasoning(&claudeParams, chatCtx.reasoningEffort)
+			// The turn streams, so high effort can have the larger cap a non-streamed call cannot.
+			provider.RaiseClaudeStreamingOutputCap(&claudeParams, chatCtx.reasoningEffort)
 		}
 
 		policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
@@ -1449,6 +1490,7 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 		a.recordToolDefinitionEstimate(mc, claudeFunctionTools(chatCtx.visibleToolSpecs(specs)))
 		webSearchEnabled := nativeAnthropic && policy.nativeWebSearch
 		adapter = provider.NewClaudeAdapter(claudeProvider, claudeParams, claudeFunctionTools(specs), webSearchEnabled, nil, policy.disabledTools)
+		built = append(built, adapter)
 		adapter.SetReplayThinking(replayThinking)
 		if zai {
 			adapter.SetTruncationFallback(func(params *anthropic.MessageNewParams) {
@@ -1467,9 +1509,13 @@ func (a *Agent) generateAssistantForMessageClaude(ctx context.Context, userID uu
 	opts := generationOptions{provider: "Claude", rebuild: build, modelContext: modelContext}
 	if !a.FirstPartyWebSearch() {
 		opts.mergeToolCalls = func(toolCalls []*models.ToolCall) []*models.ToolCall {
-			toolCalls = mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeMessages(adapter.AllRawMessages()...))
-			return mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeBetaMessages(adapter.AllRawBetaMessages()...))
+			for _, ad := range built {
+				toolCalls = mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeMessages(ad.AllRawMessages()...))
+				toolCalls = mergeWebSearchToolCalls(toolCalls, webSearchToolCallsFromClaudeBetaMessages(ad.AllRawBetaMessages()...))
+			}
+			return toolCalls
 		}
+		opts.vendorWebSearches = func() int { return sumWebSearches(built) }
 	}
 	return a.runGeneration(ctx, userID, chatJob, chatMessage, chatCtx, first, opts)
 }
@@ -1563,7 +1609,7 @@ func (a *Agent) generateAssistantForMessageLocal(ctx context.Context, userID uui
 
 	personalityName := a.resolvePersonalityName(ctx, userID, chatCtx.chat.PersonalityID)
 	moodID := activeMoodID(chatCtx.activeMood)
-	agentMessage, err := a.saveAgentResponse(ctx, userID, chatMessage.ChatID, result, toolCalls, generatedAttachments, chatCtx.model, personalityName, moodID)
+	agentMessage, err := a.saveAgentResponse(ctx, userID, chatMessage.ChatID, result, toolCalls, generatedAttachments, chatCtx.model, personalityName, moodID, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to save local model agent response: %w", err)
 	}
@@ -2499,7 +2545,9 @@ func isTruncationStopReason(stopReason string) bool {
 // saveAgentResponse saves the agent's response message and tool calls using the
 // provider-agnostic GenerateResponse. OpenAI-native attachment persistence is
 // handled separately by the OpenAI adapter path.
-func (a *Agent) saveAgentResponse(ctx context.Context, userID, chatID uuid.UUID, result *provider.GenerateResponse, toolCalls []*models.ToolCall, generatedAttachments []*models.FileAttachment, generationModel string, generationPersonality string, generationMoodID *uuid.UUID) (*models.ChatMessage, error) {
+// agentRun is the structured record of an Advanced turn (nil on Standard turns, whose reasoning is
+// result.Reasoning).
+func (a *Agent) saveAgentResponse(ctx context.Context, userID, chatID uuid.UUID, result *provider.GenerateResponse, toolCalls []*models.ToolCall, generatedAttachments []*models.FileAttachment, generationModel string, generationPersonality string, generationMoodID *uuid.UUID, agentRun *models.AgentRun) (*models.ChatMessage, error) {
 	agentMessage, err := a.ds.CreateChatMessage(ctx, userID, models.ChatMessage{
 		ChatID:                chatID,
 		Message:               result.Text,
@@ -2507,6 +2555,7 @@ func (a *Agent) saveAgentResponse(ctx context.Context, userID, chatID uuid.UUID,
 		ResponseID:            &result.ID,
 		Tokens:                result.OutputTokens,
 		ModelReasoning:        nonEmptyStringPtr(result.Reasoning),
+		AgentRun:              agentRun,
 		GenerationModel:       generationModel,
 		GenerationPersonality: generationPersonality,
 		GenerationMoodID:      generationMoodID,

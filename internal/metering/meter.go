@@ -112,11 +112,28 @@ type Usage struct {
 	// AgentLoop is the loop the turn ran ("standard"|"advanced"; ADR 0x026). Empty means
 	// standard.
 	AgentLoop string
-	// CallInputTokens are the input tokens of every model call an Advanced turn made, in order
-	// (interim steps, tool rounds and the final reply), so an implementation can account for
-	// each call the same way as a final response. Empty for Standard turns, whose Tokens is the
-	// final call's input as before.
-	CallInputTokens []int64
+	// Calls are the model calls this record covers, in order, with each call's token usage
+	// (ADR 0x026). A Standard turn's record carries every call of the turn (tool rounds and the
+	// reply). An Advanced turn is recorded step by step as it runs (Step > 0), each record carrying
+	// that step's calls, and the turn's final record carries whatever calls remain. Empty when the
+	// usage is unknown (Tokens still holds the final call's input, as before).
+	Calls []CallUsage
+	// Step is the Advanced step a step record covers (1-based); 0 for a turn's final record and
+	// for Standard turns.
+	Step int
+	// TurnID identifies the turn (its job) across its step records and final record, so an
+	// implementation can total a turn's charges. Empty when the turn has no job.
+	TurnID string
+}
+
+// CallUsage is one model call's token usage as the provider reported it. InputTokens includes
+// CachedInputTokens; OutputTokens includes ReasoningTokens where the provider reports them
+// separately (Anthropic reports thinking only as output).
+type CallUsage struct {
+	InputTokens       int64
+	CachedInputTokens int64
+	OutputTokens      int64
+	ReasoningTokens   int64
 }
 
 // New constructs the production Meter. It is nil in builds that do not link a

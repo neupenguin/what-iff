@@ -136,7 +136,9 @@ func (a *ClaudeAdapter) SetReplayThinking(replay bool) {
 func (a *ClaudeAdapter) ContinueWith(text string) {
 	if a.useBetaMCP {
 		if a.lastFinalBeta != nil {
-			a.betaParams.Messages = append(a.betaParams.Messages, a.lastFinalBeta.ToParam())
+			// Block by block, not lastFinalBeta.ToParam(): the whole-message form can mangle
+			// web-search content on resubmit.
+			appendClaudeBetaAssistantTurn(&a.betaParams, a.lastFinalBeta, nil)
 			a.lastFinalBeta = nil
 		}
 		a.betaParams.Messages = append(a.betaParams.Messages, anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(text)))
@@ -335,6 +337,8 @@ func (a *ClaudeAdapter) callMessages(ctx context.Context) (*anthropic.Message, e
 	msg, err := a.callMessagesOnce(ctx)
 	if err == nil && a.truncationFallback != nil && claudeTruncatedWithoutText(msg) {
 		a.provider.recordRetry(ctx, string(a.params.Model), retryReasonTruncated)
+		// The discarded call was still made and billed by the provider: meter it too.
+		a.addUsage(anthropicUsage(msg.Usage))
 		fallback := a.truncationFallback
 		a.truncationFallback = nil
 		fallback(&a.params)
@@ -443,7 +447,18 @@ func extractClaudeBetaToolUses(msg *anthropic.BetaMessage) []ToolUse {
 }
 
 func appendClaudeBetaAssistantLoopTurn(params *anthropic.BetaMessageNewParams, msg *anthropic.BetaMessage, uses []ToolUse) {
-	if params == nil || msg == nil || len(uses) == 0 {
+	if len(uses) == 0 {
+		return
+	}
+	appendClaudeBetaAssistantTurn(params, msg, uses)
+}
+
+// appendClaudeBetaAssistantTurn appends msg as an assistant turn block by block, as
+// appendClaudeAssistantTurn does on the non-beta path: native web-search blocks are replayed with
+// per-block ToParam() (or as text when they cannot be), and only the tool_use blocks in uses are
+// kept. ContinueWith passes no uses, for a final reply.
+func appendClaudeBetaAssistantTurn(params *anthropic.BetaMessageNewParams, msg *anthropic.BetaMessage, uses []ToolUse) {
+	if params == nil || msg == nil {
 		return
 	}
 	useIDs := make(map[string]struct{}, len(uses))

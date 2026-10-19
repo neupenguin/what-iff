@@ -59,10 +59,11 @@ func (a *Agent) threadActiveMood(ctx context.Context, chatCtx *chatContext) *mod
 	return mood
 }
 
-// withTurnSettingsUsage adds the turn's reasoning effort and agent loop to a turn's usage
-// (ADR 0x026). The effort is reported only when one was selected and the model honours it, so
-// turns without a selection are metered as before; an Advanced turn also reports every call's
-// input tokens.
+// withTurnSettingsUsage completes a turn's final usage record (ADR 0x026): the reasoning effort
+// (only when one was selected and the model honours it, so turns without a selection are metered
+// as before), the agent loop, the turn id, and the calls not yet metered, which it then marks as
+// metered. An Advanced run has metered its finished steps already (recordAdvancedStep), so its
+// final record carries only the rest.
 func withTurnSettingsUsage(chatCtx *chatContext, u metering.Usage) metering.Usage {
 	if chatCtx == nil {
 		return u
@@ -70,13 +71,51 @@ func withTurnSettingsUsage(chatCtx *chatContext, u metering.Usage) metering.Usag
 	if chatCtx.turnSettings.ReasoningEffortSource != models.SettingSourceUnset {
 		u.ReasoningEffort = string(chatCtx.reasoningEffort)
 	}
+	u.AgentLoop = string(models.AgentLoopStandard)
 	if chatCtx.turnSettings.Advanced() {
 		u.AgentLoop = string(models.AgentLoopAdvanced)
-		u.CallInputTokens = append([]int64(nil), chatCtx.callInputTokens...)
-	} else {
-		u.AgentLoop = string(models.AgentLoopStandard)
 	}
+	u.TurnID = chatCtx.turnID
+	u.Calls = chatCtx.takeUnrecordedCalls()
 	return u
+}
+
+// takeUnrecordedCalls returns the calls not yet metered and marks them metered.
+func (c *chatContext) takeUnrecordedCalls() []metering.CallUsage {
+	if c.recordedCalls >= len(c.calls) {
+		return nil
+	}
+	out := append([]metering.CallUsage(nil), c.calls[c.recordedCalls:]...)
+	c.recordedCalls = len(c.calls)
+	return out
+}
+
+// recordAdvancedStep meters an Advanced step's calls as soon as the step ends, so the quota
+// re-check before the next step sees what the run has spent so far, and a run that later fails or
+// dies with the server has still paid for the steps it finished.
+func (a *Agent) recordAdvancedStep(ctx context.Context, chatCtx *chatContext, step int) {
+	if a.meter == nil || chatCtx == nil || chatCtx.skipUsageRecording || chatCtx.chat == nil {
+		return
+	}
+	calls := chatCtx.takeUnrecordedCalls()
+	if len(calls) == 0 {
+		return
+	}
+	u := metering.Usage{
+		UserID:     chatCtx.chat.UserID,
+		ActionType: chatCtx.meteredActionType(),
+		Model:      chatCtx.model,
+		ChatID:     chatCtx.chat.ID.String(),
+		Source:     metering.TurnSourceFromContext(ctx),
+		AgentLoop:  string(models.AgentLoopAdvanced),
+		Calls:      calls,
+		Step:       step,
+		TurnID:     chatCtx.turnID,
+	}
+	if chatCtx.turnSettings.ReasoningEffortSource != models.SettingSourceUnset {
+		u.ReasoningEffort = string(chatCtx.reasoningEffort)
+	}
+	a.meter.Record(ctx, chatCtx.meterDecision, u)
 }
 
 // withTurnAgentLoop marks an Advanced turn's context for Meter.Check (metering.WithAgentLoop).
@@ -101,4 +140,12 @@ func withSubagentReasoningEffort(ctx context.Context, effort models.ReasoningEff
 func subagentReasoningEffort(ctx context.Context) models.ReasoningEffort {
 	v, _ := ctx.Value(subagentReasoningEffortKey{}).(models.ReasoningEffort)
 	return v
+}
+
+// meteredActionType is the turn's metered action, chat message when unknown.
+func (c *chatContext) meteredActionType() string {
+	if c.actionType == "" {
+		return models.ActionTypeChatMessage
+	}
+	return c.actionType
 }
