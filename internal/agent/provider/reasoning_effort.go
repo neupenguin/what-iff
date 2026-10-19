@@ -32,15 +32,9 @@ func ApplyOpenAIReasoning(params *responses.ResponseNewParams, effort models.Rea
 }
 
 // openAINoReasoningEffort is the lowest effort a GPT-5-family model accepts: "none" from
-// gpt-5.1 on, "minimal" before it.
+// gpt-5.1 on, "minimal" before it (models.OpenAIRejectsNoneEffort).
 func openAINoReasoningEffort(model string) shared.ReasoningEffort {
-	m := strings.ToLower(strings.TrimSpace(model))
-	switch m {
-	case "gpt-5", "gpt-5-mini", "gpt-5-nano":
-		return shared.ReasoningEffortMinimal
-	}
-	if strings.HasPrefix(m, "gpt-5-") && !strings.HasPrefix(m, "gpt-5-1") {
-		// Dated snapshots of the original models (gpt-5-2025-…, gpt-5-mini-2025-…).
+	if models.OpenAIRejectsNoneEffort(model) {
 		return shared.ReasoningEffortMinimal
 	}
 	return shared.ReasoningEffortNone
@@ -72,24 +66,18 @@ func ApplyClaudeReasoning(params *anthropic.MessageNewParams, effort models.Reas
 	if params.MaxTokens < ReasoningMaxOutputTokens {
 		params.MaxTokens = ReasoningMaxOutputTokens
 	}
-	if strings.HasPrefix(model, "claude-haiku-4-5") {
+	if models.AnthropicUsesThinkingBudget(model) {
 		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(claudeThinkingBudget(effort))
 		return true
 	}
 	adaptive := anthropic.ThinkingConfigAdaptiveParam{}
-	if !claudeSummarizesByDefault(model) {
+	if !models.AnthropicSummarizesThinkingByDefault(model) {
 		// Newer models omit thinking text unless asked; the turn shows it, so ask for summaries.
 		adaptive.SetExtraFields(map[string]any{"display": "summarized"})
 	}
 	params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &adaptive}
 	params.OutputConfig.Effort = anthropic.OutputConfigEffort(effort)
 	return true
-}
-
-// claudeSummarizesByDefault reports whether a model returns summarized thinking without a
-// display setting (the 4.6 generation), so no display field is sent to it.
-func claudeSummarizesByDefault(model string) bool {
-	return strings.HasPrefix(model, "claude-opus-4-6") || strings.HasPrefix(model, "claude-sonnet-4-6")
 }
 
 // claudeThinkingBudget is the budget_tokens for models that still take one. It stays under
@@ -172,7 +160,7 @@ func ApplyQwenReasoning(params *openai.ChatCompletionNewParams, effort models.Re
 		mergeChatExtraFields(params, map[string]any{"enable_thinking": false})
 		return
 	}
-	if strings.HasPrefix(strings.ToLower(string(params.Model)), "qwen3.8") {
+	if models.QwenUsesReasoningEffort(string(params.Model)) {
 		level := shared.ReasoningEffort(effort)
 		if effort == models.ReasoningEffortHigh {
 			level = shared.ReasoningEffortXhigh

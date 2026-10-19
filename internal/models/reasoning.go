@@ -67,10 +67,10 @@ const (
 // reasoning effort. It is derived here rather than stored on the model row so models an
 // admin adds are covered without a migration.
 func ReasoningSupportFor(provider, name string) ReasoningSupport {
-	n := strings.ToLower(strings.TrimSpace(name))
+	n := normalizeModelName(name)
 	switch providerForModel(provider, name) {
 	case ModelProviderOpenAI:
-		if strings.HasPrefix(n, "gpt-5") || strings.HasPrefix(n, "o1") || strings.HasPrefix(n, "o3") || strings.HasPrefix(n, "o4") {
+		if hasPrefix(n, openAIReasoningPrefixes) {
 			return ReasoningSupportOptional
 		}
 		return ReasoningSupportNone
@@ -91,83 +91,11 @@ func ReasoningSupportFor(provider, name string) ReasoningSupport {
 	case ModelProviderQwen:
 		return qwenReasoningSupport(n)
 	case ModelProviderDeepSeek:
-		if hasAny(n, "-vl", "ocr", "coder") {
-			return ReasoningSupportNone
-		}
-		// deepseek-flash and deepseek-v4-pro (and the retired chat/reasoner aliases) are hybrid:
-		// reasoning_effort none/low/high/max, thinking on by default.
-		return ReasoningSupportOptional
+		return deepSeekReasoningSupport(n)
 	case ModelProviderMistral:
 		return mistralReasoningSupport(n)
 	}
 	return ReasoningSupportNone
-}
-
-// geminiReasoningSupport: Gemini 3 and later (and 2.5 Pro) always think; 2.5 Flash can switch
-// thinking off; media and older models have no control.
-func geminiReasoningSupport(n string) ReasoningSupport {
-	switch {
-	case hasAny(n, "image", "tts", "live", "embedding", "nano-banana", "veo", "imagen"):
-		return ReasoningSupportNone
-	case strings.HasPrefix(n, "gemini-1"), strings.HasPrefix(n, "gemini-2.0"):
-		return ReasoningSupportNone
-	case strings.HasPrefix(n, "gemini-2.5-flash"):
-		return ReasoningSupportOptional
-	}
-	return ReasoningSupportAlways
-}
-
-// qwenThinkingOnly are Qwen models that cannot disable thinking.
-var qwenThinkingOnly = []string{"qwen3.8-2.4t", "qwen3.7-max-preview", "qwen3.7-max-2026-05-17"}
-
-// qwenReasoningSupport: Qwen 3.x hybrids and the commercial qwen-plus/qwen-flash take
-// enable_thinking (plus a budget or effort); a few are thinking-only; others have no control.
-func qwenReasoningSupport(n string) ReasoningSupport {
-	for _, p := range qwenThinkingOnly {
-		if strings.HasPrefix(n, p) {
-			return ReasoningSupportAlways
-		}
-	}
-	if hasAny(n, "image", "tts", "embedding", "-mt-", "-vl", "asr") {
-		return ReasoningSupportNone
-	}
-	if strings.HasPrefix(n, "qwen3") || strings.HasPrefix(n, "qwen-plus") || strings.HasPrefix(n, "qwen-flash") {
-		return ReasoningSupportOptional
-	}
-	return ReasoningSupportNone
-}
-
-// mistralReasoningPrefixes are the hybrid Mistral models documented to take reasoning_effort
-// ("none"/"high" only, hence a toggle). Aliases whose target is unconfirmed (mistral-large-latest,
-// mistral-medium-latest) are left out until verified.
-var mistralReasoningPrefixes = []string{"mistral-small-latest", "mistral-small-4", "mistral-medium-3-5", "mistral-medium-3.5", "mistral-large-4"}
-
-func mistralReasoningSupport(n string) ReasoningSupport {
-	for _, p := range mistralReasoningPrefixes {
-		if strings.HasPrefix(n, p) {
-			return ReasoningSupportToggle
-		}
-	}
-	return ReasoningSupportNone
-}
-
-func hasAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsAnthropicAlwaysThinkingModel reports whether a native Anthropic model rejects a request
-// that disables thinking (Opus 5.5, Fable, Mythos): effort is its only control.
-func IsAnthropicAlwaysThinkingModel(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
-	// Sonnet 5.5 can only switch thinking off with a "between_tools" mode the request layer does
-	// not model; treating it as always-on keeps off at low effort, which it does accept.
-	return strings.HasPrefix(n, "claude-opus-5-5") || strings.HasPrefix(n, "claude-sonnet-5-5") ||
-		strings.HasPrefix(n, "claude-fable") || strings.HasPrefix(n, "claude-mythos")
 }
 
 // EffectiveReasoningEffort maps a selected effort onto what the model can do. It returns ""
@@ -268,7 +196,8 @@ func FirstSetAgentLoop(values ...*AgentLoop) *AgentLoop {
 }
 
 // ParseReasoningEffortUpdate reads an update field: nil leaves the value alone (ok, no
-// change), "" clears it, and a level sets it. ok is false for an unknown value.
+// change), "" clears it, and a level sets it. ok is false for an unknown value, which the caller
+// must reject as a client error (400): treating it as "no change" would silently drop the request.
 func ParseReasoningEffortUpdate(raw *string) (value *ReasoningEffort, change bool, ok bool) {
 	if raw == nil {
 		return nil, false, true
@@ -283,7 +212,8 @@ func ParseReasoningEffortUpdate(raw *string) (value *ReasoningEffort, change boo
 	return &v, true, true
 }
 
-// ParseAgentLoopUpdate is ParseReasoningEffortUpdate for the agent loop.
+// ParseAgentLoopUpdate is ParseReasoningEffortUpdate for the agent loop, with the same contract:
+// ok=false is a 400.
 func ParseAgentLoopUpdate(raw *string) (value *AgentLoop, change bool, ok bool) {
 	if raw == nil {
 		return nil, false, true
@@ -317,7 +247,9 @@ func (v TurnSettingValues) Validate() error {
 	return nil
 }
 
-// Normalized returns the values with empty strings turned into nil ("not set").
+// Normalized returns the values with empty strings turned into nil ("not set"). It also nils any
+// unknown value, so on user input call Validate first (the handlers do) and use Normalized only to
+// turn the validated "" into "not set"; on stored or imported values it repairs rather than rejects.
 func (v TurnSettingValues) Normalized() TurnSettingValues {
 	out := v
 	if out.ReasoningEffort != nil && !out.ReasoningEffort.Valid() {

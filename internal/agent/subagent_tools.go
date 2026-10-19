@@ -298,6 +298,9 @@ func openAIFunctionToolNames(toolParams []responses.ToolUnionParam) map[string]s
 func (a *Agent) callSubagentModel(ctx context.Context, userID uuid.UUID, modelName string, modelContext *provider.ModelContext, ritualIDs []uuid.UUID, sandboxed bool) (*subagentCallResult, error) {
 	caps := a.subagentModelCapabilities(ctx, modelName)
 	modelProvider := caps.Provider
+	// This wrapper exists to derive the effort once: the parent turn's selected effort (carried on
+	// ctx by withSubagentReasoningEffort) mapped onto the sub-agent's own model. The call itself is
+	// callSubagentModelWithEffort; the effort is also reported back for metering.
 	effort := models.EffectiveReasoningEffort(models.ReasoningSupportFor(modelProvider, modelName), subagentReasoningEffort(ctx))
 	result, err := a.callSubagentModelWithEffort(ctx, userID, caps, modelName, modelContext, ritualIDs, sandboxed, effort)
 	if result != nil {
@@ -325,6 +328,9 @@ func (a *Agent) callSubagentModelWithEffort(ctx context.Context, userID uuid.UUI
 			return nil, fmt.Errorf("z.ai model %q requested but ZAI_API_KEY is not configured", modelName)
 		}
 		claudeParams := modelContext.BuildClaudeParams(modelName)
+		// replayThinking matters only for the MCP branch below, the one path with tool rounds: the
+		// plain path is a single Messages call with no tools, so there is no assistant turn to
+		// replay thinking into.
 		replayThinking := false
 		if models.IsZAIModel(modelProvider, modelName) {
 			if effort != "" {

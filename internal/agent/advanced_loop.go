@@ -44,20 +44,43 @@ type advancedLoopConfig struct {
 	compactTokens int64
 }
 
-func advancedLoopConfigFromEnv() advancedLoopConfig {
+func advancedLoopConfigFromEnv(logger *zap.Logger) advancedLoopConfig {
+	return advancedLoopConfigFrom(os.Getenv, logger)
+}
+
+// advancedLoopConfigFrom reads the limits through getenv. A set but invalid or non-positive value
+// is logged and the default is used: these limits bound a run's cost, so a typo should be visible.
+func advancedLoopConfigFrom(getenv func(string) string, logger *zap.Logger) advancedLoopConfig {
 	cfg := advancedLoopConfig{
 		maxSteps:      defaultAdvancedMaxSteps,
 		maxDuration:   defaultAdvancedMaxDuration,
 		compactTokens: defaultAdvancedCompactTokens,
 	}
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("AGENT_ADVANCED_MAX_STEPS"))); err == nil && v > 0 {
-		cfg.maxSteps = v
+	invalid := func(name, raw string) {
+		if logger != nil {
+			logger.Warn("ignoring invalid Advanced loop limit; using the default", zap.String("env", name), zap.String("value", raw))
+		}
 	}
-	if v, err := time.ParseDuration(strings.TrimSpace(os.Getenv("AGENT_ADVANCED_MAX_DURATION"))); err == nil && v > 0 {
-		cfg.maxDuration = v
+	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_MAX_STEPS")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			cfg.maxSteps = v
+		} else {
+			invalid("AGENT_ADVANCED_MAX_STEPS", raw)
+		}
 	}
-	if v, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("AGENT_ADVANCED_COMPACT_TOKENS")), 10, 64); err == nil && v > 0 {
-		cfg.compactTokens = v
+	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_MAX_DURATION")); raw != "" {
+		if v, err := time.ParseDuration(raw); err == nil && v > 0 {
+			cfg.maxDuration = v
+		} else {
+			invalid("AGENT_ADVANCED_MAX_DURATION", raw)
+		}
+	}
+	if raw := strings.TrimSpace(getenv("AGENT_ADVANCED_COMPACT_TOKENS")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			cfg.compactTokens = v
+		} else {
+			invalid("AGENT_ADVANCED_COMPACT_TOKENS", raw)
+		}
 	}
 	return cfg
 }
@@ -77,7 +100,11 @@ type advancedLoopHooks struct {
 	config       advancedLoopConfig
 }
 
-// advancedRun is one Advanced run's state.
+// advancedRun is one Advanced run's state. It, and the chatContext it updates (callInputTokens,
+// plan, planVersion), are owned by the turn's agent-loop goroutine: nothing else reads or writes
+// them while the run is in progress (the live timeline goes through jobToolProgress, which has its
+// own lock, and metering reads callInputTokens only after the run returns). No locking is needed
+// as long as that holds; code that adds another goroutine must add it.
 type advancedRun struct {
 	a       *Agent
 	chatCtx *chatContext
@@ -268,8 +295,9 @@ func (r *advancedRun) compact(ctx context.Context, step int) error {
 }
 
 // workLog is the developer context a compacted run continues from: the plan, the notes the model
-// wrote, and its tool calls with truncated inputs and outputs, newest first until the budget runs
-// out.
+// wrote, and its tool calls with truncated inputs and outputs. The header, plan and notes count
+// toward advancedWorkLogMaxChars first; tool calls fill what is left, newest first, so the oldest
+// calls are the ones dropped. The kept calls are then written oldest first.
 func (r *advancedRun) workLog(step int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are partway through the user's latest message below, in extended mode (step %d). Earlier work was compacted to save space; here is what you have done so far. Continue from here without repeating finished work.\n", step)
@@ -361,7 +389,7 @@ func (a *Agent) runAdvancedGeneration(ctx context.Context, userID uuid.UUID, cha
 		quotaAllowed: func(ctx context.Context) bool {
 			return a.meter.Check(ctx, userID, chatCtx.modelSubscriptionTier, actionType).Allowed
 		},
-		config: advancedLoopConfigFromEnv(),
+		config: advancedLoopConfigFromEnv(a.logger),
 	}
 	result, toolCalls, generatedAttachments, err := a.handleAdvancedLoop(ctx, chatCtx, adapter, hooks)
 	if err != nil {

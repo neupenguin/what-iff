@@ -16,6 +16,15 @@ import (
 // reasoning back on the assistant turn it belongs to: DeepSeek rejects a tool-call follow-up
 // without it (400), and Qwen reads it when preserve_thinking is on. A turn with thinking off simply
 // has no reasoning to capture or echo.
+//
+// Lifecycle of the per-call state:
+//   - call records each response's reasoning into reasoning (the whole turn's, for
+//     GenerateResponse.Reasoning) and lastReasoning (this call's only).
+//   - A call that requests tools appends its assistant turn at once, with lastReasoning, through
+//     replay.toolTurn; the next call overwrites lastReasoning.
+//   - A call that answers is not appended (the Standard loop ends there): it is kept in final.last.
+//     If the Advanced loop continues, ContinueWith appends it with lastReasoning (replay.finalTurn),
+//     clears final.last, then appends the continuation as a user turn.
 type reasoningChatAdapter struct {
 	// name labels errors ("DeepSeek API call failed").
 	name   string

@@ -26,6 +26,8 @@ func (a *Agent) resolveTurnSettings(ctx context.Context, chatCtx *chatContext, m
 	settings := models.ResolveTurnSettings(threadLevel, modeLevel, models.JobTurnSettingsFromContext(ctx))
 	if settings.Advanced() && a.localLLM {
 		// The local backend keeps its own generation pipeline, which has no Advanced loop.
+		a.logger.Warn("Advanced agent loop selected but LLM_BACKEND=local has no Advanced loop; running Standard",
+			zap.String("agent_loop_source", string(settings.AgentLoopSource)))
 		settings.AgentLoop = models.AgentLoopStandard
 	}
 	chatCtx.turnSettings = settings
