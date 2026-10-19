@@ -7,10 +7,8 @@ import { JobService } from '../../core/services/job.service';
 import { MessageService } from '../../core/services/message.service';
 import { ChatMessage } from '../../core/models/message.model';
 import {
-  CHAT_TURN_PLAN_STATUSES,
   CHAT_TURN_WAITING_STATES,
   ChatTurnAdvancedProgress,
-  ChatTurnPlanItem,
   ChatTurnProgress,
   ChatTurnToolCall,
   ChatTurnWaiting,
@@ -18,6 +16,7 @@ import {
 } from '../../core/models/job.model';
 import { apiErrorMessage } from '../../core/utils/api-error.helpers';
 import { CHAT_JOB_POLL_INTERVAL_MS, CHAT_PENDING_ASSISTANT_MESSAGE_ID } from './chat.constants';
+import { normalizePlanItems } from './helpers/agent-run.helpers';
 import { ChatSendGate } from './services/chat-send-gate';
 
 export interface AssistantTurnDeps {
@@ -488,8 +487,6 @@ export function parseChatTurnWaiting(progress: string | undefined): ChatTurnWait
   }
 }
 
-const CHAT_TURN_PLAN_STATUS = new Set<string>(CHAT_TURN_PLAN_STATUSES);
-
 /**
  * An Advanced turn's step and plan from a chat_message job's progress payload; null on a Standard
  * turn (no step) or when the payload is absent or unreadable. Malformed plan items are dropped.
@@ -500,13 +497,7 @@ export function parseChatTurnAdvancedProgress(progress: string | undefined): Cha
     const parsed = JSON.parse(progress) as Partial<ChatTurnProgress>;
     const step = parsed.step;
     if (typeof step !== 'number' || !Number.isFinite(step) || step < 1) return null;
-    const plan = Array.isArray(parsed.plan)
-      ? parsed.plan.filter(
-          (item): item is ChatTurnPlanItem =>
-            !!item && typeof item.content === 'string' && item.content.trim() !== '' && CHAT_TURN_PLAN_STATUS.has(item.status),
-        )
-      : [];
-    return { step: Math.floor(step), plan };
+    return { step: Math.floor(step), plan: normalizePlanItems(parsed.plan) };
   } catch {
     return null;
   }
