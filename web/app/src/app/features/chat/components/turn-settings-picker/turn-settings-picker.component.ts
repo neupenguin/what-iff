@@ -1,3 +1,14 @@
+/*
+ * Design note: this component deliberately implements a lightweight popover by hand rather than
+ * using an overlay library (e.g. CDK Overlay). The panel is an absolutely positioned child of the
+ * trigger's wrapper; `document:click` outside the host and `document:keydown.escape` close it
+ * (Escape also returns focus to the trigger); each instance gets a random `panelId` so
+ * `aria-controls` and the radio-group names stay unique when several pickers render; and the panel
+ * is a `role="dialog"` the trigger announces via `aria-haspopup="dialog"` / `aria-expanded`.
+ * It keeps the composer free of an overlay dependency for one small menu. If this ever needs
+ * viewport-aware repositioning, scroll handling or a focus trap, move it onto CDK Overlay and keep
+ * these behaviours (outside click, Escape + focus return, unique ids, dialog semantics).
+ */
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, input, output, signal } from '@angular/core';
 
 import {

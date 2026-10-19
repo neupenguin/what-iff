@@ -2,12 +2,28 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 
 import { ChatTurnAdvancedProgress, ChatTurnPlanStatus } from '../../../../core/models/job.model';
 
-/** Screen-reader wording and the visible marker for each plan item status. */
-const PLAN_STATUS: Record<ChatTurnPlanStatus, { label: string; marker: string }> = {
-  pending: { label: 'To do', marker: '○' },
-  in_progress: { label: 'In progress', marker: '◐' },
-  completed: { label: 'Done', marker: '●' },
-  cancelled: { label: 'Dropped', marker: '⊘' },
+/** How one plan item status is shown: a visible glyph and the words a screen reader hears instead. */
+export interface PlanStatusDisplay {
+  /** Decorative glyph shown before the item; rendered `aria-hidden`. */
+  readonly marker: string;
+  /** Visually hidden prefix read before the item, standing in for the glyph. */
+  readonly label: string;
+}
+
+/**
+ * The marker and screen-reader label for each `update_plan` item status (ADR 0x026). The glyphs
+ * read as a progress circle filling up, so the checklist scans at a glance without relying on
+ * colour. Statuses are validated when the progress is decoded (`assistant-turn.ts`).
+ */
+export const PLAN_STATUS_DISPLAY: Readonly<Record<ChatTurnPlanStatus, PlanStatusDisplay>> = {
+  /** Not started yet: an empty circle. */
+  pending: { marker: '○', label: 'To do' },
+  /** The step the model is working on now: a half-filled circle (also bold + accent-coloured). */
+  in_progress: { marker: '◐', label: 'In progress' },
+  /** Finished: a filled circle (content muted). */
+  completed: { marker: '●', label: 'Done' },
+  /** Dropped from the plan: a struck-through circle (content muted and struck through). */
+  cancelled: { marker: '⊘', label: 'Dropped' },
 };
 
 /**
@@ -115,10 +131,10 @@ export class AdvancedRunProgressComponent {
   });
 
   statusLabel(status: ChatTurnPlanStatus): string {
-    return PLAN_STATUS[status].label;
+    return PLAN_STATUS_DISPLAY[status].label;
   }
 
   statusMarker(status: ChatTurnPlanStatus): string {
-    return PLAN_STATUS[status].marker;
+    return PLAN_STATUS_DISPLAY[status].marker;
   }
 }

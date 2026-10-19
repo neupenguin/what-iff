@@ -37,7 +37,7 @@ import { PersonalityAttachmentsListComponent } from './personality-attachments-l
 import { PersonalityExpressionsManagerComponent } from './personality-expressions-manager.component';
 import { PersonalityMediaJobBannerComponent } from '../components/personality-media-job-banner.component';
 import { PersonalityTurnSettingsFieldsComponent } from '../components/personality-turn-settings-fields.component';
-import { TurnSettingValues } from '../../../core/models/turn-settings.model';
+import { TurnSettingValues, TurnSettingsPatch } from '../../../core/models/turn-settings.model';
 import {
   BellIconComponent,
   ContractIconComponent,
@@ -262,7 +262,7 @@ export class PersonalityDetailPageComponent implements OnInit {
   }
 
   /** Saves one turn setting immediately, like the auto-pin switch (other draft edits stay unsaved). */
-  onTurnSettingChange(change: TurnSettingValues): void {
+  onTurnSettingChange(change: TurnSettingsPatch): void {
     const personality = this.personality();
     if (!personality) return;
     const previous = this.turnSettings();

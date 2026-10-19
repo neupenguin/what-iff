@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, Signal, WritableSignal, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, OnDestroy, Signal, WritableSignal, computed, effect, inject, isDevMode, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { firstValueFrom, Subscription, finalize } from 'rxjs';
 import { take } from 'rxjs/operators';
@@ -14,7 +14,7 @@ import { FileAttachment, PendingFileAttachment } from '../../core/models/file-at
 import { ChatMessage } from '../../core/models/message.model';
 import { Model } from '../../core/models/model.model';
 import { Ritual } from '../../core/models/ritual.model';
-import { AgentLoop, ReasoningEffort, TurnSettingValues } from '../../core/models/turn-settings.model';
+import { AgentLoop, ReasoningEffort, TurnSettingValues, TurnSettingsPatch } from '../../core/models/turn-settings.model';
 import { apiErrorMessage } from '../../core/utils/api-error.helpers';
 import {
   AUTOSAVE_DEBOUNCE_MS,
@@ -28,6 +28,8 @@ import { isHttpErrorResponse } from './helpers/chat-send.helpers';
 import { ChatSendMessageOptions, ChatSendMessageResult } from './chat-send-result';
 import { ChatSendGate } from './services/chat-send-gate';
 import { AssistantTurn } from './assistant-turn';
+
+const TURN_SETTING_KEYS = ['reasoning_effort', 'agent_loop'] as const satisfies readonly (keyof TurnSettingsPatch)[];
 
 @Injectable()
 export class ChatSessionService implements OnDestroy {
@@ -598,15 +600,23 @@ export class ChatSessionService implements OnDestroy {
   }
 
   /**
-   * Optimistically writes thread turn settings (ADR 0x026) and PATCHes them, like setModel. The
-   * response adopts the server's thread but keeps the local turn-setting values, which already hold
-   * this change and any sent after it; a failure reverts only the values this call set and that no
-   * later change has replaced.
+   * Optimistically writes thread turn settings (ADR 0x026) and PATCHes them, like setModel.
+   *
+   * Pattern: (1) apply the values to the local thread straight away, (2) PATCH only the keys that
+   * actually changed, (3) on success adopt the server's thread but keep the local turn-setting
+   * values, which already hold this change and any sent after it, (4) on error revert only the
+   * keys whose local value still matches what this call set, so a later change is never undone
+   * by an earlier request failing.
    */
-  private setTurnSettings(values: TurnSettingValues): void {
+  private setTurnSettings(values: TurnSettingsPatch): void {
+    const requested = TURN_SETTING_KEYS.filter(key => key in values);
+    if (requested.length === 0) {
+      if (isDevMode()) console.error('ChatSessionService.setTurnSettings called with no turn settings');
+      return;
+    }
     const chat = this._thread();
     if (!chat || !this.isActiveThread(chat.id)) return;
-    const keys = (Object.keys(values) as (keyof TurnSettingValues)[]).filter(key => (chat[key] ?? null) !== (values[key] ?? null));
+    const keys = requested.filter(key => (chat[key] ?? null) !== (values[key] ?? null));
     if (keys.length === 0) return;
     const patch: PatchChatRequest = {};
     const previous: TurnSettingValues = {};

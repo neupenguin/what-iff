@@ -17,6 +17,23 @@ import {
 import { HelpHintComponent } from '../../../shared/ui/help-hint/help-hint.component';
 import { TooltipDirective } from '../../../shared/ui/tooltip/tooltip.directive';
 
+/**
+ * The form's values as last hydrated from the job, normalized the way the dirty checks compare
+ * them (trimmed strings, timezone defaulting to UTC, `''` for an unset turn setting). Compared
+ * against the live signals to tell local draft edits apart from a server refresh.
+ */
+interface JobFormSnapshot {
+  title: string;
+  prompt: string;
+  scheduleInput: string;
+  timezone: string;
+  chatId: string;
+  personalityId: string;
+  modelId: string;
+  reasoningEffort: ReasoningEffortUpdate;
+  agentLoop: AgentLoopUpdate;
+}
+
 @Component({
   selector: 'app-job-form',
   standalone: true,
@@ -55,17 +72,7 @@ export class JobFormComponent {
   readonly agentLoopDescriptions = AGENT_LOOP_DESCRIPTIONS;
   private hydratedJobId: string | null = null;
   private hydratedJobUpdatedAt: string | null = null;
-  private hydratedFormSnapshot: {
-    title: string;
-    prompt: string;
-    scheduleInput: string;
-    timezone: string;
-    chatId: string;
-    personalityId: string;
-    modelId: string;
-    reasoningEffort: string;
-    agentLoop: string;
-  } | null = null;
+  private hydratedFormSnapshot: JobFormSnapshot | null = null;
   // Reflect local draft edits without rehydrating on poll refreshes for the same job.
   readonly hasUnsavedEdits = computed(() => {
     const current = this.job();

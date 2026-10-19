@@ -35,6 +35,14 @@ export interface TurnSettingValues {
   agent_loop?: AgentLoop | null;
 }
 
+/**
+ * A change to one level's turn settings: names at least one key explicitly. A key set to null
+ * clears that level; an omitted key is left as it is.
+ */
+export type TurnSettingsPatch =
+  | { reasoning_effort: ReasoningEffort | null; agent_loop?: AgentLoop | null }
+  | { reasoning_effort?: ReasoningEffort | null; agent_loop: AgentLoop | null };
+
 export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
   off: 'Off',
   low: 'Low',

@@ -630,6 +630,32 @@ describe('ChatSessionService', () => {
         expect(service.error()).toBeTruthy();
     });
 
+    it('keeps a later turn-setting change when an earlier PATCH fails', () => {
+        const first$ = new Subject<any>();
+        const second$ = new Subject<any>();
+        chatService.patchChat.mockReturnValueOnce(first$ as any).mockReturnValueOnce(second$ as any);
+        service.setActive('chat-1');
+
+        service.setReasoningEffort('high');
+        service.setReasoningEffort('low');
+        first$.error(new Error('first failed'));
+
+        expect(service.thread()?.reasoning_effort).toBe('low');
+        expect(service.error()).toBeTruthy();
+    });
+
+    it('ignores an empty turn-settings patch', () => {
+        service.setActive('chat-1');
+        chatService.patchChat.mockClear();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        (service as unknown as { setTurnSettings(values: object): void }).setTurnSettings({});
+
+        expect(chatService.patchChat).not.toHaveBeenCalled();
+        expect(consoleError).toHaveBeenCalled();
+        consoleError.mockRestore();
+    });
+
     it('does not patch an unchanged turn setting', () => {
         service.setActive('chat-1');
         chatService.patchChat.mockClear();
