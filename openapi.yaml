@@ -4506,11 +4506,11 @@ paths:
               properties:
                 reasoning_effort:
                   type: string
-                  enum: ['', 'off', low, medium, high]
+                  enum: ['', 'off', 'low', 'medium', 'high']
                   description: Change the thread's reasoning effort. Omit to keep; an empty string clears it.
                 agent_loop:
                   type: string
-                  enum: ['', standard, advanced]
+                  enum: ['', 'standard', 'advanced']
                   description: Change the thread's agent loop. Omit to keep; an empty string clears it.
                 name:
                   type: string
@@ -4598,11 +4598,11 @@ paths:
               properties:
                 reasoning_effort:
                   type: string
-                  enum: ['', 'off', low, medium, high]
+                  enum: ['', 'off', 'low', 'medium', 'high']
                   description: Change the thread's reasoning effort. Omit to keep; an empty string clears it.
                 agent_loop:
                   type: string
-                  enum: ['', standard, advanced]
+                  enum: ['', 'standard', 'advanced']
                   description: Change the thread's agent loop. Omit to keep; an empty string clears it.
                 name:
                   type: string
@@ -7687,9 +7687,11 @@ components:
         image_generation_provider: "openai"
         image_generation_providers: ["openai", "google"]
 
+    # ReasoningEffort, AgentLoop and ReasoningSupport mirror models.ReasoningEffort,
+    # models.AgentLoop and models.ReasoningSupport (internal/models/reasoning.go); keep them in sync.
     ReasoningEffort:
       type: string
-      enum: ['off', low, medium, high]
+      enum: ['off', 'low', 'medium', 'high']
       description: |
         How hard a turn asks the model to think (ADR 0x026). Not set means the model's own
         default. `off` asks for no reasoning where the model allows it; a model that always
@@ -7697,7 +7699,7 @@ components:
 
     AgentLoop:
       type: string
-      enum: [standard, advanced]
+      enum: ['standard', 'advanced']
       description: |
         How a turn drives tools (ADR 0x026): `standard` is the original tool loop; `advanced` is
         the long-horizon loop that works in steps until its plan is done, showing its interim
@@ -7705,7 +7707,7 @@ components:
 
     ReasoningSupport:
       type: string
-      enum: [none, optional, toggle, always]
+      enum: ['none', 'optional', 'toggle', 'always']
       description: |
         How a model takes a reasoning effort: `none` (no control), `optional` (off and the
         three levels), `toggle` (on or off only) or `always` (levels, no off).
@@ -7730,11 +7732,11 @@ components:
       properties:
         reasoning_effort:
           type: string
-          enum: ['', 'off', low, medium, high]
+          enum: ['', 'off', 'low', 'medium', 'high']
           description: Account-default reasoning effort. Preserved when absent; an empty string clears it.
         agent_loop:
           type: string
-          enum: ['', standard, advanced]
+          enum: ['', 'standard', 'advanced']
           description: Account-default agent loop. Preserved when absent; an empty string clears it.
         default_model_id:
           type: string
@@ -8099,11 +8101,11 @@ components:
       properties:
         reasoning_effort:
           type: string
-          enum: ['', 'off', low, medium, high]
+          enum: ['', 'off', 'low', 'medium', 'high']
           description: Reasoning effort for this job's runs. Preserved when absent; an empty string clears it.
         agent_loop:
           type: string
-          enum: ['', standard, advanced]
+          enum: ['', 'standard', 'advanced']
           description: Agent loop for this job's runs. Preserved when absent; an empty string clears it.
         title:
           type: string
