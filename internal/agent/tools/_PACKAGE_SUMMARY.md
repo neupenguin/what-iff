@@ -52,6 +52,8 @@ Provider-neutral function tool catalog plus concrete tool implementations, JSON 
   An invalid folder is reported to the model without querying.
 - **Folders for generated images:** `generate_image` takes an optional `folder`, validated before any image is generated (and paid for), and echoes where the images went.
   `move_files` takes up to 100 ids from `list`, reports how many moved, and notes when some were skipped.
+  It also renames: an optional `name` with exactly one id sets that file's display name (`Datastore.RenameGalleryFile`, via `models.NormalizeFileName`, which keeps the current extension when the new name has none; a chat-reuse copy's id renames its original).
+  `folder` is optional too, but a call needs one of the two; a bad name is refused before anything moves.
 - **`list` pagination:** Files/conversations/jobs (and personalities/skills) accept `page` + `limit`; results include `page`/`total_count`/`has_more` and a note that suggests `page=N+1` when more remain.
 - **Human vs agent descriptions:** Built-in user-toggleable tools provide `FunctionToolDefinition.HumanDescription` for presentation.
   `internal/agent.GetAvailableTools` trims and prefers that field, but falls back to `FunctionToolSpec.Description` when a runtime/external tool omits it or supplies only whitespace.
