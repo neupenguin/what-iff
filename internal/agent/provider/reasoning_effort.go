@@ -116,3 +116,108 @@ func ZAIReasoningEffortFor(effort models.ReasoningEffort) anthropic.OutputConfig
 	}
 	return ZAIReasoningEffort
 }
+
+// Chat Completions providers (Gemini, Qwen, DeepSeek, Mistral). Their requests share one
+// params type; provider-specific fields go in through mergeChatExtraFields so one setting never
+// erases another.
+
+// mergeChatExtraFields adds fields to params' extra JSON fields, keeping any already set.
+func mergeChatExtraFields(params *openai.ChatCompletionNewParams, fields map[string]any) {
+	merged := map[string]any{}
+	for k, v := range params.ExtraFields() {
+		merged[k] = v
+	}
+	for k, v := range fields {
+		merged[k] = v
+	}
+	params.SetExtraFields(merged)
+}
+
+// raiseChatOutputCap gives reasoning room: the Chat Completions output cap
+// (max_completion_tokens) counts thinking tokens on every provider here. An uncapped request
+// stays uncapped.
+func raiseChatOutputCap(params *openai.ChatCompletionNewParams) {
+	if params.MaxCompletionTokens.Valid() && params.MaxCompletionTokens.Value < ReasoningMaxOutputTokens {
+		params.MaxCompletionTokens = openai.Int(ReasoningMaxOutputTokens)
+	}
+}
+
+// ApplyGeminiReasoning sets reasoning_effort on Google's OpenAI-compatible endpoint, which maps it
+// onto thinking_level (Gemini 3+) or a thinking budget (2.5). Off ("none") is sent only to models
+// that can disable thinking (2.5 Flash); Gemini 3+ always reasons, so its off arrives here as low
+// (models.ReasoningSupportFor). Thought text is not requested: the compatible endpoint does not
+// document how it returns it (it would need include_thoughts in extra_body, which cannot be
+// combined with reasoning_effort).
+func ApplyGeminiReasoning(params *openai.ChatCompletionNewParams, effort models.ReasoningEffort) {
+	if params == nil || effort == "" {
+		return
+	}
+	if effort == models.ReasoningEffortOff {
+		params.ReasoningEffort = shared.ReasoningEffortNone
+		return
+	}
+	params.ReasoningEffort = shared.ReasoningEffort(effort)
+	raiseChatOutputCap(params)
+}
+
+// ApplyQwenReasoning sets DashScope's thinking fields. Off sends enable_thinking=false. A level
+// turns thinking on and bounds it: Qwen 3.8 takes reasoning_effort (low/medium/xhigh; high maps to
+// xhigh), earlier hybrid models take a thinking_budget, which DashScope rejects alongside
+// reasoning_effort.
+func ApplyQwenReasoning(params *openai.ChatCompletionNewParams, effort models.ReasoningEffort) {
+	if params == nil || effort == "" {
+		return
+	}
+	if effort == models.ReasoningEffortOff {
+		mergeChatExtraFields(params, map[string]any{"enable_thinking": false})
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(string(params.Model)), "qwen3.8") {
+		level := shared.ReasoningEffort(effort)
+		if effort == models.ReasoningEffortHigh {
+			level = shared.ReasoningEffortXhigh
+		}
+		params.ReasoningEffort = level
+		mergeChatExtraFields(params, map[string]any{"enable_thinking": true})
+	} else {
+		mergeChatExtraFields(params, map[string]any{"enable_thinking": true, "thinking_budget": claudeThinkingBudget(effort)})
+	}
+	raiseChatOutputCap(params)
+}
+
+// ApplyDeepSeekReasoning sets DeepSeek's reasoning_effort (none/low/high/max; thinking is on at
+// high when nothing is sent). Off also sends thinking disabled, to be explicit; medium maps to
+// high (DeepSeek has no medium) and high to max.
+func ApplyDeepSeekReasoning(params *openai.ChatCompletionNewParams, effort models.ReasoningEffort) {
+	if params == nil || effort == "" {
+		return
+	}
+	switch effort {
+	case models.ReasoningEffortOff:
+		params.ReasoningEffort = shared.ReasoningEffortNone
+		mergeChatExtraFields(params, map[string]any{"thinking": map[string]any{"type": "disabled"}})
+		return
+	case models.ReasoningEffortLow:
+		params.ReasoningEffort = shared.ReasoningEffortLow
+	case models.ReasoningEffortMedium:
+		params.ReasoningEffort = shared.ReasoningEffortHigh
+	case models.ReasoningEffortHigh:
+		params.ReasoningEffort = shared.ReasoningEffort("max")
+	}
+	raiseChatOutputCap(params)
+}
+
+// ApplyMistralReasoning sets reasoning_effort on Mistral's hybrid models, which document only
+// "none" and "high" (a toggle). With reasoning on, Mistral returns content as typed chunks, which
+// the Mistral adapter parses (mistral_content.go).
+func ApplyMistralReasoning(params *openai.ChatCompletionNewParams, effort models.ReasoningEffort) {
+	if params == nil || effort == "" {
+		return
+	}
+	if effort == models.ReasoningEffortOff {
+		params.ReasoningEffort = shared.ReasoningEffortNone
+		return
+	}
+	params.ReasoningEffort = shared.ReasoningEffortHigh
+	raiseChatOutputCap(params)
+}

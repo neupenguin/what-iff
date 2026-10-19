@@ -111,3 +111,70 @@ func TestOpenAIStreaming_ForwardsReasoningSummaryDeltas(t *testing.T) {
 	assert.Equal(t, "Thinking\n\nMore", reasoning)
 	assert.Equal(t, "Hi", text)
 }
+
+func chatParamsJSON(t *testing.T, p openai.ChatCompletionNewParams) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(p)
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	return out
+}
+
+func chatParams(model string) openai.ChatCompletionNewParams {
+	return openai.ChatCompletionNewParams{Model: model, MaxCompletionTokens: openai.Int(DefaultMaxContentLength)}
+}
+
+func TestApplyChatCompletionsReasoning(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(*openai.ChatCompletionNewParams, models.ReasoningEffort)
+		model string
+		level models.ReasoningEffort
+		want  map[string]any
+		raise bool
+	}{
+		{"gemini high", ApplyGeminiReasoning, "gemini-3.8-flash", models.ReasoningEffortHigh, map[string]any{"reasoning_effort": "high"}, true},
+		{"gemini 2.5 flash off", ApplyGeminiReasoning, "gemini-2.5-flash", models.ReasoningEffortOff, map[string]any{"reasoning_effort": "none"}, false},
+		{"qwen off", ApplyQwenReasoning, "qwen3.7-plus", models.ReasoningEffortOff, map[string]any{"enable_thinking": false}, false},
+		{"qwen budget", ApplyQwenReasoning, "qwen3.7-plus", models.ReasoningEffortMedium, map[string]any{"enable_thinking": true, "thinking_budget": float64(6144)}, true},
+		{"qwen 3.8 effort", ApplyQwenReasoning, "qwen3.8-max", models.ReasoningEffortHigh, map[string]any{"enable_thinking": true, "reasoning_effort": "xhigh"}, true},
+		{"deepseek off", ApplyDeepSeekReasoning, "deepseek-flash", models.ReasoningEffortOff, map[string]any{"reasoning_effort": "none", "thinking": map[string]any{"type": "disabled"}}, false},
+		{"deepseek medium", ApplyDeepSeekReasoning, "deepseek-flash", models.ReasoningEffortMedium, map[string]any{"reasoning_effort": "high"}, true},
+		{"deepseek high", ApplyDeepSeekReasoning, "deepseek-flash", models.ReasoningEffortHigh, map[string]any{"reasoning_effort": "max"}, true},
+		{"mistral on", ApplyMistralReasoning, "mistral-large-4", models.ReasoningEffortMedium, map[string]any{"reasoning_effort": "high"}, true},
+		{"mistral off", ApplyMistralReasoning, "mistral-large-4", models.ReasoningEffortOff, map[string]any{"reasoning_effort": "none"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := chatParams(c.model)
+			c.apply(&p, c.level)
+			j := chatParamsJSON(t, p)
+			for k, v := range c.want {
+				assert.Equal(t, v, j[k], k)
+			}
+			if c.raise {
+				assert.Equal(t, float64(ReasoningMaxOutputTokens), j["max_completion_tokens"])
+			} else {
+				assert.Equal(t, float64(DefaultMaxContentLength), j["max_completion_tokens"])
+			}
+		})
+	}
+
+	// No selection leaves every request untouched.
+	for _, apply := range []func(*openai.ChatCompletionNewParams, models.ReasoningEffort){ApplyGeminiReasoning, ApplyQwenReasoning, ApplyDeepSeekReasoning, ApplyMistralReasoning} {
+		p := chatParams("m")
+		apply(&p, "")
+		assert.Equal(t, chatParamsJSON(t, chatParams("m")), chatParamsJSON(t, p))
+	}
+}
+
+// Extra fields from different settings accumulate instead of replacing each other.
+func TestMergeChatExtraFields(t *testing.T) {
+	p := chatParams("m")
+	mergeChatExtraFields(&p, map[string]any{"a": 1})
+	mergeChatExtraFields(&p, map[string]any{"b": 2})
+	j := chatParamsJSON(t, p)
+	assert.Equal(t, float64(1), j["a"])
+	assert.Equal(t, float64(2), j["b"])
+}

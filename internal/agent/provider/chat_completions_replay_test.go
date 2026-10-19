@@ -142,3 +142,39 @@ func TestChatCompletionsFinal_ContinueWithAppendsReplyThenUser(t *testing.T) {
 		t.Errorf("the reply is recorded once")
 	}
 }
+
+// DeepSeek (thinking on by default, 400 without it) and Qwen (read with preserve_thinking) get the
+// tool-call turn's reasoning_content echoed back, through the shared reasoningChatAdapter.
+func TestReasoningChatAdapters_ReplayReasoningContentOnToolCall(t *testing.T) {
+	for name, build := range map[string]func(baseURL string) AgentAdapter{
+		"deepseek": func(baseURL string) AgentAdapter {
+			return NewDeepSeekAdapter(NewDeepSeekProvider("k", baseURL, nil, nil), openai.ChatCompletionNewParams{Model: "deepseek-flash"}, nil, nil)
+		},
+		"qwen": func(baseURL string) AgentAdapter {
+			return NewQwenAdapter(NewQwenProvider("k", baseURL, nil, nil), openai.ChatCompletionNewParams{Model: "qwen3.7-plus"}, nil, nil)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, body := recordingSSEServer(t, []string{
+				streamedToolRoundSSE("checking the weather", `{\"city\":\"Paris\"}`),
+				chatCompletionSSE(nil, []string{"Sunny."}, "stop"),
+			})
+			defer srv.Close()
+			a := build(srv.URL)
+			var live strings.Builder
+			a.(ReasoningStreamer).SetReasoningStream(ReasoningStream{OnDelta: func(d string) { live.WriteString(d) }})
+			a.SetTextDeltaHandler(func(string) {})
+
+			_, uses, err := a.Call(context.Background())
+			require.NoError(t, err)
+			require.Len(t, uses, 1)
+			a.AppendToolResults([]ToolResult{{ID: uses[0].ID, Output: "sunny"}})
+			final, _, err := a.Call(context.Background())
+			require.NoError(t, err)
+
+			require.Equal(t, "checking the weather", gjson.Get(body(1), "messages.#(role==\"assistant\").reasoning_content").String())
+			require.Equal(t, "checking the weather", final.Reasoning)
+			require.Equal(t, "checking the weather", live.String())
+		})
+	}
+}

@@ -52,7 +52,20 @@ func TestReasoningSupportFor(t *testing.T) {
 		{"anthropic", "claude-3-5-haiku", ReasoningSupportNone},
 		{"zai", "glm-5.3", ReasoningSupportAlways},
 		{"xiaomi", "mimo-v2", ReasoningSupportToggle},
-		{"google", "gemini-3.5", ReasoningSupportNone},
+		{"google", "gemini-3.8-flash", ReasoningSupportAlways},
+		{"google", "gemini-2.5-flash", ReasoningSupportOptional},
+		{"google", "gemini-2.5-pro", ReasoningSupportAlways},
+		{"google", "gemini-nano-banana-2.1", ReasoningSupportNone},
+		{"qwen", "qwen3.7-plus", ReasoningSupportOptional},
+		{"qwen", "qwen-plus", ReasoningSupportOptional},
+		{"qwen", "qwen3.7-max-preview", ReasoningSupportAlways},
+		{"qwen", "qwen-turbo", ReasoningSupportNone},
+		{"qwen", "qwen-image-2.0", ReasoningSupportNone},
+		{"deepseek", "deepseek-flash", ReasoningSupportOptional},
+		{"deepseek", "deepseek-v4-pro", ReasoningSupportOptional},
+		{"mistral", "mistral-large-4", ReasoningSupportToggle},
+		{"mistral", "mistral-small-latest", ReasoningSupportToggle},
+		{"mistral", "mistral-large-latest", ReasoningSupportNone},
 		{"", "claude-sonnet-5", ReasoningSupportOptional}, // provider from the seed catalog
 	}
 	for _, c := range cases {

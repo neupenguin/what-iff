@@ -55,7 +55,7 @@ type XiaomiAdapter struct {
 // (ADR 0x026). MiMo has no other reasoning control.
 func (a *XiaomiAdapter) DisableThinking() {
 	a.thinkingDisabled = true
-	a.params.SetExtraFields(map[string]any{"thinking": map[string]any{"type": "disabled"}})
+	mergeChatExtraFields(&a.params, map[string]any{"thinking": map[string]any{"type": "disabled"}})
 }
 
 // ContinueWith implements Continuer, echoing the reply's reasoning as MiMo requires.
@@ -173,7 +173,7 @@ func (a *XiaomiAdapter) call(ctx context.Context) (*openai.ChatCompletion, error
 	if err == nil && !a.thinkingDisabled && chatCompletionTruncatedWithoutText(resp) {
 		a.provider.recordRetry(ctx, string(a.params.Model), retryReasonLength)
 		a.thinkingDisabled = true
-		a.params.SetExtraFields(map[string]any{"thinking": map[string]any{"type": "disabled"}})
+		mergeChatExtraFields(&a.params, map[string]any{"thinking": map[string]any{"type": "disabled"}})
 		a.liveReasoning.reset()
 		resp, reasoning, err = a.callOnce(ctx)
 	}

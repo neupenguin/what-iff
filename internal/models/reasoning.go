@@ -86,8 +86,78 @@ func ReasoningSupportFor(provider, name string) ReasoningSupport {
 		return ReasoningSupportAlways
 	case ModelProviderXiaomi:
 		return ReasoningSupportToggle
+	case ModelProviderGoogle:
+		return geminiReasoningSupport(n)
+	case ModelProviderQwen:
+		return qwenReasoningSupport(n)
+	case ModelProviderDeepSeek:
+		if hasAny(n, "-vl", "ocr", "coder") {
+			return ReasoningSupportNone
+		}
+		// deepseek-flash and deepseek-v4-pro (and the retired chat/reasoner aliases) are hybrid:
+		// reasoning_effort none/low/high/max, thinking on by default.
+		return ReasoningSupportOptional
+	case ModelProviderMistral:
+		return mistralReasoningSupport(n)
 	}
 	return ReasoningSupportNone
+}
+
+// geminiReasoningSupport: Gemini 3 and later (and 2.5 Pro) always think; 2.5 Flash can switch
+// thinking off; media and older models have no control.
+func geminiReasoningSupport(n string) ReasoningSupport {
+	switch {
+	case hasAny(n, "image", "tts", "live", "embedding", "nano-banana", "veo", "imagen"):
+		return ReasoningSupportNone
+	case strings.HasPrefix(n, "gemini-1"), strings.HasPrefix(n, "gemini-2.0"):
+		return ReasoningSupportNone
+	case strings.HasPrefix(n, "gemini-2.5-flash"):
+		return ReasoningSupportOptional
+	}
+	return ReasoningSupportAlways
+}
+
+// qwenThinkingOnly are Qwen models that cannot disable thinking.
+var qwenThinkingOnly = []string{"qwen3.8-2.4t", "qwen3.7-max-preview", "qwen3.7-max-2026-05-17"}
+
+// qwenReasoningSupport: Qwen 3.x hybrids and the commercial qwen-plus/qwen-flash take
+// enable_thinking (plus a budget or effort); a few are thinking-only; others have no control.
+func qwenReasoningSupport(n string) ReasoningSupport {
+	for _, p := range qwenThinkingOnly {
+		if strings.HasPrefix(n, p) {
+			return ReasoningSupportAlways
+		}
+	}
+	if hasAny(n, "image", "tts", "embedding", "-mt-", "-vl", "asr") {
+		return ReasoningSupportNone
+	}
+	if strings.HasPrefix(n, "qwen3") || strings.HasPrefix(n, "qwen-plus") || strings.HasPrefix(n, "qwen-flash") {
+		return ReasoningSupportOptional
+	}
+	return ReasoningSupportNone
+}
+
+// mistralReasoningPrefixes are the hybrid Mistral models documented to take reasoning_effort
+// ("none"/"high" only, hence a toggle). Aliases whose target is unconfirmed (mistral-large-latest,
+// mistral-medium-latest) are left out until verified.
+var mistralReasoningPrefixes = []string{"mistral-small-latest", "mistral-small-4", "mistral-medium-3-5", "mistral-medium-3.5", "mistral-large-4"}
+
+func mistralReasoningSupport(n string) ReasoningSupport {
+	for _, p := range mistralReasoningPrefixes {
+		if strings.HasPrefix(n, p) {
+			return ReasoningSupportToggle
+		}
+	}
+	return ReasoningSupportNone
+}
+
+func hasAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsAnthropicAlwaysThinkingModel reports whether a native Anthropic model rejects a request

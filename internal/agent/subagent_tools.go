@@ -432,6 +432,7 @@ func (a *Agent) runSubagentChatCompletions(ctx context.Context, userID uuid.UUID
 		if a.GeminiProvider == nil {
 			return nil, fmt.Errorf("Gemini model %q requested but GEMINI_API_KEY is not configured", modelName)
 		}
+		provider.ApplyGeminiReasoning(&params, renderCtx.reasoningEffort)
 		adapter = provider.NewGeminiAdapter(a.GeminiProvider, params, functionTools, nil, a.logger)
 		sv = models.SafetyViolationProviderGoogle
 	} else {

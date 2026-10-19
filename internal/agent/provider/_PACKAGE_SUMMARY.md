@@ -57,6 +57,10 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 - **Unified iteration:** `AgentAdapter` + `ToolUse` / `ToolResult` for the multi-round agent loop.
 - **Reasoning effort (ADR 0x026, `reasoning_effort.go`):** maps a selected effort onto each request: `ApplyOpenAIReasoning` (`reasoning.effort`, `none`/`minimal` for off, summaries otherwise), `ApplyClaudeReasoning` (adaptive thinking with summarized display and `output_config.effort`; a thinking budget on Haiku 4.5; disabled for off; it reports whether thinking blocks must be replayed, which `ClaudeAdapter.SetReplayThinking` does) and `ZAIReasoningEffortFor` (low/high/max; no selection keeps `ZAIReasoningEffort`).
   With an effort on, the output cap is raised to `ReasoningMaxOutputTokens`.
+  Chat Completions providers: `ApplyGeminiReasoning`, `ApplyQwenReasoning`, `ApplyDeepSeekReasoning`, `ApplyMistralReasoning`; provider-specific fields go through `mergeChatExtraFields` so settings never overwrite each other.
+- **`reasoningChatAdapter` (`reasoning_chat_adapter.go`):** the shared adapter core for DeepSeek, Qwen and Mistral.
+  It captures reasoning (`reasoning_content`, streamed through the `onReasoningDelta` hook), streams it live, and replays it on the assistant turn it belongs to through an `assistantReasoningReplay` (`reasoning_content` for DeepSeek/Qwen; DeepSeek returns 400 on a tool round without it).
+  Mistral's reasoning models send content as typed chunks: `mistral_content.go` parses them (`chatCompletionStreamHooks.parseContent`, which rebuilds the final content from parsed text) and replays thinking as a chunk (`mistralChunkReplay`).
 - **Advanced-loop adapter interfaces (ADR 0x026):** every adapter `runGeneration` drives embeds `usageLog` (optional `UsageReporter.CallUsage`, each call's input/output/reasoning tokens) and implements `Continuer.ContinueWith`, which records the last final reply in the adapter's history (OpenAI: already server-side via `previous_response_id`) and appends a user turn.
   The local adapter does neither.
 - **`GenerateResponse`:** Normalized completion type from either provider.
@@ -167,7 +171,8 @@ Maps **`ModelContext`** (ordered prompt segments) to OpenAI Responses and Anthro
 
 - `mock_adapter_test.go` — echo/fixed/scripted modes, delta concatenation (unicode, no-space, newline-heavy), mid-stream cancellation.
 - `reasoning_effort_test.go` — the effort mappings per provider, OpenAI summary extraction, and streamed summary deltas.
-- `continuation_test.go`, `chat_completions_replay_test.go` — `ContinueWith` on the Claude (with and without thinking replay), OpenAI and Chat Completions adapters.
+- `continuation_test.go`, `chat_completions_replay_test.go` — `ContinueWith` on the Claude (with and without thinking replay), OpenAI and Chat Completions adapters, and DeepSeek/Qwen reasoning replay on tool rounds.
+- `mistral_content_test.go` — Mistral thinking chunks in streamed and non-streamed content, and chunk replay on tool rounds.
   `call_timeouts_test.go` — each limit against `httptest` servers (slow response, stalled and endless streams), a healthy stream outliving `Request`, caller cancel staying a cancel, and a stalled Claude stream timing out after one attempt.
   `deny_transport_test.go` — proves an `httptest` server is never reached, including through a real openai-go client built on the deny client.
 - `model_context_test.go`, `model_context_hydrate_test.go`, `model_context_openai_test.go` — segment assembly, hydration helpers, OpenAI/Claude rendering (including Claude text fallback when image bytes absent).

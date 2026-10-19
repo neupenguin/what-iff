@@ -1484,6 +1484,7 @@ func (a *Agent) generateAssistantForMessageGemini(ctx context.Context, userID uu
 
 	build := func(mc *provider.ModelContext) (provider.AgentAdapter, error) {
 		geminiParams := visionRenderContext(chatCtx, mc).BuildGeminiParams(chatCtx.model)
+		provider.ApplyGeminiReasoning(&geminiParams, chatCtx.reasoningEffort)
 
 		policy := a.buildTurnToolPolicy(ctx, chatCtx, userID, chatMessage)
 		specs := a.turnFunctionToolSpecs(ctx, chatCtx, userID, chatMessage.ChatID, policy)
@@ -1615,16 +1616,19 @@ func (a *Agent) openAIChatCompletionsAdapter(chatCtx *chatContext, params openai
 		if a.MistralProvider == nil {
 			return nil, fmt.Errorf("Mistral model %q requested but MISTRAL_API_KEY is not configured", chatCtx.model)
 		}
+		provider.ApplyMistralReasoning(&params, chatCtx.reasoningEffort)
 		return provider.NewMistralAdapter(a.MistralProvider, params, functionTools, disabledTools), nil
 	case models.ModelProviderDeepSeek:
 		if a.DeepSeekProvider == nil {
 			return nil, fmt.Errorf("DeepSeek model %q requested but DEEPSEEK_API_KEY is not configured", chatCtx.model)
 		}
+		provider.ApplyDeepSeekReasoning(&params, chatCtx.reasoningEffort)
 		return provider.NewDeepSeekAdapter(a.DeepSeekProvider, params, functionTools, disabledTools), nil
 	case models.ModelProviderQwen:
 		if a.QwenProvider == nil {
 			return nil, fmt.Errorf("Qwen model %q requested but QWEN_API_KEY is not configured", chatCtx.model)
 		}
+		provider.ApplyQwenReasoning(&params, chatCtx.reasoningEffort)
 		return provider.NewQwenAdapter(a.QwenProvider, params, functionTools, disabledTools), nil
 	case models.ModelProviderXiaomi:
 		if a.XiaomiProvider == nil {
