@@ -21,3 +21,19 @@ func TestAgentLoopContext(t *testing.T) {
 		t.Fatal("WithAgentLoop should accept a nil parent")
 	}
 }
+
+func TestPendingUsageContext(t *testing.T) {
+	if _, ok := PendingUsageFromContext(context.Background()); ok {
+		t.Fatal("no pending usage on a plain context")
+	}
+	//nolint:staticcheck // a nil context is tolerated, as by the other helpers
+	if _, ok := PendingUsageFromContext(nil); ok {
+		t.Fatal("no pending usage on a nil context")
+	}
+	u := Usage{Model: "m", Calls: []CallUsage{{InputTokens: 5}}}
+	//nolint:staticcheck // a nil context is tolerated
+	got, ok := PendingUsageFromContext(WithPendingUsage(nil, u))
+	if !ok || got.Model != "m" || len(got.Calls) != 1 {
+		t.Fatalf("PendingUsageFromContext = %+v, %v", got, ok)
+	}
+}

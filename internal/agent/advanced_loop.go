@@ -122,8 +122,10 @@ type advancedLoopHooks struct {
 	rebuild func(mc *provider.ModelContext) (provider.AgentAdapter, error)
 	// modelContext is the turn's original context, which compaction starts again from.
 	modelContext *provider.ModelContext
-	// quotaAllowed re-checks the account's quota between steps. Nil means always allowed.
-	quotaAllowed func(ctx context.Context) bool
+	// quotaAllowed re-checks the account's quota before each model call after the first, given
+	// the calls made since the last step record (pending, not yet metered). Nil means always
+	// allowed.
+	quotaAllowed func(ctx context.Context, pending []provider.CallUsage) bool
 	// recordStep meters a finished step's calls (recordAdvancedStep); saveDraft persists the run so
 	// far on its job. Either may be nil.
 	recordStep func(ctx context.Context, step int)
@@ -161,6 +163,9 @@ type advancedRun struct {
 	// step is the current step; endReason is why the run stopped.
 	step      int
 	endReason models.AgentRunEnd
+	// fixedReply reports that the reply is quotaStop's note, not the model's: the last call's text
+	// then stays a note in the run record.
+	fixedReply bool
 }
 
 // handleAdvancedLoop runs the Advanced loop on adapter, which must implement provider.Continuer.
@@ -182,7 +187,7 @@ func (a *Agent) handleAdvancedLoop(ctx context.Context, chatCtx *chatContext, ad
 	}
 	run.attachments = a.appendPostToolLoopGeneratedAttachments(ctx, chatCtx, run.attachments)
 	finalCall := -1
-	if hooks.transcript != nil {
+	if hooks.transcript != nil && !run.fixedReply {
 		finalCall = hooks.transcript.currentCall()
 	}
 	return result, run.toolCalls, run.attachments, run.record(finalCall), nil
@@ -229,7 +234,7 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 			step:                step,
 			endStepAtCap:        true,
 			skipPostAttachments: true,
-			beforeCall:          r.beginCall,
+			beforeCall:          func() error { return r.beforeCall(ctx) },
 			afterCall:           r.syncUsage,
 		})
 		r.syncUsage()
@@ -239,6 +244,10 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 		// sees them and a run that dies later has still paid for the work it did.
 		if r.hooks.recordStep != nil {
 			r.hooks.recordStep(ctx, step)
+		}
+		if errors.Is(err, errAdvancedQuota) {
+			r.end(models.AgentRunEndQuota)
+			return r.quotaStop(len(calls) > 0), nil
 		}
 		if err != nil {
 			return nil, err
@@ -260,7 +269,7 @@ func (r *advancedRun) loop(ctx context.Context) (*provider.GenerateResponse, err
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if end := r.limitReached(ctx, step); end != "" {
+		if end := r.limitReached(step); end != "" {
 			r.end(end)
 			return r.finish(ctx)
 		}
@@ -286,13 +295,12 @@ func (r *advancedRun) judgeAnswer(madeToolCalls bool, planBefore int) models.Age
 	return ""
 }
 
-// limitReached checks the limits between steps: the time limit, the quota and the step limit.
-func (r *advancedRun) limitReached(ctx context.Context, step int) models.AgentRunEnd {
+// limitReached checks the limits between steps: the time limit and the step limit. The quota is
+// checked before every model call instead (beforeCall).
+func (r *advancedRun) limitReached(step int) models.AgentRunEnd {
 	switch {
 	case time.Since(r.start) > r.hooks.config.maxDuration:
 		return models.AgentRunEndDuration
-	case r.hooks.quotaAllowed != nil && !r.hooks.quotaAllowed(ctx):
-		return models.AgentRunEndQuota
 	case step >= r.hooks.config.maxSteps:
 		return models.AgentRunEndStepLimit
 	}
@@ -318,15 +326,18 @@ func (r *advancedRun) prepareNextStep(ctx context.Context, step int) {
 	}
 }
 
-// finish ends a run that a limit stopped before the model finished (endReason is already set).
+// finish ends a run that the time or step limit stopped before the model finished (endReason is
+// already set). Either last call is quota-checked like any other; when the quota refuses it, the
+// run ends as quotaStop does.
 //   - Tool results pending: one last answer is forced with tools off, as the Standard loop does.
-//   - Quota: the latest reply stands; another call would spend past the quota.
-//   - Time or step limit: the model is asked, with tools off, for a reply that says what it did
+//   - Otherwise: the model is asked, with tools off, for a reply that says what it did
 //     and what is still open, rather than leaving a mid-work note ("next I'll check X") as the
-//     answer. The open plan items are also carried into the thread's next turn (openPlanSegment).
+//     answer. The open plan items are also carried into the thread's next turn (previousRunOpenPlan).
 func (r *advancedRun) finish(ctx context.Context) (*provider.GenerateResponse, error) {
 	if r.pendingToolResults || r.last == nil {
-		r.beginCall()
+		if err := r.beforeCall(ctx); err != nil {
+			return r.quotaStop(true), nil
+		}
 		final, err := r.adapter.ForceFinalResponse(ctx)
 		r.syncUsage()
 		if err != nil {
@@ -334,14 +345,13 @@ func (r *advancedRun) finish(ctx context.Context) (*provider.GenerateResponse, e
 		}
 		return final, nil
 	}
-	if r.endReason == models.AgentRunEndQuota {
-		return r.last, nil
-	}
 	r.adapter.(provider.Continuer).ContinueWith(limitSummaryMessage(r.endReason, r.chatCtx.plan))
 	if scoper, ok := r.adapter.(provider.ToolScoper); ok {
 		scoper.ScopeTools(func(string) bool { return true })
 	}
-	r.beginCall()
+	if err := r.beforeCall(ctx); err != nil {
+		return r.last, nil
+	}
 	res, uses, err := r.adapter.Call(ctx)
 	r.syncUsage()
 	if err != nil {
@@ -382,10 +392,39 @@ func limitSummaryMessage(reason models.AgentRunEnd, plan []models.PlanItem) stri
 	return msg
 }
 
-func (r *advancedRun) beginCall() {
+// errAdvancedQuota stops a run before a model call the quota no longer covers.
+var errAdvancedQuota = errors.New("advanced run stopped: quota exhausted")
+
+// beforeCall runs before every model call of the run. After the first call it re-checks the
+// quota with the calls not yet metered (the current step's), and refuses the call
+// (errAdvancedQuota) when the meter does: a run then overshoots its quota by at most the call
+// that crossed it, not by a whole step. The turn's own Check covered the first call.
+func (r *advancedRun) beforeCall(ctx context.Context) error {
+	if r.hooks.quotaAllowed != nil && len(r.chatCtx.calls) > 0 {
+		pending := r.chatCtx.calls[min(r.chatCtx.recordedCalls, len(r.chatCtx.calls)):]
+		if !r.hooks.quotaAllowed(ctx, pending) {
+			return errAdvancedQuota
+		}
+	}
 	if r.hooks.transcript != nil {
 		r.hooks.transcript.beginCall()
 	}
+	return nil
+}
+
+// advancedQuotaStopMessage is the reply of a run the quota stopped mid-work.
+const advancedQuotaStopMessage = "_I stopped before finishing because this account reached its usage limit. My working notes and the open items of my plan are saved with this message; ask me to continue once more usage is available._"
+
+// quotaStop is the reply of a run the quota stopped before a model call. When the run stopped
+// right after an answer (the first call of a new step, nothing done since), that answer stands;
+// otherwise it is a fixed note, since another call would spend past the quota. The run's notes,
+// plan and tool calls are saved with it either way.
+func (r *advancedRun) quotaStop(workSinceAnswer bool) *provider.GenerateResponse {
+	if r.last != nil && !r.pendingToolResults && !workSinceAnswer {
+		return r.last
+	}
+	r.fixedReply = true
+	return &provider.GenerateResponse{Text: advancedQuotaStopMessage, CreatedAt: time.Now().Unix()}
 }
 
 // syncUsage refreshes the turn's per-call usage (metering) from every adapter so far.

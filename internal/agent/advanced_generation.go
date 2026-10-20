@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theimaginaryfoundation/what-iff/internal/agent/provider"
+	"github.com/theimaginaryfoundation/what-iff/internal/metering"
 	"github.com/theimaginaryfoundation/what-iff/internal/models"
 	"go.uber.org/zap"
 )
@@ -44,8 +45,8 @@ func (a *Agent) runAdvancedGeneration(ctx context.Context, userID uuid.UUID, cha
 		configure:    configure,
 		rebuild:      opts.rebuild,
 		modelContext: opts.modelContext,
-		quotaAllowed: func(ctx context.Context) bool {
-			return a.meter.Check(ctx, userID, chatCtx.modelSubscriptionTier, chatCtx.meteredActionType()).Allowed
+		quotaAllowed: func(ctx context.Context, pending []provider.CallUsage) bool {
+			return a.advancedQuotaAllowed(ctx, userID, chatCtx, pending)
 		},
 		recordStep: func(ctx context.Context, step int) {
 			a.recordAdvancedStep(ctx, chatCtx, step)
@@ -90,4 +91,24 @@ func (a *Agent) advancedDraftSaver(ctx context.Context, userID uuid.UUID, chatJo
 			a.logger.Warn("failed to save advanced run draft", zap.String("job_id", chatJob.ID.String()), zap.Error(err))
 		}
 	}
+}
+
+// advancedQuotaAllowed asks the meter whether an Advanced run may make another model call, with
+// the calls it has made since its last step record on the context (metering.WithPendingUsage),
+// priced as they will be recorded. A meter that sees only the balance would let a run spend a
+// whole step past it.
+func (a *Agent) advancedQuotaAllowed(ctx context.Context, userID uuid.UUID, chatCtx *chatContext, pending []provider.CallUsage) bool {
+	u := metering.Usage{
+		UserID:     userID,
+		ActionType: chatCtx.meteredActionType(),
+		Model:      chatCtx.model,
+		AgentLoop:  string(models.AgentLoopAdvanced),
+		Calls:      append([]provider.CallUsage(nil), pending...),
+		TurnID:     chatCtx.turnID,
+	}
+	if chatCtx.turnSettings.ReasoningEffortSource != models.SettingSourceUnset {
+		u.ReasoningEffort = string(chatCtx.reasoningEffort)
+	}
+	ctx = metering.WithPendingUsage(ctx, u)
+	return a.meter.Check(ctx, userID, chatCtx.modelSubscriptionTier, chatCtx.meteredActionType()).Allowed
 }

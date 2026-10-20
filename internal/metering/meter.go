@@ -39,6 +39,10 @@ type Meter interface {
 	// The check is intentionally fuzzy — concurrent requests are not serialised
 	// here; the implementation's atomic accounting at Record time is the precise
 	// enforcer. A returned Decision with Allowed=false must hard-reject the turn.
+	//
+	// A running Advanced turn also calls Check before each model call after its first, with
+	// the usage it has not recorded yet on ctx (WithPendingUsage). Allowed=false then stops the
+	// run before that call.
 	Check(ctx context.Context, userID uuid.UUID, tier, actionType string) Decision
 
 	// Record settles the cost of one completed turn (fire-and-forget; it must not

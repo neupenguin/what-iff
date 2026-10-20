@@ -93,7 +93,8 @@ for step := 0; step < maxSteps; step++ {
     model stopped calling tools:
         no open plan items → this text is the final answer; stop
         open plan items    → append a continuation message listing them; next step
-    between steps: cancellation check, quota re-check, context compaction, step bookkeeping
+    before every model call after the first: quota re-check with the calls not yet metered
+    between steps: cancellation check, context compaction, step bookkeeping
 }
 outer cap reached → the existing ForceFinalResponse
 ```
@@ -104,7 +105,7 @@ outer cap reached → the existing ForceFinalResponse
   No extra "is it done?" model call is made.
 - **Stall guard:** two continuation nudges in a row that produce no tool call and no plan change end the run with the latest text.
 - **Limits:** `AGENT_ADVANCED_MAX_STEPS` (default 50, at most 500) and `AGENT_ADVANCED_MAX_DURATION` (default 60 minutes, at most 6 hours). An invalid value falls back to the default and a value above its bound is clamped, each with a warning.
-- **Stopping at a limit.** A run stopped by the step or time limit is asked, with tools off, for a reply that says what it completed and what is still open, instead of keeping a mid-work note ("next I'll check X") as the answer. A run stopped by the quota keeps its latest reply (another call would spend past the quota). With tool results pending, the existing forced final answer is used.
+- **Stopping at a limit.** A run stopped by the step or time limit is asked, with tools off, for a reply that says what it completed and what is still open, instead of keeping a mid-work note ("next I'll check X") as the answer. With tool results pending, the existing forced final answer is used. A run the quota stops makes no further call (it would spend past the quota): if it stopped right after an answer, that answer is the reply; mid-step, the reply is a fixed note saying the account reached its usage limit, with the notes and plan saved alongside.
 - **Carrying unfinished work.** When the thread's latest reply is a run that stopped before its work was done (any end other than `done`), the next Advanced turn is told its open plan items, so "continue" picks them up instead of starting over.
 - **Prompting:** an Advanced turn gets a developer instruction (inserted before the final user message) explaining that it may work over many steps, should keep a plan for multi-step work, and that its final reply must stand on its own.
 
@@ -150,8 +151,11 @@ The local backend (`LLM_BACKEND=local`) keeps its own pipeline and always runs S
 - `Calls`: the usage of each model call the record covers (`CallUsage`: input including cached, cached input, output including reasoning, and reasoning where the provider reports it separately). Standard turns and sub-agent runs report every call they made; `Tokens` keeps its meaning (the final call's input).
 - `Step` and `TurnID`: an Advanced run is recorded **per step**, as each step finishes (`Step` set), and the turn's final record covers any calls made after the last step (a limit summary, a forced answer). All of a turn's records carry its `TurnID`; the final one also carries the message id.
 
-Recording per step means the quota re-check (`Meter.Check`) between steps sees what the run has spent, so a denial actually stops it, and a run that later fails or dies with the server has still been metered for the steps it finished.
-The quota denial ends the run with its latest reply.
+Recording per step means a run that later fails or dies with the server has still been metered for the steps it finished.
+
+The quota is re-checked (`Meter.Check`) before every model call of a run after the first, not only between steps, with the calls made since the last step record on the context (`metering.WithPendingUsage`, with the same fields a record carries).
+A meter can then refuse once recording what is pending would leave nothing to pay for another call, so a run overshoots its quota by at most the call that crossed it, the same as a Standard turn, rather than by a whole step of up to ten calls.
+A refusal ends the run as described in §4 (end reason `quota`).
 An Advanced turn's checkpoint decision uses its first call's input (the context the thread will carry), not the final call's, which also holds the run's own work.
 `NoopMeter` ignores all of this.
 

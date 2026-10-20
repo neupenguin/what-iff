@@ -171,21 +171,58 @@ func TestAdvancedLoop_StepLimitReturnsLatestReply(t *testing.T) {
 	assert.Equal(t, "reply 2", last[len(last)-1].Text, "the replaced reply stays as a note")
 }
 
-func TestAdvancedLoop_QuotaDenialEndsRun(t *testing.T) {
+// The quota is re-checked before every call after the first, with the calls not yet metered: a
+// refusal mid-step stops the run before the next call, with a fixed reply (another call would
+// spend past the quota) and the step's work metered and kept.
+func TestAdvancedLoop_QuotaDenialMidStepStopsBeforeNextCall(t *testing.T) {
+	adapter := provider.NewMockAdapter(provider.MockAdapterConfig{Mode: provider.MockModeScripted, Script: []provider.MockScriptStep{
+		{Text: "Planning.", ToolUses: []provider.ToolUse{planUse(t, "p", models.PlanItem{Content: "a", Status: models.PlanItemPending})}},
+		{Text: "never reached"},
+	}})
+	chatCtx := advancedTestChatCtx()
+	hooks := testAdvancedHooks(newAdvancedTranscript(nil, nil))
+	var pendingSeen [][]provider.CallUsage
+	hooks.quotaAllowed = func(_ context.Context, pending []provider.CallUsage) bool {
+		pendingSeen = append(pendingSeen, pending)
+		return false
+	}
+	var recorded []int
+	hooks.recordStep = func(_ context.Context, step int) { recorded = append(recorded, step) }
+	a := &Agent{logger: zap.NewNop()}
+
+	result, toolCalls, _, run, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, hooks)
+	require.NoError(t, err)
+	assert.Equal(t, advancedQuotaStopMessage, result.Text)
+	assert.NotZero(t, result.CreatedAt)
+	assert.Equal(t, models.AgentRunEndQuota, run.EndReason)
+	require.Len(t, pendingSeen, 1, "the first call is covered by the turn's own check")
+	assert.Len(t, pendingSeen[0], 1, "the check sees the unmetered call")
+	assert.Len(t, chatCtx.calls, 1, "the refused call was never made")
+	assert.Len(t, toolCalls, 1, "the step's tool call is kept")
+	assert.Equal(t, []int{1}, recorded, "the step's calls are metered")
+	assert.Equal(t, "Planning.", run.Steps[0].Notes[0].Text)
+	assert.Equal(t, models.PlanItemPending, run.Plan[0].Status, "the open plan is kept for the next turn")
+}
+
+// A refusal at the first call of a new step keeps the previous step's answer as the reply.
+func TestAdvancedLoop_QuotaDenialBetweenStepsKeepsLatestAnswer(t *testing.T) {
 	adapter := provider.NewMockAdapter(provider.MockAdapterConfig{Mode: provider.MockModeScripted, Script: []provider.MockScriptStep{
 		{ToolUses: []provider.ToolUse{planUse(t, "p", models.PlanItem{Content: "a", Status: models.PlanItemPending})}},
 		{Text: "partial answer"},
 		{Text: "never reached"},
 	}})
+	chatCtx := advancedTestChatCtx()
 	hooks := testAdvancedHooks(newAdvancedTranscript(nil, nil))
-	hooks.quotaAllowed = func(context.Context) bool { return false }
+	hooks.recordStep = func(context.Context, int) { chatCtx.takeUnrecordedCalls() }
+	// Refuse only once nothing is pending: the step was recorded and the next one is starting.
+	hooks.quotaAllowed = func(_ context.Context, pending []provider.CallUsage) bool { return len(pending) > 0 }
 	a := &Agent{logger: zap.NewNop()}
 
-	result, _, _, run, err := a.handleAdvancedLoop(context.Background(), advancedTestChatCtx(), adapter, hooks)
+	result, _, _, run, err := a.handleAdvancedLoop(context.Background(), chatCtx, adapter, hooks)
 	require.NoError(t, err)
 	assert.Equal(t, "partial answer", result.Text)
 	assert.Equal(t, models.AgentRunEndQuota, run.EndReason)
-	assert.Empty(t, adapter.Continuations())
+	assert.Len(t, chatCtx.calls, 2)
 }
 
 func TestAdvancedLoop_CompactsIntoFreshAdapter(t *testing.T) {
@@ -345,10 +382,10 @@ func TestAdvancedLoop_CancelledBetweenSteps(t *testing.T) {
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	hooks := testAdvancedHooks(newAdvancedTranscript(nil, nil))
-	hooks.quotaAllowed = func(context.Context) bool { cancel(); return true }
+	// Cancel as the first step is recorded: the loop's cancellation check before the next step
+	// then ends the run.
+	hooks.recordStep = func(context.Context, int) { cancel() }
 	a := &Agent{logger: zap.NewNop()}
-	// The quota hook runs after the cancellation check, so cancel there and expect the next
-	// step's call to fail on the cancelled context.
 	var final *models.AgentRunDraft
 	hooks.saveDraft = func(d *models.AgentRunDraft) { final = d }
 	_, _, _, run, err := a.handleAdvancedLoop(ctx, advancedTestChatCtx(), adapter, hooks)
@@ -504,4 +541,42 @@ func TestSubagentCalls(t *testing.T) {
 func TestSumWebSearches(t *testing.T) {
 	assert.Equal(t, 0, sumWebSearches([]*provider.MockAdapter{provider.NewMockAdapter(provider.MockAdapterConfig{}), provider.NewMockAdapter(provider.MockAdapterConfig{})}))
 	assert.Equal(t, 0, sumWebSearches[*provider.MockAdapter](nil))
+}
+
+// pendingMeter captures what each Check saw on the context.
+type pendingMeter struct {
+	metering.NoopMeter
+	pending []metering.Usage
+	allow   bool
+}
+
+func (m *pendingMeter) Check(ctx context.Context, _ uuid.UUID, _, _ string) metering.Decision {
+	if u, ok := metering.PendingUsageFromContext(ctx); ok {
+		m.pending = append(m.pending, u)
+	}
+	return metering.Decision{Allowed: m.allow}
+}
+
+// The mid-run check hands the meter the unmetered calls, priced as they will be recorded.
+func TestAdvancedQuotaAllowed_PassesPendingUsage(t *testing.T) {
+	m := &pendingMeter{allow: true}
+	a := &Agent{logger: zap.NewNop(), meter: m}
+	chatCtx := advancedTestChatCtx()
+	chatCtx.model = "gpt-5.1"
+	chatCtx.turnID = "turn-1"
+	chatCtx.turnSettings.ReasoningEffortSource = models.SettingSourceThread
+	chatCtx.reasoningEffort = models.ReasoningEffortHigh
+	pending := []provider.CallUsage{{InputTokens: 9_000, CachedInputTokens: 8_000, OutputTokens: 300}}
+
+	require.True(t, a.advancedQuotaAllowed(context.Background(), uuid.New(), chatCtx, pending))
+	require.Len(t, m.pending, 1)
+	got := m.pending[0]
+	assert.Equal(t, "advanced", got.AgentLoop)
+	assert.Equal(t, "gpt-5.1", got.Model)
+	assert.Equal(t, "turn-1", got.TurnID)
+	assert.Equal(t, "high", got.ReasoningEffort)
+	assert.Equal(t, pending, got.Calls)
+
+	m.allow = false
+	assert.False(t, a.advancedQuotaAllowed(context.Background(), uuid.New(), chatCtx, pending))
 }

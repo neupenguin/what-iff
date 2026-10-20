@@ -35,8 +35,9 @@ type toolRoundsOptions struct {
 	// skipPostAttachments leaves appendPostToolLoopGeneratedAttachments to the caller, which
 	// runs the rounds many times but finishes the turn once.
 	skipPostAttachments bool
-	// beforeCall and afterCall run around every model call.
-	beforeCall func()
+	// beforeCall and afterCall run around every model call. An error from beforeCall stops the
+	// rounds before that call: runToolRounds returns it with the tool calls already made.
+	beforeCall func() error
 	afterCall  func()
 }
 
@@ -68,7 +69,9 @@ func (a *Agent) runToolRounds(
 		}
 		logInferenceCall(ctx, a.logger, chatCtx, adapter, round)
 		if opts.beforeCall != nil {
-			opts.beforeCall()
+			if err := opts.beforeCall(); err != nil {
+				return nil, allToolCalls, allGeneratedAttachments, false, err
+			}
 		}
 		result, toolUses, err := adapter.Call(ctx)
 		if opts.afterCall != nil {
@@ -101,7 +104,9 @@ func (a *Agent) runToolRounds(
 			}
 			// Max rounds reached — strip tools and force a prose response.
 			if opts.beforeCall != nil {
-				opts.beforeCall()
+				if err := opts.beforeCall(); err != nil {
+					return nil, allToolCalls, allGeneratedAttachments, false, err
+				}
 			}
 			final, err := adapter.ForceFinalResponse(ctx)
 			if opts.afterCall != nil {
