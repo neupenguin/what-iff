@@ -337,7 +337,7 @@ func (a *Agent) handleEphemeralPrompt(
 
 	// Update chat metadata for thread continuity + sorting.
 	chatCtx.chat.ResponseID = &resp.ID
-	lastMessageTime := time.Unix(resp.CreatedAt, 0)
+	lastMessageTime := resp.CreatedTime()
 	chatCtx.chat.LastMessageTime = &lastMessageTime
 
 	// Persist only thread continuity: chatCtx.chat carries this job's model/personality overrides
