@@ -49,7 +49,8 @@ export class ModalComponent implements OnDestroy {
   private readonly ax = inject(AxLevelService);
 
   /** The ax level this modal honours: the app-wide level when opted in, otherwise 0. */
-  readonly axLevel = computed(() => (this.axDegrade() ? this.ax.level() : 0));
+  // Level 4 (patterns) keeps full dialog semantics, so the modal treats it like level 0.
+  readonly axLevel = computed(() => (this.axDegrade() && this.ax.level() !== 4 ? this.ax.level() : 0));
   /** Accessible name for the close button (dropped from ax level 1). */
   readonly closeLabel = computed(() => (this.axLevel() >= 1 ? null : 'Close'));
   /** Dialog role and its aria-modal/labelling (dropped from ax level 2). */

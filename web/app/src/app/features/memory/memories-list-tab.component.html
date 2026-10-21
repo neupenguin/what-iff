@@ -184,7 +184,7 @@
             <button
               type="button"
               [class]="action.danger ? 'memories-list__bulk-danger' : ''"
-              [attr.aria-label]="ax.hints() ? action.label + ' ' + selectedCount() + ' selected memories' : null"
+              [attr.aria-description]="ax.hints() ? action.label + ' the ' + selectedCount() + ' selected memories' : null"
               [attr.data-testid]="ax.hints() ? 'memory-bulk-' + action.key : null"
               [uiTooltip]="action.hint"
               [disabled]="action.disabled"
@@ -298,7 +298,7 @@
             <button
               type="button"
               [class]="target.thread ? 'memories-list__move-thread' : ''"
-              [attr.aria-label]="ax.hints() ? 'Move to ' + (target.thread ? 'thread ' : '') + target.label : null"
+              [attr.aria-description]="ax.hints() ? 'Move the memory to ' + (target.thread ? 'the thread ' : '') + target.label : null"
               [attr.data-testid]="ax.hints() ? 'memory-move-' + target.key : null"
               [disabled]="mutating()"
               (click)="onMoveTarget(target.key)"
