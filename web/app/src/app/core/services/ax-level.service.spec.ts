@@ -25,7 +25,8 @@ describe('AxLevelService', () => {
   it('parses only 0-3', () => {
     expect(parseAxLevel('2')).toBe(2);
     expect(parseAxLevel('0')).toBe(0);
-    expect(parseAxLevel('4')).toBeNull();
+    expect(parseAxLevel('4')).toBe(4);
+    expect(parseAxLevel('5')).toBeNull();
     expect(parseAxLevel('x')).toBeNull();
     expect(parseAxLevel(null)).toBeNull();
   });

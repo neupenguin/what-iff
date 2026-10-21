@@ -2,7 +2,13 @@
   Agent-experience demo: `ax` (AxLevelService) gates names (level 1), roles and native controls
   (level 2) and state plus stable class names (level 3). Every branch renders the same pixels.
 -->
-<article [class]="cardClasses()" [attr.role]="ax.role('listitem')" (click)="onCardActivate($event)">
+<article
+  [class]="cardClasses()"
+  [attr.role]="ax.role('listitem')"
+  [attr.aria-label]="ax.hints() ? cardLabel() : null"
+  [attr.data-testid]="ax.hints() ? 'memory-card-' + memory().id : null"
+  (click)="onCardActivate($event)"
+>
   @if (!readOnly()) {
     @if (ax.roles()) {
       <label class="memory-card__check" (click)="$event.stopPropagation()">
@@ -11,7 +17,8 @@
           [class]="ax.cls('memory-card__checkbox')"
           [checked]="selected()"
           (change)="onToggleSelect($event)"
-          [attr.aria-label]="ax.name('Select memory')"
+          [attr.aria-label]="ax.hints() ? 'Select memory: ' + snippet() : ax.name('Select memory')"
+          [attr.data-testid]="ax.hints() ? 'memory-select' : null"
         />
       </label>
     } @else {
@@ -58,7 +65,10 @@
               <button
                 type="button"
                 [class]="ax.cls('memory-card__menu-btn')"
-                [attr.aria-label]="ax.name('More actions')"
+                [attr.aria-label]="ax.hints() ? 'More actions for: ' + snippet() : ax.name('More actions')"
+                [attr.aria-haspopup]="ax.hints() ? 'menu' : null"
+                [attr.aria-controls]="ax.hints() && menuOpen() ? 'memory-menu-' + memory().id : null"
+                [attr.data-testid]="ax.hints() ? 'memory-menu-button' : null"
                 uiTooltip="Edit, move, star, archive or delete"
                 [attr.aria-expanded]="ax.state(menuOpen())"
                 (click)="toggleMenu($event)"
@@ -71,12 +81,18 @@
               </div>
             }
             @if (menuOpen()) {
-              <div [class]="ax.cls('memory-card__menu')" [attr.role]="ax.role('menu')">
+              <div
+                [class]="ax.cls('memory-card__menu')"
+                [attr.role]="ax.role('menu')"
+                [attr.id]="ax.hints() ? 'memory-menu-' + memory().id : null"
+                [attr.aria-label]="ax.hints() ? 'Actions for: ' + snippet() : null"
+              >
                 @for (item of menuItems(); track item.key) {
                   @if (ax.roles()) {
                     <button
                       type="button"
                       role="menuitem"
+                      [attr.data-testid]="ax.hints() ? 'memory-menu-' + item.key : null"
                       [class]="item.danger ? ax.cls('memory-card__menu-danger') : ''"
                       [uiTooltip]="item.hint ?? ''"
                       placement="left"
@@ -115,7 +131,13 @@
             </select>
           </label>
         }
-        <textarea rows="3" class="memory-card__textarea" [ngModel]="draft()" (ngModelChange)="draft.set($event)"></textarea>
+        <textarea
+          rows="3"
+          class="memory-card__textarea"
+          [attr.aria-label]="ax.hints() ? 'Memory text' : null"
+          [ngModel]="draft()"
+          (ngModelChange)="draft.set($event)"
+        ></textarea>
         <div class="memory-card__editor-actions">
           <button type="button" class="memory-card__save" [disabled]="!canSave()" (click)="submitEdit($event)">Save</button>
           <button type="button" class="memory-card__cancel" (click)="cancelEdit($event)">Cancel</button>

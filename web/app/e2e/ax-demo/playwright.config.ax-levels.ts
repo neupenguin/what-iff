@@ -24,7 +24,7 @@ import { chromiumHostResolverUse, localWebServer } from '../playwright.config.ba
  * ax-level-reporter.ts. Inherits backend, timeouts and artifact retention from
  * the mock config; Chromium desktop only.
  */
-const LEVELS = [0, 1, 2, 3] as const;
+const LEVELS = [0, 1, 2, 3, 4] as const;
 const baseURL = process.env['E2E_BASE_URL'] ?? 'http://localhost:4200';
 
 function levelState(level: number) {
@@ -44,7 +44,7 @@ const projects: Project[] = LEVELS.flatMap(level => [
   {
     name: `axe-ax${level}`,
     testDir: '.',
-    testMatch: /memories-axe\.ax\.spec\.ts$/,
+    testMatch: /(memories-axe|pixels)\.ax\.spec\.ts$/,
     metadata: { axLevel: level, axKind: 'axe' },
     use: { ...devices['Desktop Chrome'], ...chromiumHostResolverUse, storageState: levelState(level) },
   },

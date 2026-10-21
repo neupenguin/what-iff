@@ -79,6 +79,16 @@ export class MemoryCardComponent {
   readonly canSave = computed(() => this.draft().trim().length > 0);
   readonly showPinControl = computed(() => isUserScopedMemoryLevel(this.memory().level));
   readonly association = computed(() => associationLabel(this.memory()));
+  /** Level 4 (patterns) hint: names repeated controls after the card they act on. */
+  readonly snippet = computed(() => {
+    const text = this.memory().content;
+    return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  });
+  readonly cardLabel = computed(() =>
+    [this.snippet(), this.association(), this.isArchivedView() ? 'archived' : 'active', this.memory().starred ? 'starred' : null]
+      .filter(Boolean)
+      .join(', '),
+  );
   /** Root classes; at ax level 3 the names carry a per-load suffix (styles match both spellings). */
   readonly cardClasses = computed(() => {
     const ax = this.ax;

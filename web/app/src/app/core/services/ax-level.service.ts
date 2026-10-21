@@ -6,6 +6,9 @@ import { Injectable, computed, signal } from '@angular/core';
  * - 0: the app as shipped.
  * - 1: no names — aria-labels and label/control associations are dropped.
  * - 2: no roles — interactive elements become plain clickable divs, landmark/list/dialog roles go.
+ * - 4: patterns — the shipped semantics plus agent hints: contextual accessible names on
+ *      repeated controls (which card a menu, checkbox or textarea belongs to), menu-button wiring and
+ *      stable data-testids. Tier `patterns` in the evals repo; level 0 is tier `wcag`.
  * - 3: no state — aria-selected/aria-expanded and live-region roles go, and key class names get a
  *      per-load random suffix so selector scripts written against one load break on the next.
  *
@@ -18,7 +21,7 @@ import { Injectable, computed, signal } from '@angular/core';
  * under the same key is used: that is how a Playwright `storageState` pins one level for a whole
  * functional-suite run (see e2e/ax-demo/playwright.config.ax-levels.ts) without touching the specs.
  */
-export type AxLevel = 0 | 1 | 2 | 3;
+export type AxLevel = 0 | 1 | 2 | 3 | 4;
 
 export const AX_LEVEL_QUERY_PARAM = 'ax';
 export const AX_LEVEL_STORAGE_KEY = 'whatiff.ax-level';
@@ -33,11 +36,13 @@ export class AxLevelService {
   readonly suffix = randomSuffix();
 
   /** True while accessible names are exposed (level 0). */
-  readonly names = computed(() => this.level() < 1);
+  readonly names = computed(() => this.level() < 1 || this.level() === 4);
   /** True while semantic roles and native interactive elements are used (levels 0–1). */
-  readonly roles = computed(() => this.level() < 2);
+  readonly roles = computed(() => this.level() < 2 || this.level() === 4);
   /** True while state attributes and live regions are exposed (levels 0–2). */
-  readonly states = computed(() => this.level() < 3);
+  readonly states = computed(() => this.level() < 3 || this.level() === 4);
+  /** True at level 4 only: agent hints on top of full semantics. */
+  readonly hints = computed(() => this.level() === 4);
 
   /** `label` while names are exposed, otherwise null (removes the attribute). */
   name(label: string): string | null {
@@ -59,7 +64,7 @@ export class AxLevelService {
    * stylesheets match both spellings with the `ax-class` SCSS function, so the visuals do not change.
    */
   cls(base: string): string {
-    return this.level() >= 3 ? `${base}-ax${this.suffix}` : base;
+    return this.level() === 3 ? `${base}-ax${this.suffix}` : base;
   }
 
   /** For unit tests and the browser console; not persisted. */
@@ -71,7 +76,7 @@ export class AxLevelService {
 export function parseAxLevel(raw: string | null | undefined): AxLevel | null {
   if (raw === null || raw === undefined) return null;
   const value = Number.parseInt(raw, 10);
-  if (value === 0 || value === 1 || value === 2 || value === 3) return value;
+  if (value === 0 || value === 1 || value === 2 || value === 3 || value === 4) return value;
   return null;
 }
 

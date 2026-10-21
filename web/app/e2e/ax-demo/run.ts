@@ -82,7 +82,7 @@ function parseOptions(): Options {
     },
   });
   const levels = values.levels.split(',').map(level => Number.parseInt(level, 10));
-  if (levels.some(level => !(level >= 0 && level <= 3))) throw new Error(`--levels must be 0-3, got ${values.levels}`);
+  if (levels.some(level => !(level >= 0 && level <= 4))) throw new Error(`--levels must be 0-4, got ${values.levels}`);
   const drivers = values.drivers.split(',') as DriverName[];
   for (const driver of drivers) {
     if (!DRIVERS.includes(driver)) throw new Error(`unknown driver ${driver} (expected ${DRIVERS.join(', ')})`);
