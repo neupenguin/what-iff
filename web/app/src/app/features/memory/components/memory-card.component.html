@@ -76,7 +76,11 @@
                 ⋮
               </button>
             } @else {
-              <div [class]="'ax-btn ' + ax.cls('memory-card__menu-btn')" uiTooltip="Edit, move, star, archive or delete" (click)="toggleMenu($event)">
+              <div
+                [class]="'ax-btn ' + ax.cls('memory-card__menu-btn')"
+                uiTooltip="Edit, move, star, archive or delete"
+                (click)="toggleMenu($event)"
+              >
                 ⋮
               </div>
             }
@@ -153,7 +157,9 @@
       } @else {
         <span [uiTooltip]="confidenceHint">{{ memory().confidencePercent }}% · {{ memory().confidenceLabel }} confidence</span>
         @if (memory().verifiedCount; as count) {
-          <span class="memory-card__verified" [attr.aria-label]="ax.name('Verified ' + count + ' times')" [uiTooltip]="verifiedHint">{{ count }}×</span>
+          <span class="memory-card__verified" [attr.aria-label]="ax.name('Verified ' + count + ' times')" [uiTooltip]="verifiedHint"
+            >{{ count }}×</span
+          >
         }
       }
     </div>
@@ -162,7 +168,12 @@
 
 @if (menuOpen() && !readOnly()) {
   @if (ax.roles()) {
-    <button type="button" [class]="ax.cls('memory-card__backdrop')" [attr.aria-label]="ax.name('Close menu')" (click)="closeMenu()"></button>
+    <button
+      type="button"
+      [class]="ax.cls('memory-card__backdrop')"
+      [attr.aria-label]="ax.name('Close menu')"
+      (click)="closeMenu()"
+    ></button>
   } @else {
     <div [class]="ax.cls('memory-card__backdrop')" (click)="closeMenu()"></div>
   }

@@ -26,7 +26,13 @@
         />
       </app-ax-label>
       @if (ax.roles()) {
-        <button type="button" class="memories-list__icon-btn" [attr.aria-label]="ax.name('Refresh memories')" uiTooltip="Reload the list" (click)="refresh()">
+        <button
+          type="button"
+          class="memories-list__icon-btn"
+          [attr.aria-label]="ax.name('Refresh memories')"
+          uiTooltip="Reload the list"
+          (click)="refresh()"
+        >
           ↻
         </button>
       } @else {

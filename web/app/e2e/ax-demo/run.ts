@@ -195,7 +195,10 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
 
   let result: ClaudeRun;
   if (opts.dryRun) {
-    writeFileSync(join(runDir, 'command.json'), JSON.stringify({ cmd: 'claude', args: ['-p', '<prompt.txt>', ...args], env: setup.env }, null, 2));
+    writeFileSync(
+      join(runDir, 'command.json'),
+      JSON.stringify({ cmd: 'claude', args: ['-p', '<prompt.txt>', ...args], env: setup.env }, null, 2),
+    );
     result = { transcript: '', exitCode: null, timedOut: false, wallMs: 0 };
   } else {
     try {

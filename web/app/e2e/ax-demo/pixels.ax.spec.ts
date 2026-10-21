@@ -14,7 +14,11 @@ async function shots(page: Page, level: number, marker: string): Promise<Buffer[
   await expect(page.getByText(`${marker}-0`, { exact: true })).toBeVisible();
   await page.mouse.move(0, 0);
   const out = [await page.screenshot({ animations: 'disabled' })];
-  await page.locator('app-memory-card').filter({ hasText: `${marker}-0` }).getByText('⋮', { exact: true }).click();
+  await page
+    .locator('app-memory-card')
+    .filter({ hasText: `${marker}-0` })
+    .getByText('⋮', { exact: true })
+    .click();
   out.push(await page.screenshot({ animations: 'disabled' }));
   await page.getByText('Move', { exact: true }).click();
   await expect(page.getByText('Move to', { exact: true })).toBeVisible();
