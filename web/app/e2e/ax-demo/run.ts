@@ -10,7 +10,8 @@
  * `claude` CLI that is signed in. See e2e/ax-demo/README.md.
  */
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -176,7 +177,19 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
 
   // --no-chrome and --disable-slash-commands keep browser integrations and skills from the
   // operator's own setup out of the run, so the driver's tools are the only way to the page.
-  const args = [...setup.args, '--no-chrome', '--disable-slash-commands', '--permission-mode', 'dontAsk', '--no-session-persistence'];
+  // --setting-sources '' loads no user/project/local settings, so the operator's hooks,
+  // plugins and CLAUDE.md stay out too; the process also runs in an empty temp dir, outside
+  // this repo, so no project CLAUDE.md or AGENTS.md is discovered.
+  const args = [
+    ...setup.args,
+    '--no-chrome',
+    '--disable-slash-commands',
+    '--setting-sources',
+    '',
+    '--permission-mode',
+    'dontAsk',
+    '--no-session-persistence',
+  ];
   if (opts.model) args.push('--model', opts.model);
   if (opts.maxBudgetUsd) args.push('--max-budget-usd', opts.maxBudgetUsd);
 
@@ -186,7 +199,7 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
     result = { transcript: '', exitCode: null, timedOut: false, wallMs: 0 };
   } else {
     try {
-      result = await runClaude(prompt, args, setup.env, runDir, opts.timeoutMs);
+      result = await runClaude(prompt, args, setup.env, mkdtempSync(join(tmpdir(), 'ax-run-')), opts.timeoutMs);
     } finally {
       await setup.cleanup?.();
     }
@@ -195,6 +208,11 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
   writeFileSync(transcriptPath, result.transcript);
 
   const metrics: RunMetrics = parseStreamJson(result.transcript);
+  // An error before the agent did anything (expired login, API outage) is not a task failure;
+  // stop the matrix instead of recording it as one.
+  if (!opts.dryRun && metrics.isError && metrics.toolCalls === 0 && metrics.outputTokens === 0) {
+    throw new Error(`claude failed before acting (${transcriptPath}): ${metrics.finalText}`);
+  }
   const graded = await grade(task, seeded);
   const claimed = claimedDone(metrics.finalText);
   writeFileSync(join(runDir, 'grade.json'), JSON.stringify({ ...graded, claimed, metrics }, null, 2));
