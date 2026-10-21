@@ -7,16 +7,28 @@ measures how a Claude Code agent driving the browser through Playwright copes,
 next to the signals a team would normally watch (axe violations and the
 existing role/label-based Playwright specs).
 
-One build serves every level. Pick the level per page load with `?ax=N`.
+One build serves every level. Pick the level per page load with `?ax=N` (0–4).
 
 ## Levels
 
-| Level | Name     | What is removed (features/memory and the ui-modal it opens)                                                                                                                                                                                                                                               |
-| ----- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | baseline | Nothing. The app as shipped.                                                                                                                                                                                                                                                                              |
-| 1     | no names | `aria-label`s (search, filters, "More actions", "Select memory", "Close", "Starred", …). The filter `<label>` wrappers become `<div>`s, so the visible text stays but is no longer associated with its control.                                                                                          |
+| Level | Name     | What is removed (features/memory and the ui-modal it opens)                                                                                                                                                                                                                                                                                                                                                                   |
+| ----- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | baseline | Nothing. The app as shipped.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1     | no names | `aria-label`s (search, filters, "More actions", "Select memory", "Close", "Starred", …). The filter `<label>` wrappers become `<div>`s, so the visible text stays but is no longer associated with its control.                                                                                                                                                                                                               |
 | 2     | no roles | Level 1, plus: the card's ⋮ button and menu items, the status tabs, the bulk-bar actions, the Move menu entries, and the Move/Delete/Cancel dialog footers become `<div (click)>` with no role or tabindex. Checkboxes become styled divs that toggle a class. `ui-modal` drops `role=dialog`/`aria-modal`/`aria-labelledby`, and its close button becomes a div. Cards lose `role=listitem`, and the list loses `role=list`. |
-| 3     | no state | Level 2, plus: `aria-selected`, `aria-expanded`, `role=status` and `role=alert` go, so selection state lives only in CSS classes. Key class names (`memory-card`, `memory-card__menu-btn`, `memory-card__menu`, `memories-shell__tab--active`, …) get a random suffix per page load, which breaks CSS-selector scripts between loads.                    |
+| 3     | no state | Level 2, plus: `aria-selected`, `aria-expanded`, `role=status` and `role=alert` go, so selection state lives only in CSS classes. Key class names (`memory-card`, `memory-card__menu-btn`, `memory-card__menu`, `memories-shell__tab--active`, …) get a random suffix per page load, which breaks CSS-selector scripts between loads.                                                                                         |
+
+| 4 | patterns | Nothing removed. Level 0 plus agent hints: each card's checkbox, ⋮ button and menu are named after the memory they act on; the card's name carries its thread and archived/starred state; the menu button gets `aria-haspopup`/`aria-controls`; the editor textarea is named; bulk actions and Move targets get `aria-description`s; task controls get stable `data-testid`s. |
+
+### Tiers in the evals repo
+
+The [agent-experience-mcpcon26](https://github.com/unlikelyzero/agent-experience-mcpcon26) evals compare three tiers. On what-iff they map to levels of this switch:
+
+| Tier               | Level   | Why                                                                                                                                     |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Div soup           | `?ax=3` | No names, no roles, no state, suffixed classes.                                                                                         |
+| WCAG / Section 508 | `?ax=0` | The app as shipped already has zero WCAG-tagged axe violations on these screens (only visual `color-contrast` and best-practice rules). |
+| 100% patterns      | `?ax=4` | Shipped semantics plus agent hints.                                                                                                     |
 
 Keyboard access degrades along with the markup at level 2+: the divs are not
 focusable. That is intended, because it is what this kind of markup does in the wild.
@@ -50,13 +62,13 @@ seeded memory back through the API. A run **passes only if the target changed
 as asked AND every other memory is unchanged, field by field** (content,
 level, thread, pinned personality, archived, starred).
 
-| Task | Prompt (abridged)                                                  | Target                                         | Distractors                                                                     |
-| ---- | ------------------------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------- |
-| T1   | Star the sister memory from the "Lisbon trip" thread               | "My sister's name is Priya and she lives in Lisbon" (Lisbon trip) | "My sister's name is Priya" (Home admin, **archived**)                          |
-| T2   | Change the flight at 9:40 to 10:15, keep the rest of the text      | "Flight to Lisbon is at 9:40 on Friday"        | "Flight to Chicago … at 7:15 on Monday" (Work notes)                            |
-| T3   | Move the seafood-restaurant memory into the "Lisbon trip" thread   | "Book dinner at Cervejaria Ramiro …" (Home admin) | other Lisbon-trip memories                                                      |
-| T4   | Delete every **archived** old-apartment memory, keep the rest      | 3 archived "old apartment" memories            | "Still owed a deposit refund from the old apartment" (**active**)               |
-| T5   | Archive the gym memory and say when done                           | "Gym membership renews on the 1st …"           | none, but `claim_correct` records whether the agent's "done" matched reality      |
+| Task | Prompt (abridged)                                                | Target                                                            | Distractors                                                                  |
+| ---- | ---------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| T1   | Star the sister memory from the "Lisbon trip" thread             | "My sister's name is Priya and she lives in Lisbon" (Lisbon trip) | "My sister's name is Priya" (Home admin, **archived**)                       |
+| T2   | Change the flight at 9:40 to 10:15, keep the rest of the text    | "Flight to Lisbon is at 9:40 on Friday"                           | "Flight to Chicago … at 7:15 on Monday" (Work notes)                         |
+| T3   | Move the seafood-restaurant memory into the "Lisbon trip" thread | "Book dinner at Cervejaria Ramiro …" (Home admin)                 | other Lisbon-trip memories                                                   |
+| T4   | Delete every **archived** old-apartment memory, keep the rest    | 3 archived "old apartment" memories                               | "Still owed a deposit refund from the old apartment" (**active**)            |
+| T5   | Archive the gym memory and say when done                         | "Gym membership renews on the 1st …"                              | none, but `claim_correct` records whether the agent's "done" matched reality |
 
 The agent is told to end with a line `TASK_COMPLETE` when it believes it is
 done. `claimed_done` records that, and `claim_correct` records whether the claim
@@ -65,10 +77,10 @@ failure mode in production, so the summary counts it separately.
 
 ## Drivers
 
-| Driver           | Package (pinned)        | How the agent acts                                                                                           |
-| ---------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Driver           | Package (pinned)         | How the agent acts                                                                                             |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `playwright-mcp` | `@playwright/mcp@0.0.83` | The MCP server is the only tool source: `--strict-mcp-config`, built-in tools disabled, headless and isolated. |
-| `playwright-cli` | `@playwright/cli@0.1.22` | Bash, restricted to the `playwright-cli` command. Same engine and snapshots, delivered as shell output.      |
+| `playwright-cli` | `@playwright/cli@0.1.22` | Bash, restricted to the `playwright-cli` command. Same engine and snapshots, delivered as shell output.        |
 
 Both drivers see the page mainly through Playwright's accessibility-tree
 snapshot. That snapshot is exactly what levels 1–3 strip, which is the point of the demo.
@@ -126,16 +138,16 @@ build, and retries are off so a failure cannot turn into a pass. These projects 
 
 Per run (one CSV row in `results/results.csv`):
 
-| Column                                                         | Meaning                                                                                                                  |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `pass`                                                         | Grader verdict: target changed as asked and nothing else changed.                                                        |
-| `claimed_done` / `claim_correct`                               | Final message had the `TASK_COMPLETE` line / that claim matched `pass`.                                                  |
-| `tool_calls` / `browser_tool_calls`                            | `tool_use` blocks in the transcript / those that drove the browser (MCP `browser_*`, or a `playwright-cli` Bash call).   |
-| `screenshots`                                                  | `browser_take_screenshot` calls, or `playwright-cli … screenshot`. Agents fall back to these when the tree goes quiet.   |
-| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens` | Session totals from the final `result` event. Most input arrives as cache tokens, so read all four.         |
-| `cost_usd`                                                     | `total_cost_usd` from the `result` event.                                                                                |
-| `wall_ms`, `turns`, `exit_code`, `timed_out`                   | Wall-clock time of the `claude` process, model turns, process exit, whether the per-run timeout killed it.               |
-| `fail_reasons`                                                 | The grader's reasons, e.g. `distractor "My sister's name is Priya": starred changed (false -> true)`.                    |
+| Column                                                                        | Meaning                                                                                                                |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `pass`                                                                        | Grader verdict: target changed as asked and nothing else changed.                                                      |
+| `claimed_done` / `claim_correct`                                              | Final message had the `TASK_COMPLETE` line / that claim matched `pass`.                                                |
+| `tool_calls` / `browser_tool_calls`                                           | `tool_use` blocks in the transcript / those that drove the browser (MCP `browser_*`, or a `playwright-cli` Bash call). |
+| `screenshots`                                                                 | `browser_take_screenshot` calls, or `playwright-cli … screenshot`. Agents fall back to these when the tree goes quiet. |
+| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens` | Session totals from the final `result` event. Most input arrives as cache tokens, so read all four.                    |
+| `cost_usd`                                                                    | `total_cost_usd` from the `result` event.                                                                              |
+| `wall_ms`, `turns`, `exit_code`, `timed_out`                                  | Wall-clock time of the `claude` process, model turns, process exit, whether the per-run timeout killed it.             |
+| `fail_reasons`                                                                | The grader's reasons, e.g. `distractor "My sister's name is Priya": starred changed (false -> true)`.                  |
 
 Per level (from `summarize.ts`, also per level × driver and per level × task):
 
@@ -152,14 +164,14 @@ Per level (from `summarize.ts`, also per level × driver and per level × task):
 
 ## Files
 
-| File                                        | Role                                                                     |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `seed.ts`                                   | Fresh account + personalities, threads, memories; prints JSON.          |
-| `tasks.ts`                                  | T1–T5 prompts, graders, prompt builder, done-claim check.               |
-| `drivers.ts`                                | MCP / CLI driver setup (claude args, env, prompt notes, cleanup).        |
-| `stream-metrics.ts`                         | Parses `claude -p --output-format stream-json` into run metrics.         |
-| `run.ts`                                    | The matrix runner; appends to `results/results.csv`.                     |
-| `summarize.ts`                              | Per-level aggregates as Markdown tables (and `--json`).                  |
-| `memories-axe.ax.spec.ts`                   | axe scan of `/memories` (populated, Move menu, Move-to-thread dialog).   |
-| `playwright.config.ax-levels.ts`            | `functional-ax0..3` and `axe-ax0..3` projects.                           |
-| `ax-level-reporter.ts`                      | Writes `functional-by-level.json` and `axe-by-level.json`.               |
+| File                             | Role                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| `seed.ts`                        | Fresh account + personalities, threads, memories; prints JSON.         |
+| `tasks.ts`                       | T1–T5 prompts, graders, prompt builder, done-claim check.              |
+| `drivers.ts`                     | MCP / CLI driver setup (claude args, env, prompt notes, cleanup).      |
+| `stream-metrics.ts`              | Parses `claude -p --output-format stream-json` into run metrics.       |
+| `run.ts`                         | The matrix runner; appends to `results/results.csv`.                   |
+| `summarize.ts`                   | Per-level aggregates as Markdown tables (and `--json`).                |
+| `memories-axe.ax.spec.ts`        | axe scan of `/memories` (populated, Move menu, Move-to-thread dialog). |
+| `playwright.config.ax-levels.ts` | `functional-ax0..3` and `axe-ax0..3` projects.                         |
+| `ax-level-reporter.ts`           | Writes `functional-by-level.json` and `axe-by-level.json`.             |
