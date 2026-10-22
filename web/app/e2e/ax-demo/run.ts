@@ -111,6 +111,8 @@ export function startUrl(appUrl: string, level: number): string {
 
 interface ClaudeRun {
   transcript: string;
+  /** ms since spawn at which each transcript line arrived, for syncing a video to the steps. */
+  lineTimes: number[];
   exitCode: number | null;
   timedOut: boolean;
   wallMs: number;
@@ -126,7 +128,12 @@ function runClaude(prompt: string, args: string[], env: Record<string, string>, 
     });
     let transcript = '';
     let timedOut = false;
-    child.stdout.on('data', (chunk: Buffer) => (transcript += chunk.toString()));
+    const lineTimes: number[] = [];
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      for (let i = 0; i < (text.match(/\n/g) ?? []).length; i++) lineTimes.push(Date.now() - started);
+      transcript += text;
+    });
     child.stderr.on('data', (chunk: Buffer) => process.stderr.write(chunk));
     const timer = setTimeout(() => {
       timedOut = true;
@@ -134,12 +141,12 @@ function runClaude(prompt: string, args: string[], env: Record<string, string>, 
     }, timeoutMs);
     child.on('close', code => {
       clearTimeout(timer);
-      resolvePromise({ transcript, exitCode: code, timedOut, wallMs: Date.now() - started });
+      resolvePromise({ transcript, lineTimes, exitCode: code, timedOut, wallMs: Date.now() - started });
     });
     child.on('error', err => {
       clearTimeout(timer);
       transcript += `\n${JSON.stringify({ type: 'runner_error', message: String(err) })}`;
-      resolvePromise({ transcript, exitCode: null, timedOut, wallMs: Date.now() - started });
+      resolvePromise({ transcript, lineTimes, exitCode: null, timedOut, wallMs: Date.now() - started });
     });
   });
 }
@@ -199,7 +206,7 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
       join(runDir, 'command.json'),
       JSON.stringify({ cmd: 'claude', args: ['-p', '<prompt.txt>', ...args], env: setup.env }, null, 2),
     );
-    result = { transcript: '', exitCode: null, timedOut: false, wallMs: 0 };
+    result = { transcript: '', lineTimes: [], exitCode: null, timedOut: false, wallMs: 0 };
   } else {
     try {
       result = await runClaude(prompt, args, setup.env, mkdtempSync(join(tmpdir(), 'ax-run-')), opts.timeoutMs);
@@ -209,6 +216,7 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
   }
   const transcriptPath = join(runDir, 'transcript.jsonl');
   writeFileSync(transcriptPath, result.transcript);
+  writeFileSync(join(runDir, 'line-times.json'), JSON.stringify(result.lineTimes));
 
   const metrics: RunMetrics = parseStreamJson(result.transcript);
   // An error before the agent did anything (expired login, API outage) is not a task failure;

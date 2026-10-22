@@ -64,6 +64,12 @@ function mcpDriver(ctx: DriverContext): DriverSetup {
   ];
   if (ctx.browserExecutable) serverArgs.push(`--executable-path=${ctx.browserExecutable}`);
   if (ctx.noSandbox) serverArgs.push('--no-sandbox');
+  // AX_DEMO_VIDEO=1 records the browser to mcp-output/ through the MCP server's saveVideo config.
+  if (process.env['AX_DEMO_VIDEO']) {
+    const mcpConfig = join(ctx.runDir, 'playwright-mcp.json');
+    writeFileSync(mcpConfig, JSON.stringify({ browser: { contextOptions: { recordVideo: { dir: join(ctx.runDir, 'video'), size: ctx.viewport } } } }));
+    serverArgs.push(`--config=${mcpConfig}`);
+  }
   const configPath = join(ctx.runDir, 'mcp.json');
   writeFileSync(configPath, JSON.stringify({ mcpServers: { playwright: { command: 'npx', args: serverArgs } } }, null, 2));
   return {
