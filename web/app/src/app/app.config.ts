@@ -5,6 +5,7 @@ import { MARKED_EXTENSIONS, SANITIZE, provideMarkdown } from 'ngx-markdown';
 
 import { routes } from './app.routes';
 import { AxLevelService } from './core/services/ax-level.service';
+import { WebMcpService } from './core/services/webmcp.service';
 import { latexMathExtension } from './core/utils/latex-math.helpers';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { extraHttpInterceptors } from './extensions/http-interceptors';
@@ -35,6 +36,8 @@ export const appConfig: ApplicationConfig = {
     // (the auth guard's redirect to /auth/login drops it). See AxLevelService.
     provideAppInitializer(() => {
       inject(AxLevelService);
+      // AX evals: register WebMCP tools when the URL carries ?webmcp=1 or ?webmcp=soup. See WebMcpService.
+      inject(WebMcpService);
     }),
     {
       provide: APP_INITIALIZER,
