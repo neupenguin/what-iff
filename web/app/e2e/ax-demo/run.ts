@@ -67,7 +67,7 @@ function parseOptions(): Options {
   const { values } = parseArgs({
     options: {
       levels: { type: 'string', default: '0,1,2,3' },
-      drivers: { type: 'string', default: DRIVERS.join(',') },
+      drivers: { type: 'string', default: 'playwright-mcp,playwright-cli' },
       tasks: { type: 'string', default: TASKS.map(task => task.id).join(',') },
       runs: { type: 'string', default: '3' },
       'app-url': { type: 'string', default: process.env['E2E_BASE_URL'] ?? 'http://localhost:4200' },
@@ -178,6 +178,7 @@ async function runOne(opts: Options, level: number, driver: DriverName, task: Ta
     browserExecutable: opts.browserExecutable,
     noSandbox: opts.noSandbox,
     viewport: { width: 1280, height: 900 },
+    startUrl: startUrl(opts.appUrl, level),
   });
   const prompt = buildPrompt(task, startUrl(opts.appUrl, level), seeded) + setup.promptSuffix;
   writeFileSync(join(runDir, 'prompt.txt'), prompt);

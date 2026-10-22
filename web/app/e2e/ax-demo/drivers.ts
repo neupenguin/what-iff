@@ -17,8 +17,8 @@ import { join } from 'node:path';
 export const PLAYWRIGHT_MCP_PACKAGE = '@playwright/mcp@0.0.83';
 export const PLAYWRIGHT_CLI_PACKAGE = '@playwright/cli@0.1.22';
 
-export type DriverName = 'playwright-mcp' | 'playwright-cli';
-export const DRIVERS: DriverName[] = ['playwright-mcp', 'playwright-cli'];
+export type DriverName = 'playwright-mcp' | 'playwright-cli' | 'webmcp' | 'webmcp-soup';
+export const DRIVERS: DriverName[] = ['playwright-mcp', 'playwright-cli', 'webmcp', 'webmcp-soup'];
 
 export interface DriverSetup {
   /** Extra arguments for `claude`. */
@@ -41,6 +41,8 @@ export interface DriverContext {
   /** Launch Chromium without its sandbox (needed when running as root, e.g. in a container). */
   noSandbox?: boolean;
   viewport: { width: number; height: number };
+  /** The page the agent starts on; the WebMCP drivers open it themselves. */
+  startUrl: string;
 }
 
 export function setupDriver(name: DriverName, ctx: DriverContext): DriverSetup {
@@ -50,6 +52,10 @@ export function setupDriver(name: DriverName, ctx: DriverContext): DriverSetup {
       return mcpDriver(ctx);
     case 'playwright-cli':
       return cliDriver(ctx);
+    case 'webmcp':
+      return webmcpDriver(ctx, '1');
+    case 'webmcp-soup':
+      return webmcpDriver(ctx, 'soup');
   }
 }
 
@@ -67,7 +73,10 @@ function mcpDriver(ctx: DriverContext): DriverSetup {
   // AX_DEMO_VIDEO=1 records the browser to mcp-output/ through the MCP server's saveVideo config.
   if (process.env['AX_DEMO_VIDEO']) {
     const mcpConfig = join(ctx.runDir, 'playwright-mcp.json');
-    writeFileSync(mcpConfig, JSON.stringify({ browser: { contextOptions: { recordVideo: { dir: join(ctx.runDir, 'video'), size: ctx.viewport } } } }));
+    writeFileSync(
+      mcpConfig,
+      JSON.stringify({ browser: { contextOptions: { recordVideo: { dir: join(ctx.runDir, 'video'), size: ctx.viewport } } } }),
+    );
     serverArgs.push(`--config=${mcpConfig}`);
   }
   const configPath = join(ctx.runDir, 'mcp.json');
@@ -130,5 +139,31 @@ function cliDriver(ctx: DriverContext): DriverSetup {
         child.on('error', () => resolve());
       });
     },
+  };
+}
+
+/**
+ * WebMCP: the app registers its own tools with navigator.modelContext (`?webmcp=1`, or `soup` for
+ * the undescribed variant) and webmcp-server.mjs hands exactly those tools to the agent. No browser
+ * tools at all, so the page's tools are its only interface. The ax level still applies to the
+ * markup, which the agent never reads, so every tier should look the same through this driver.
+ */
+function webmcpDriver(ctx: DriverContext, mode: '1' | 'soup'): DriverSetup {
+  const url = new URL(ctx.startUrl);
+  url.searchParams.set('webmcp', mode);
+  const env: Record<string, string> = { WEBMCP_URL: url.toString(), WEBMCP_VIEWPORT: `${ctx.viewport.width}x${ctx.viewport.height}` };
+  if (ctx.browserExecutable) env['WEBMCP_EXECUTABLE'] = ctx.browserExecutable;
+  if (process.env['AX_DEMO_VIDEO']) env['WEBMCP_VIDEO_DIR'] = join(ctx.runDir, 'video');
+  const configPath = join(ctx.runDir, 'mcp.json');
+  const server = join(process.cwd(), 'e2e', 'ax-demo', 'webmcp-server.mjs');
+  writeFileSync(configPath, JSON.stringify({ mcpServers: { webmcp: { command: 'node', args: [server], env } } }, null, 2));
+  return {
+    args: ['--mcp-config', configPath, '--strict-mcp-config', '--tools', '', '--allowedTools', 'mcp__webmcp'],
+    env: {},
+    promptSuffix: [
+      '',
+      'The app is already open in a browser. Your tools are the actions the app itself exposes through WebMCP;',
+      'there are no click, type or screenshot tools.',
+    ].join('\n'),
   };
 }
